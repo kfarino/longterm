@@ -30,10 +30,25 @@
 - [ ] **Set up TV easel** - When it arrives tomorrow
 - [ ] **Move TV out of Nikola's room** - To living room on easel
 - [ ] **Move Chinese console to primary bedroom** - Clear nursery space
+- [x] **Set up budget tracking** - Weekly reports on $5k monthly budget ✅
 
 ---
 
 ## 📆 THIS WEEK (Jan 26 - Feb 2)
+
+### Budget Tracking (NEW - Weekly Reports)
+**Status:** ✅ System created
+**Monthly Budget:** $5k (Jan 21 - Feb 21)
+**Current Spend:** $2,102 (42% of budget)
+**Week 1 Status:** 🟡 Over pace (+$878) but includes insurance ($489)
+
+**Files:**
+- `Finances/2026/Jan/TRANSACTIONS_MASTER.csv` - Master transaction data (I manage this)
+- `Finances/2026/Jan/WEEKLY_REPORTS.md` - Weekly spending summaries
+
+**This Week:**
+- Week 2 in progress ($94 spent Jan 28-29)
+- Need to clarify Culver City $152 charge from Jan 22
 
 ### Room Build (DECISION NEEDED)
 **Status:** 🤔 Deciding between contractors
