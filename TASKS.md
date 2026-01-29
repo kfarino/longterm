@@ -48,7 +48,6 @@
 
 **This Week:**
 - Week 2 in progress ($94 spent Jan 28-29)
-- Need to clarify Culver City $152 charge from Jan 22
 
 ### Room Build (DECISION NEEDED)
 **Status:** 🤔 Deciding between contractors
