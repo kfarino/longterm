@@ -40,11 +40,11 @@
 **Status:** ✅ System created
 **Monthly Budget:** $5k (Jan 21 - Feb 21)
 **Current Spend:** $2,102 (42% of budget)
-**Week 1 Status:** 🟡 Over pace (+$878) but includes insurance ($489)
+**Week 1 Status:** 🟡 Over pace (+$913) but includes insurance ($489)
 
 **Files:**
-- `Finances/2026/Jan/TRANSACTIONS_MASTER.csv` - Master transaction data (I manage this)
-- `Finances/2026/Jan/WEEKLY_REPORTS.md` - Weekly spending summaries
+- `Finances/2026/Feb/TRANSACTIONS_MASTER.csv` - Master transaction data (I manage this)
+- `Finances/2026/Feb/WEEKLY_REPORTS.md` - Weekly spending summaries
 
 **This Week:**
 - Week 2 in progress ($94 spent Jan 28-29)
