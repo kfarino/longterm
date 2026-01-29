@@ -1,0 +1,223 @@
+{
+  "main": {
+    "id": "42bc37a1adf21a98",
+    "type": "split",
+    "children": [
+      {
+        "id": "3db5396b8383f69b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "db772aed7b9aa0fc",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Finances/README.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "README"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "66501cd3c46c7496",
+    "type": "split",
+    "children": [
+      {
+        "id": "0aef66a375f472db",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b554da13fa61eccb",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "997b05a821d355e4",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "4c0c92b9c6178c25",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200
+  },
+  "right": {
+    "id": "a48f0c55db2cbe8e",
+    "type": "split",
+    "children": [
+      {
+        "id": "f6c830992fb2d36d",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "acfd2528a53e86c9",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Finances/README.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for README"
+            }
+          },
+          {
+            "id": "c2d838703efe102c",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Finances/README.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from README"
+            }
+          },
+          {
+            "id": "1fb0e6372ad05f54",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "ece7dbbebe9cd621",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "4acbe9a2e3963576",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Finances/README.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of README"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "db772aed7b9aa0fc",
+  "lastOpenFiles": [
+    "Nikolas-Needs/To-Do.md",
+    "Finances/2025/Annual Summary_Joint.pdf",
+    "Finances/2025/Chase year Summary_Hanna.CSV",
+    "Finances/2025",
+    "Finances/untitled folder",
+    "Nikolas-Needs/README.md",
+    "Finances/CLAUDE.md",
+    "Finances/2026-01/uploads",
+    "Finances/2026-01",
+    "Finances/README.md",
+    "Finances/2025-12/2025-12-report.md",
+    "Finances/2025-12/2025-12-investments.md",
+    "Finances/2025-12/2025-12-report.html",
+    "Finances/2025-12/uploads/20251218-statements-3939-.pdf",
+    "Finances/2025-12/uploads/401k.png",
+    "Finances/2025-12/uploads/CreditCardStatement_2025_12.pdf",
+    "Finances/2025-12/uploads/Investments_2025_12.csv",
+    "Finances/2025-12/2025-12-expenses.md",
+    "Finances/2025-12/2025-12-email-draft.md",
+    "To-Do.md",
+    "Nikolas-Needs/Build-3rd-Room/PROJECT-PLAN.md",
+    "Nikolas-Needs/Build-Out-Nursery/TIMELINE.md",
+    "Nikolas-Needs/Build-Out-Nursery/README.md",
+    "Nikolas-Needs/Build-3rd-Room/README.md",
+    "Nikolas-Needs/Hire-Au-Pair/PROCESS-TIMELINE.md",
+    "Nikolas-Needs/Hire-Au-Pair/README.md",
+    "Nikolas-Needs/Core-Purchases/RESEARCH-DECISIONS.md",
+    "Nikolas-Needs/Core-Purchases/MARKETPLACE-HUNTING.md",
+    "Nikolas-Needs/Core-Purchases/LOW-PRIORITY.md",
+    "Nikolas-Needs/Core-Purchases/MEDIUM-PRIORITY.md",
+    "Nikolas-Needs/Core-Purchases/HIGH-PRIORITY.md",
+    "Nikolas-Needs/Core-Purchases/README.md",
+    "Example-Task-2/notes.md",
+    "README.md"
+  ]
+}
