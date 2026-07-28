@@ -21,3 +21,6 @@
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, review packages)
+.superpowers/
