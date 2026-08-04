@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "description": "EXAMPLE raw favorites list (optional). Used as input when budget-tracking-pull refreshes favorite_places.json. Safe to leave places empty."
+  },
+  "places": []
+}

@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { get_dining_plan, listOpenItems } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
+import { telegramEnvPath } from './longterm-paths.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
@@ -22,7 +23,7 @@ const OCCASIONS = ['family_dinner', 'date_night', 'weekend_social'];
 
 function parseArgs(argv) {
   const args = {
-    envPath: 'C:\\Users\\Family\\.longterm\\telegram.env',
+    envPath: telegramEnvPath(),
     todosPath: path.join(repoDataDir, 'todos.json'),
     goalsPath: path.join(repoDataDir, 'goals.json'),
     favoritePlacesPath: path.join(repoDataDir, 'favorite_places.json'),

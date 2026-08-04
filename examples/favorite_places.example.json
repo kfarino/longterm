@@ -1,0 +1,9 @@
+{
+  "meta": {
+    "description": "EXAMPLE empty dining favorites. Copy to data/favorite_places.json, or leave empty until you sync a favorites sheet / Monarch pull refreshes observed tiers.",
+    "lastRegenerated": null,
+    "lookbackDays": 90
+  },
+  "places": [],
+  "recentDiningActivity": []
+}

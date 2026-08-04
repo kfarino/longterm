@@ -1,23 +1,19 @@
 #!/usr/bin/env node
-// Finances/Longterm/scripts/calendar-auth-setup.mjs
 // One-off, interactive: exchanges a one-time OAuth consent for a refresh
 // token, creates the dedicated "Family Planner" Google Calendar, and saves
-// both (plus the calendar id) to C:\Users\Family\.longterm\google-calendar.env
-// — same outside-the-repo credential convention as telegram.env and
-// ~/.scrooge/monarch.env. Run once by Kevin after creating a Google Cloud
-// project + OAuth client (type: Desktop app) and enabling the Calendar API.
-// No npm dependency: raw OAuth2/REST calls via fetch, matching how the
-// Telegram and Anthropic integrations already avoid an SDK.
+// credentials to ~/.longterm/google-calendar.env (same outside-the-repo
+// convention as telegram.env / monarch.env).
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
+import { googleCalendarEnvPath } from './longterm-paths.mjs';
 
 const REDIRECT_PORT = 51823;
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/oauth2callback`;
 const SCOPE = 'https://www.googleapis.com/auth/calendar';
-const DEFAULT_ENV_PATH = 'C:\\Users\\Family\\.longterm\\google-calendar.env';
+const DEFAULT_ENV_PATH = googleCalendarEnvPath();
 
 function prompt(question) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });

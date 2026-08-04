@@ -13,13 +13,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { googleCalendarEnvPath } from './longterm-paths.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
 
 function parseArgs(argv) {
   const args = {
-    envPath: 'C:\\Users\\Family\\.longterm\\google-calendar.env',
+    envPath: googleCalendarEnvPath(),
     monthPlanEventsPath: path.join(repoDataDir, 'month_plan_events.json'),
     statePath: path.join(repoDataDir, 'calendar-sync-state.json'),
     dryRun: false,

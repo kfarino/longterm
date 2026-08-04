@@ -18,15 +18,16 @@ import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES
 import { loadFinancialContext } from './financial-context.mjs';
 import { runSync as runCalendarSync } from './calendar-sync.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
+import { googleCalendarEnvPath, telegramEnvPath } from './longterm-paths.mjs';
 
-const CALENDAR_ENV_PATH = 'C:\\Users\\Family\\.longterm\\google-calendar.env';
+const CALENDAR_ENV_PATH = googleCalendarEnvPath();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
 
 function parseArgs(argv) {
   const args = {
-    envPath: 'C:\\Users\\Family\\.longterm\\telegram.env',
+    envPath: telegramEnvPath(),
     todosPath: path.join(repoDataDir, 'todos.json'),
     ownersPath: path.join(repoDataDir, 'telegram-owners.json'),
     offsetPath: path.join(repoDataDir, 'telegram-offset.json'),

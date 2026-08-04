@@ -1,6 +1,28 @@
-# Real personal financial data — deliberately never committed. See README.md.
+# Real household financial data + local runtime state — never commit.
+# Fresh clones: run `npm run seed` (scripts/seed-from-examples.mjs).
+
+# Planning / balances / generated views
 data/accounts.json
 data/budget_tracking.json
 data/goals.json
 data/data.js
 kevin_hanna_goal_plan.md
+*-goal_plan.md
+
+# Planner / dining / calendar runtime (household-specific)
+data/todos.json
+data/month_plan_events.json
+data/favorite_places.json
+data/favorite_places_raw.json
+data/calendar-sync-state.json
+data/dining-routine-overrides.json
+data/goals-changelog.jsonl
+
+# Telegram bot local state
+data/telegram-owners.json
+data/telegram-offset.json
+data/telegram-conversation-log.jsonl
+data/telegram-pending-clarifications.json
+data/telegram-planning-notes.jsonl
+data/telegram-recap-log.jsonl
+data/telegram-unparsed.jsonl

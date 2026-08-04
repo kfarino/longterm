@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dashboard-server.mjs"
+    "dev": "node scripts/dashboard-server.mjs",
+    "seed": "node scripts/seed-from-examples.mjs",
+    "build": "node data/build-data.mjs && node data/build-goal-plan-md.mjs"
   }
 }

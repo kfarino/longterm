@@ -1,14 +1,11 @@
 #!/usr/bin/env node
-// Finances/Longterm/scripts/telegram-bot-whoami.mjs
-// One-off setup helper — NOT part of the scheduled poll. Run manually once,
-// after Kevin and Hanna have each sent at least one message in the new
-// Telegram group, to discover: the group's chat id (TELEGRAM_GROUP_CHAT_ID)
-// and each sender's Telegram user id (for hand-writing telegram-owners.json,
-// which maps user id -> "kevin"/"hanna"). Calls getUpdates with no offset,
-// so it sees recent history rather than only new messages, and does not
-// advance any offset file — running this has no effect on the real poller's
-// state.
+// One-off setup helper — NOT part of the scheduled poll. Run manually once
+// after each adult has sent at least one message in the household Telegram
+// group, to discover: the group's chat id (TELEGRAM_GROUP_CHAT_ID) and each
+// sender's Telegram user id (for data/telegram-owners.json, which maps user
+// id → owner id from goals.json owners[]).
 import fs from 'node:fs';
+import { telegramEnvPath } from './longterm-paths.mjs';
 
 function readLocalEnv(filePath) {
   const values = {};
@@ -23,7 +20,7 @@ function readLocalEnv(filePath) {
 }
 
 async function main() {
-  const envPath = process.argv[2] || 'C:\\Users\\Family\\.longterm\\telegram.env';
+  const envPath = process.argv[2] || telegramEnvPath();
   if (!fs.existsSync(envPath)) {
     throw new Error(`Missing env file at ${envPath}. Create it with TELEGRAM_BOT_TOKEN=... first.`);
   }
@@ -59,7 +56,7 @@ async function main() {
     }
   }
   console.log('\nNext: set TELEGRAM_GROUP_CHAT_ID in telegram.env to the group chat id above,');
-  console.log('and hand-write data/telegram-owners.json mapping each sender id to "kevin"/"hanna".');
+  console.log('and write data/telegram-owners.json mapping each sender id to an owner id from goals.json owners[].');
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

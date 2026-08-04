@@ -1,19 +1,12 @@
-// Finances/Longterm/scripts/calendar-read.mjs
-// Read-only summary of upcoming events across specific Google Calendars —
-// Kevin's personal calendar and Hanna's (shared with Kevin's Google
-// account), deliberately excluding Kevin's work calendar
-// (kevinfarino@herohealth.com). Powers both the bot's on-demand
-// get_calendar_events tool (telegram-bot-poll.mjs) and the weekly recap's
-// calendar section (telegram-bot-recap.mjs) — one shared module, not
-// duplicated, since both are plain Node scripts with no browser boundary.
-// Reuses calendar-sync.mjs's OAuth token refresh (same Google Cloud OAuth
-// client + refresh token calendar-auth-setup.mjs already collects for the
-// one-way push to "Family Planner") — reading needs no new scope, just its
-// own list of calendar ids, which calendar-auth-setup.mjs also prompts for.
+// Read-only summary of upcoming events across configured Google Calendars
+// (personal/family only — typically exclude work calendars). Powers both the
+// bot's on-demand get_calendar_events tool (telegram-bot-poll.mjs) and the
+// weekly recap's calendar section (telegram-bot-recap.mjs).
 import fs from 'node:fs';
 import { getAccessToken } from './calendar-sync.mjs';
+import { googleCalendarEnvPath } from './longterm-paths.mjs';
 
-const DEFAULT_CALENDAR_ENV_PATH = 'C:\\Users\\Family\\.longterm\\google-calendar.env';
+const DEFAULT_CALENDAR_ENV_PATH = googleCalendarEnvPath();
 
 function readLocalEnv(filePath) {
   const values = {};

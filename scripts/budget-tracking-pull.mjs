@@ -6,7 +6,7 @@
 // get_accounts. Part of this project's own self-contained daily pull —
 // see run-daily-pull.ps1 and install-scheduled-task.ps1 in this same folder.
 //
-// Runs monarch-mcp-jamiew from a persistent local venv (C:\Users\Family\.longterm\monarch-mcp-venv)
+// Runs monarch-mcp-jamiew from a persistent local venv (~/.longterm/monarch-mcp-venv)
 // rather than via `uvx`/`uv` — see networth-pull.mjs's header for why.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +14,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { monarchEnvPath, monarchMcpExePath } from './longterm-paths.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,8 +22,8 @@ function parseArgs(argv) {
   const args = {
     outputPath: path.join(repoRoot, 'data', 'budget_tracking.json'),
     goalsPath: path.join(repoRoot, 'data', 'goals.json'),
-    envFile: 'C:\\Users\\Family\\.scrooge\\monarch.env',
-    mcpServerExe: 'C:\\Users\\Family\\.longterm\\monarch-mcp-venv\\Scripts\\monarch-mcp-jamiew.exe',
+    envFile: monarchEnvPath(),
+    mcpServerExe: monarchMcpExePath(),
     limit: 1000,
     dryRun: false,
   };
