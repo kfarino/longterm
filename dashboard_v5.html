@@ -74,9 +74,8 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
   text-transform:uppercase;padding:2px 8px;border-radius:2px;
   background:var(--navy);color:#fff;margin-left:8px;
 }
-.todo-owner{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:2px;margin-right:8px;color:#fff;vertical-align:middle}
-.todo-owner-kevin{background:var(--blue)}
-.todo-owner-hanna{background:var(--p5)}
+.todo-owner{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:2px;margin-right:8px;color:#fff;vertical-align:middle;background:var(--blue)}
+.todo-owner-alt{background:var(--p5)}
 .todo-done .tl,.todo-done .tv{text-decoration:line-through;opacity:.55}
 .subnav{display:flex;gap:4px;border-bottom:1px solid var(--rule);margin-bottom:20px}
 .subtab{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);padding:8px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s}
@@ -206,16 +205,26 @@ const fmt  = n => '$' + Math.round(n).toLocaleString();
 const fmtM = n => n >= 1000000 ? '~$' + (n/1000000).toFixed(1) + 'M' : n >= 1000 ? '~$' + Math.round(n/1000) + 'K' : fmt(n);
 const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
+function ownersList() { return D.owners || []; }
+function ownerIds() { return ownersList().map((o) => o.id); }
+function ownerDisplayName(id) {
+  const o = ownersList().find((x) => x.id === id);
+  return o ? o.displayName : id;
+}
+function sumOwnerBucket(bucket) {
+  return ownerIds().reduce((s, id) => s + (Number(bucket?.[id]) || 0), 0);
+}
+function ownerAmountsNote(bucket) {
+  return ownersList().map((o) => `${o.displayName} ${fmtM(bucket?.[o.id] || 0)}`).join(' · ');
+}
+
 function phaseIncome(p) { return Object.values(p.income).reduce((a,b)=>a+b,0); }
 function phaseExpenses(p) { return Object.values(p.expenses).reduce((a,b)=>a+b,0); }
 function phaseSurplus(p) { return phaseIncome(p) - phaseExpenses(p); }
 
 function totalNW() {
   const a = D.assets;
-  return (a.retirement.kevin + a.retirement.hanna) +
-         (a.brokerage.kevin  + a.brokerage.hanna)  +
-         (a.cash.kevin       + a.cash.hanna)        +
-         (a.homeEquity.kevin + a.homeEquity.hanna);
+  return sumOwnerBucket(a.retirement) + sumOwnerBucket(a.brokerage) + sumOwnerBucket(a.cash) + sumOwnerBucket(a.homeEquity);
 }
 
 function trHTML(label, value, cls='') {
@@ -317,28 +326,28 @@ function renderStatusSection() {
       </div>
       <div class="metric c-gold">
         <div class="mlabel">Retirement accounts</div>
-        <div class="mval gold">${fmt(a.retirement.kevin + a.retirement.hanna)}</div>
-        <div class="mnote">Both 401K + Roth maxed annually</div>
+        <div class="mval gold">${fmt(sumOwnerBucket(a.retirement))}</div>
+        <div class="mnote">Both retirement accounts maxed annually</div>
       </div>
       <div class="metric c-navy">
         <div class="mlabel">Brokerage investments</div>
-        <div class="mval">${fmt(a.brokerage.kevin + a.brokerage.hanna)}</div>
-        <div class="mnote">Kevin ${fmtM(a.brokerage.kevin)} · Hanna ${fmtM(a.brokerage.hanna)}</div>
+        <div class="mval">${fmt(sumOwnerBucket(a.brokerage))}</div>
+        <div class="mnote">${ownerAmountsNote(a.brokerage)}</div>
       </div>
       <div class="metric c-green">
         <div class="mlabel">Liquid cash</div>
-        <div class="mval green">${fmt(a.cash.kevin + a.cash.hanna)}</div>
-        <div class="mnote">Hanna ${fmtM(a.cash.hanna)} · Kevin ${fmtM(a.cash.kevin)}</div>
+        <div class="mval green">${fmt(sumOwnerBucket(a.cash))}</div>
+        <div class="mnote">${ownerAmountsNote(a.cash)}</div>
       </div>
     </div>
 
     <div class="g2">
       <div class="panel">
         <div class="ptitle">Asset allocation</div>
-        ${trHTML('Retirement — tax-advantaged', Math.round((a.retirement.kevin + a.retirement.hanna) / totalNW() * 100) + '%')}
-        ${trHTML('Brokerage — liquid, taxable', Math.round((a.brokerage.kevin + a.brokerage.hanna) / totalNW() * 100) + '%')}
-        ${trHTML('Home equity', Math.round((a.homeEquity.kevin + a.homeEquity.hanna) / totalNW() * 100) + '%')}
-        ${trHTML('Cash', Math.round((a.cash.kevin + a.cash.hanna) / totalNW() * 100) + '%')}
+        ${trHTML('Retirement — tax-advantaged', Math.round(sumOwnerBucket(a.retirement) / totalNW() * 100) + '%')}
+        ${trHTML('Brokerage — liquid, taxable', Math.round(sumOwnerBucket(a.brokerage) / totalNW() * 100) + '%')}
+        ${trHTML('Home equity', Math.round(sumOwnerBucket(a.homeEquity) / totalNW() * 100) + '%')}
+        ${trHTML('Cash', Math.round(sumOwnerBucket(a.cash) / totalNW() * 100) + '%')}
       </div>
       <div class="panel">
         <div class="ptitle">Future assets (not liquid today)</div>
@@ -356,7 +365,7 @@ function renderStatusSection() {
 // the topline "today" readout, not on a separate tab).
 function renderGoalsSection() {
   const goalsHTML = D.goals.map((g) => {
-    const current = g.trackLiveBrokerage ? (D.assets.brokerage.kevin + D.assets.brokerage.hanna) : g.current;
+    const current = g.trackLiveBrokerage ? sumOwnerBucket(D.assets.brokerage) : g.current;
     const pct = Math.min(100, Math.round(current / g.targetAmount * 100));
     return `
       <div class="goal">
@@ -554,7 +563,7 @@ function renderTravelSummary(travel) {
     ? `<div class="callout">${travel.unmatched.length} travel transaction(s) didn't match any planned trip window — check budget_tracking.json's <code>travel.unmatched</code>.</div>`
     : '';
   return `<div class="panel">
-    <div class="ptitle">Travel <span style="font-size:12px;font-weight:400;color:var(--sub)">Excluded from Joint &amp; Kevin personal above</span></div>
+    <div class="ptitle">Travel <span style="font-size:12px;font-weight:400;color:var(--sub)">Excluded from Joint &amp; personal trackers above</span></div>
     ${rows}
     ${unmatchedNote}
   </div>`;
@@ -915,16 +924,21 @@ async function renderMonthPlan() {
     </div>`;
 }
 
-// Split from Travel — Joint/Kevin lead the Budget tab (above the calendar),
-// Travel (a different cadence — per-trip lump sums, not a recurring monthly
-// budget) stays below it.
-async function renderJointKevinTrackers() {
+// Split from Travel — Joint + per-owner personal trackers lead the Budget tab
+// (above the calendar). Travel (a different cadence — per-trip lump sums, not
+// a recurring monthly budget) stays below it.
+async function renderSpendTrackers() {
   const bt = D.budgetTracking;
   const plannedSpend = await computeMonthPlanProjectedSpend();
+  const personalHtml = ownersList().map((o) => {
+    const tracker = bt.personal && bt.personal[o.id];
+    if (!tracker) return '';
+    return renderSpendTracker(`${o.displayName} personal`, tracker, `drill-personal-${o.id}`);
+  }).join('');
   return `
     <div class="g2">
-      ${renderSpendTracker('Joint (Barclays)', bt.joint, 'drill-joint', plannedSpend)}
-      ${renderSpendTracker('Kevin personal', bt.kevinPersonal, 'drill-kevin')}
+      ${renderSpendTracker(bt.joint.label || 'Joint', bt.joint, 'drill-joint', plannedSpend)}
+      ${personalHtml}
     </div>`;
 }
 
@@ -966,7 +980,11 @@ function renderTodosSection() {
   const todos = D.todos || { items: [], weeklyGoals: [] };
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const daysAgo = (dateStr) => Math.floor((today - new Date(dateStr)) / 86400000);
-  const ownerPill = (owner) => `<span class="todo-owner todo-owner-${owner}">${owner.charAt(0).toUpperCase() + owner.slice(1)}</span>`;
+  const ownerPill = (owner) => {
+    const idx = ownerIds().indexOf(owner);
+    const alt = idx >= 0 && idx % 2 === 1 ? ' todo-owner-alt' : '';
+    return `<span class="todo-owner${alt}">${ownerDisplayName(owner)}</span>`;
+  };
 
   const itemsHTML = todos.items.map((t) => {
     const age = daysAgo(t.dateAdded);
@@ -1003,12 +1021,12 @@ function renderTodosSection() {
 
 async function renderBudgetTab() {
   const bt = D.budgetTracking;
-  const jointKevinHtml = await renderJointKevinTrackers();
+  const jointPersonalHtml = await renderSpendTrackers();
   $('pg-budget').innerHTML = `
     <div class="content">
       ${renderTodosSection()}
       <div class="slabel">Spend tracking</div>
-      ${jointKevinHtml}
+      ${jointPersonalHtml}
       <div id="pg-monthplan"></div>
       ${renderTravelSummary(bt.travel)}
     </div>`;
@@ -1120,9 +1138,9 @@ function phaseContribution(phase, bucket) {
 
 function computeProjection(g, lr, cr, kv, sb, sabbaticalYear, croatiaYear, hannaScenario) {
   const all = []; for (let y=2026;y<=2050;y++) all.push(y);
-  let ret=D.assets.retirement.kevin+D.assets.retirement.hanna;
-  let brok=D.assets.brokerage.kevin+D.assets.brokerage.hanna;
-  let liq=D.assets.cash.kevin+D.assets.cash.hanna;
+  let ret=sumOwnerBucket(D.assets.retirement);
+  let brok=sumOwnerBucket(D.assets.brokerage);
+  let liq=sumOwnerBucket(D.assets.cash);
   const rA=[], bA=[], lA=[];
   for (let i=0;i<all.length;i++) {
     const yr=all[i], mo=yr===2026?6:12;

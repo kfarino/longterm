@@ -26,11 +26,20 @@ const todos = existsSync(todosPath)
   ? JSON.parse(readFileSync(todosPath, 'utf8'))
   : { items: [], weeklyGoals: [] };
 
+const owners = goals.owners || [];
+
 function flattenOwnerAmounts(bucket) {
-  return {
-    kevin: bucket.kevin.amount,
-    hanna: bucket.hanna.amount,
-  };
+  const out = {};
+  for (const owner of owners) {
+    const entry = bucket[owner.id];
+    out[owner.id] = entry ? entry.amount : 0;
+  }
+  // Include any extra keys present in accounts but missing from owners[]
+  // so a partial owners list can't silently drop a balance.
+  for (const id of Object.keys(bucket || {})) {
+    if (!(id in out)) out[id] = bucket[id].amount;
+  }
+  return out;
 }
 
 const accounts = {
@@ -44,7 +53,17 @@ const accounts = {
   futureAssets: accountsRaw.futureAssets,
 };
 
+const phase0Expenses = goals.phases[0].expenses;
+const personal = {};
+for (const [ownerId, tracker] of Object.entries(budgetTracking.personal || {})) {
+  personal[ownerId] = {
+    ...tracker,
+    target: phase0Expenses[tracker.targetExpenseKey],
+  };
+}
+
 const DATA = {
+  owners,
   family: goals.family,
   assets: accounts.assets,
   futureAssets: accounts.futureAssets,
@@ -62,8 +81,8 @@ const DATA = {
   budgetTracking: {
     // target is derived from the current phase's expense line, never a
     // separately hand-typed number — goals.json is the only place it's typed.
-    joint: { ...budgetTracking.joint, target: goals.phases[0].expenses[budgetTracking.joint.targetExpenseKey] },
-    kevinPersonal: { ...budgetTracking.kevinPersonal, target: goals.phases[0].expenses[budgetTracking.kevinPersonal.targetExpenseKey] },
+    joint: { ...budgetTracking.joint, target: phase0Expenses[budgetTracking.joint.targetExpenseKey] },
+    personal,
     travel: budgetTracking.travel,
   },
 };

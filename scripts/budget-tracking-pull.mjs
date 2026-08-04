@@ -464,9 +464,9 @@ async function main() {
   const goals = JSON.parse(fs.readFileSync(args.goalsPath, 'utf8'));
 
   const today = new Date();
-  const cycleStart = currentCycleStart(today); // joint (Barclays) cycle
-  const kevinCycleStart = currentMonthStart(today); // Kevin personal cycle
-  const fetchStart = cycleStart < kevinCycleStart ? cycleStart : kevinCycleStart;
+  const cycleStart = currentCycleStart(today); // joint cycle
+  const personalCycleStart = currentMonthStart(today); // personal trackers (calendar month)
+  const fetchStart = cycleStart < personalCycleStart ? cycleStart : personalCycleStart;
   const startDate = isoDate(fetchStart);
   const endDate = isoDate(today);
 
@@ -476,14 +476,38 @@ async function main() {
     const transactions = await fetchTransactions(client, startDate, endDate, args.limit);
 
     const travelCategories = new Set(tracking.mapping.travelCategoryNames.map((c) => c.toLowerCase()));
-    const kevinPersonalLabels = new Set(tracking.mapping.kevinPersonalAccountLabels);
-    const jointLabels = new Set(tracking.mapping.jointAccountLabels);
+    const jointLabels = new Set(tracking.mapping.jointAccountLabels || []);
+    const personalLabelsByOwner = tracking.mapping.personalAccountLabels || {};
+    const labelToOwnerId = new Map();
+    for (const [ownerId, labels] of Object.entries(personalLabelsByOwner)) {
+      for (const label of labels || []) labelToOwnerId.set(label, ownerId);
+    }
 
-    // Reset the fields this run owns; leave joint (still budget_ledger.csv-sourced) untouched.
-    const kevinBuckets = new Map(); // bucketIndex -> total
-    const kevinCategoryTotals = new Map(); // categoryDisplayName -> total, for the dashboard's spend-by-category drill-down
+    if (!tracking.personal) tracking.personal = {};
+
+    // Per-owner accumulators for personal trackers.
+    const personalState = {};
+    const ownerDisplay = Object.fromEntries((goals.owners || []).map((o) => [o.id, o.displayName]));
+    for (const ownerId of Object.keys(personalLabelsByOwner)) {
+      if (!tracking.personal[ownerId]) {
+        const name = ownerDisplay[ownerId] || ownerId;
+        tracking.personal[ownerId] = {
+          label: `${name} personal`,
+          targetExpenseKey: `${name} personal`,
+          source: 'monarch',
+          weeks: [],
+          categories: [],
+        };
+      }
+      personalState[ownerId] = {
+        buckets: new Map(),
+        categoryTotals: new Map(),
+        categoryTransactions: new Map(),
+      };
+    }
+
+    const jointBuckets = new Map();
     const jointCategoryTotals = new Map();
-    const kevinCategoryTransactions = new Map(); // categoryDisplayName -> [{date, merchant, amount}], for the category drill-down's own line-item drill-down
     const jointCategoryTransactions = new Map();
     // Flights/hotels get booked well ahead of the trip itself — matching only
     // the stay window (startDate..endDate) misses every booking charge. Widen
@@ -513,7 +537,6 @@ async function main() {
       });
     const tripActuals = new Map(trips.map((t) => [t.id, { actual: 0, transactions: [] }]));
     const unmatched = [];
-    const jointBuckets = new Map();
 
     for (const txn of transactions) {
       const amount = spendAmount(txn);
@@ -542,30 +565,29 @@ async function main() {
 
       // The fetch window starts at the EARLIER of the two cycles (see
       // fetchStart above), so it can include days before the joint cycle's
-      // own start (e.g. Kevin's cycle starts the 1st, joint's starts the
-      // 25th of the prior month — the fetch has to reach back to the 1st for
-      // Kevin's sake, which drags in ~24 days of joint-card spend from
-      // BEFORE the joint cycle even began). bucketsToWeeks() already only
-      // ever reads non-negative buckets, so those pre-cycle transactions
-      // silently never counted toward `weeks`/`total` — but jointCategoryTotals
-      // had no equivalent guard and was summing them anyway, so category
-      // totals could exceed (and disagree with) the tracker's own logged
-      // total. Guarding on `b >= 0` here makes both aggregates agree.
-      // A reassignment overrides which tracker a charge counts toward,
-      // regardless of which card it's actually on — checked before the
-      // normal per-card routing below, not instead of it, so an
-      // unreassigned charge on either card still routes exactly as before.
+      // own start. Guarding on `b >= 0` makes week buckets and category
+      // totals agree. A reassignment overrides which tracker a charge
+      // counts toward (reassignTo: "joint" or an owner id for personal).
       const reassignment = trackerReassignment(txn);
-      const routeToKevinPersonal = reassignment ? reassignment.reassignTo === 'kevinPersonal' : kevinPersonalLabels.has(acct);
-      const routeToJoint = reassignment ? reassignment.reassignTo === 'joint' : jointLabels.has(acct);
+      let personalOwnerId = null;
+      let routeToJoint = false;
+      if (reassignment) {
+        if (reassignment.reassignTo === 'joint') routeToJoint = true;
+        else personalOwnerId = reassignment.reassignTo;
+      } else if (labelToOwnerId.has(acct)) {
+        personalOwnerId = labelToOwnerId.get(acct);
+      } else if (jointLabels.has(acct)) {
+        routeToJoint = true;
+      }
 
-      if (routeToKevinPersonal) {
-        const b = weekBucket(txnDate, kevinCycleStart);
+      if (personalOwnerId && personalState[personalOwnerId]) {
+        const state = personalState[personalOwnerId];
+        const b = weekBucket(txnDate, personalCycleStart);
         if (b >= 0) {
-          kevinBuckets.set(b, Math.round(((kevinBuckets.get(b) || 0) + amount) * 100) / 100);
-          kevinCategoryTotals.set(catDisplay, Math.round(((kevinCategoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
-          if (!kevinCategoryTransactions.has(catDisplay)) kevinCategoryTransactions.set(catDisplay, []);
-          kevinCategoryTransactions.get(catDisplay).push(summary);
+          state.buckets.set(b, Math.round(((state.buckets.get(b) || 0) + amount) * 100) / 100);
+          state.categoryTotals.set(catDisplay, Math.round(((state.categoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
+          if (!state.categoryTransactions.has(catDisplay)) state.categoryTransactions.set(catDisplay, []);
+          state.categoryTransactions.get(catDisplay).push(summary);
         }
       } else if (routeToJoint) {
         const b = weekBucket(txnDate, cycleStart);
@@ -606,10 +628,13 @@ async function main() {
         .sort((a, b) => b.amount - a.amount);
     }
 
-    tracking.kevinPersonal.weeks = bucketsToWeeks(kevinBuckets, kevinCycleStart);
-    tracking.kevinPersonal.categories = categoryTotalsToArray(kevinCategoryTotals, kevinCategoryTransactions);
-    tracking.kevinPersonal.cycleStart = isoDate(kevinCycleStart);
-    tracking.kevinPersonal.cycleDays = daysInMonth(today);
+    for (const [ownerId, state] of Object.entries(personalState)) {
+      tracking.personal[ownerId].weeks = bucketsToWeeks(state.buckets, personalCycleStart);
+      tracking.personal[ownerId].categories = categoryTotalsToArray(state.categoryTotals, state.categoryTransactions);
+      tracking.personal[ownerId].cycleStart = isoDate(personalCycleStart);
+      tracking.personal[ownerId].cycleDays = daysInMonth(today);
+      tracking.personal[ownerId].source = 'monarch';
+    }
     if (jointLabels.size > 0) {
       tracking.joint.weeks = bucketsToWeeks(jointBuckets, cycleStart);
       tracking.joint.categories = categoryTotalsToArray(jointCategoryTotals, jointCategoryTransactions);
@@ -648,7 +673,7 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       transactionCount: transactions.length,
-      kevinPersonalWeeks: tracking.kevinPersonal.weeks.length,
+      personalOwners: Object.keys(tracking.personal || {}),
       travelUnmatchedCount: unmatched.length,
       jointUpdated: jointLabels.size > 0,
       outputPath: args.outputPath,

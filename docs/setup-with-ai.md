@@ -6,8 +6,8 @@ You are helping someone set up **Longterm** (household finance dashboard + optio
 - Ask **one question at a time**. Wait for the answer before the next.
 - Prefer writing files yourself over dumping large JSON for the human to paste.
 - Never commit `data/goals.json`, `data/accounts.json`, `data/budget_tracking.json`, `data/data.js`, or `kevin_hanna_goal_plan.md` (they are gitignored for a reason).
-- Start from `examples/*.example.json` — fictional Alex & Jordan — then replace with this household’s facts.
-- Owner keys **`kevin`** and **`hanna`** are fixed Person A / Person B slots in `accounts.json` and in `budget_tracking.kevinPersonal`. Map real people into those slots; put their real names in `family.profile` and in phase income *labels*.
+- Start from `examples/*.example.json` — fictional Teddy & Lilly — then replace with this household’s facts.
+- Owners are configurable: `goals.json` has `"owners": [{ "id", "displayName" }, ...]`. Use those same `id` values under `accounts.json` balances and `budget_tracking.personal.<id>` / `mapping.personalAccountLabels.<id>`. Do not hardcode person names in code.
 - After any edit to goals/accounts/budget JSON, run:
   - `node data/build-data.mjs`
   - `node data/build-goal-plan-md.mjs`
@@ -42,12 +42,12 @@ On Windows PowerShell, use `Copy-Item` equivalently.
 Collect enough to fill the three JSON files:
 
 1. Household display name and city/region  
-2. Who is Person A (`kevin` slot) and Person B (`hanna` slot) — names and one-line bios  
+2. Owner ids + display names for each adult (e.g. `teddy`/`Teddy`, `lilly`/`Lilly`) and one-line bios under `family.profile.<id>`  
 3. Today’s monthly take-home (or pre-tax → convert roughly) per person  
-4. Major monthly expenses (housing, shared “Family budget”, personal allowances). **One expense key must be exactly** whatever `budget_tracking.joint.targetExpenseKey` is (default `"Family budget"`). Person A personal tracker’s `targetExpenseKey` must match a phase-1 expense label too.  
+4. Major monthly expenses (housing, shared “Family budget”, personal allowances). **One expense key must be exactly** whatever `budget_tracking.joint.targetExpenseKey` is (default `"Family budget"`). Each personal tracker’s `targetExpenseKey` must match a phase-1 expense label too.  
 5. How many life phases they want for now (minimum 1 current + optional later). For each phase: name, rough years, income, expenses, and where surplus goes (`allocation` with buckets `brokerage` | `liquid` | similar).  
 6. One or two savings goals (name, target $, year, optional `current`)  
-7. Rough net worth: retirement / brokerage / cash / home equity per person (all `source: "manual"` for now)  
+7. Rough net worth: retirement / brokerage / cash / home equity per owner id (all `source: "manual"` for now)  
 8. Budget cycle: `cycleStart` (YYYY-MM-DD) and `cycleDays`; optional sample week totals if they know recent spend  
 9. Dining routine: keep example Wed/Fri/Sat or change `dayOfWeek` (0=Sun … 6=Sat)
 
@@ -59,7 +59,7 @@ Collect enough to fill the three JSON files:
 - Start `npm run dev` and have them open `http://localhost:4200/dashboard_v5.html`.
 - Fix any console/render errors before Phase 2.
 
-**Success:** Budget / Position / Goals tabs show *their* names and numbers, not Alex & Jordan.
+**Success:** Budget / Position / Goals tabs show *their* names and numbers, not Teddy & Lilly.
 
 ---
 
@@ -85,7 +85,7 @@ MONARCH_PASSWORD=their-password
 4. Install the Monarch MCP venv (Windows example from `claude.md`): Python 3.12 venv at `~\.longterm\monarch-mcp-venv`, `pip install monarch-mcp-jamiew==0.4.0`.
 5. Run a dry diagnostic: call `get_accounts` via the pull tooling or a one-off script; list account ids/labels.
 6. Fill `data/accounts.json` → `mapping.accounts` with `{ monarchId, label, target }` paths.
-7. Fill `data/budget_tracking.json` → `mapping.jointAccountLabels` / `kevinPersonalAccountLabels` with **exact** Monarch transaction account display names.
+7. Fill `data/budget_tracking.json` → `mapping.jointAccountLabels` / `mapping.personalAccountLabels.<ownerId>` with **exact** Monarch transaction account display names.
 8. Set tracker `source` fields to `"monarch"` once mapping works.
 9. Run `node scripts/networth-pull.mjs` and `node scripts/budget-tracking-pull.mjs` (or the `.ps1` wrappers). Confirm `data.js` regenerated.
 10. On Windows, from `scripts/`: `.\install-scheduled-task.ps1` for the daily 03:00 pull.

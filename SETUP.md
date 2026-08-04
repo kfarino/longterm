@@ -51,6 +51,6 @@ npm run dev
 
 Then edit the three JSON files with your real numbers and re-run the two `node data/build-*.mjs` commands.
 
-## Owner keys (`kevin` / `hanna`)
+## Owners (`goals.json` → `owners[]`)
 
-The code currently uses fixed balance keys `kevin` and `hanna` (Person A and Person B). Put one adult in each slot; set display names in `family.profile` and phase `income` labels to real names. Do not rename those balance keys unless you are changing the app code.
+Each adult is an entry in `goals.owners` with a stable `id` (lowercase slug) and `displayName`. The same `id` keys balances in `accounts.json` and personal trackers in `budget_tracking.personal.<id>`. Example household uses `teddy` / `lilly`; you choose your own ids.

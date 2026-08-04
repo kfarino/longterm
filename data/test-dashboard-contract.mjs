@@ -240,8 +240,8 @@ await test('renderTodosSection: renders items with owner pills, omits null deadl
   });
   const html = d.renderTodosSection();
 
-  assert.ok(html.includes('todo-owner-kevin') && html.includes('>Kevin<'), 'should render a Kevin owner pill');
-  assert.ok(html.includes('todo-owner-hanna') && html.includes('>Hanna<'), 'should render a Hanna owner pill');
+  assert.ok(html.includes('todo-owner') && html.includes('>Kevin<'), 'should render a Kevin owner pill');
+  assert.ok(html.includes('todo-owner-alt') && html.includes('>Hanna<'), 'should render a Hanna owner pill');
   assert.ok(html.includes('Fix the AC wall mount') && html.includes('Added 5 days ago'), 'should render title and age for an item with no deadline');
   assert.ok(!/Fix the AC wall mount[\s\S]{0,80}Due/.test(html), 'an item with deadline: null should not show a "Due" label');
   assert.ok(html.includes('Buy a gift') && html.includes('Due 2026-08-15'), 'an item with a real deadline should show it');

@@ -1,20 +1,24 @@
 {
   "meta": {
-    "description": "EXAMPLE planning assumptions — fictional household. Copy to data/goals.json and replace with real numbers. Hand-maintained; the only place these planning figures are typed.",
+    "description": "EXAMPLE planning assumptions — fictional household (Teddy & Lilly). Copy to data/goals.json and replace with real numbers. Hand-maintained; the only place these planning figures are typed.",
     "lastReconciled": "YYYY-MM-DD",
     "reconciliationNotes": "Filled during first-time setup."
   },
+  "owners": [
+    { "id": "teddy", "displayName": "Teddy" },
+    { "id": "lilly", "displayName": "Lilly" }
+  ],
   "family": {
-    "name": "Alex & Jordan Example",
+    "name": "Teddy & Lilly Example",
     "asOf": "August 2026",
     "location": "Austin, TX",
     "framework": "Deliberate allocation of time, energy, and money across career, relationships, and integrity.",
     "profile": {
-      "kevin": "Person A (maps to balance key kevin). Example: software engineer, remote, primary W-2 income.",
-      "hanna": "Person B (maps to balance key hanna). Example: designer / founder, variable income.",
+      "teddy": "Software engineer, remote, primary W-2 income.",
+      "lilly": "Designer / founder, variable income.",
       "baby": "Optional — remove or rewrite.",
       "auPair": "Optional childcare note — remove if N/A.",
-      "kevinWork": "Optional lifestyle note about Person A's work."
+      "teddyWork": "Optional lifestyle note about Teddy's work."
     }
   },
   "phases": [
@@ -25,12 +29,12 @@
       "name": "Current — dual income",
       "period": "Now → 2028",
       "note": "Baseline phase. Income/expense keys are display labels; keep at least one expense named exactly like budget_tracking.joint.targetExpenseKey (default \"Family budget\").",
-      "income": { "Alex": 9000, "Jordan": 7000 },
+      "income": { "Teddy": 9000, "Lilly": 7000 },
       "expenses": {
         "Housing": 3200,
         "Family budget": 4500,
-        "Alex personal": 800,
-        "Jordan personal": 600
+        "Teddy personal": 800,
+        "Lilly personal": 600
       },
       "allocation": [
         { "label": "Brokerage", "amount": 2000, "bucket": "brokerage" },
@@ -45,12 +49,12 @@
       "name": "Higher earnings",
       "period": "2028 → 2035",
       "note": "Example next phase — adjust years and numbers to the household.",
-      "income": { "Alex": 12000, "Jordan": 9000 },
+      "income": { "Teddy": 12000, "Lilly": 9000 },
       "expenses": {
         "Housing": 3200,
         "Family budget": 5000,
-        "Alex personal": 1000,
-        "Jordan personal": 800
+        "Teddy personal": 1000,
+        "Lilly personal": 800
       },
       "allocation": [
         { "label": "Brokerage", "amount": 3500, "bucket": "brokerage" },
@@ -65,7 +69,7 @@
       "name": "Semi-retirement",
       "period": "2035+",
       "note": "Work optional. Expenses can be empty if using the P6-style slider later.",
-      "income": { "Alex (optional work)": 3000, "Jordan (optional work)": 2000, "Portfolio (4% SWR)": 6000 },
+      "income": { "Teddy (optional work)": 3000, "Lilly (optional work)": 2000, "Portfolio (4% SWR)": 6000 },
       "expenses": {},
       "allocation": []
     }
@@ -119,11 +123,11 @@
     "growthRate": 0.07,
     "liquidRate": 0.02,
     "croatiaK": 0,
-    "kevin300kYr": 2028,
+    "incomeStepYear": 2028,
     "sabbaticalK": 0,
     "sabbaticalYear": 2035,
     "croatiaYear": 2030,
-    "hannaScenario": "neutral",
+    "partnerScenario": "neutral",
     "goPayoutYear": 2032,
     "goPayout": 0,
     "annualRetirementContribution": 46000

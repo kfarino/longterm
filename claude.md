@@ -44,12 +44,13 @@ Longterm/
                              they feed.
     budget_tracking.json   — three separate spend trackers, not hand-edited:
                              `joint` (Barclays family budget, currently generated
-                             from budget_ledger.csv — see below), `kevinPersonal`
-                             (Kevin's own Chase cards, auto-pulled from Monarch),
+                             from budget_ledger.csv — see below), `personal.<ownerId>`
+                             (each adult's own cards, auto-pulled from Monarch; owner
+                             ids come from goals.json owners[]),
                              and `travel` (per planned trip from goals.json's
                              travel array, any card, Monarch's "Travel & Vacation"
                              category — excluded from the other two even when it
-                             lands on the same card). Each of joint/kevinPersonal
+                             lands on the same card). Each of joint/personal.*
                              has its own `source` ("monarch" or "manual") and
                              `cycleStart`/`cycleDays` — they're on independent
                              clocks until Barclays is linked and mapped (see below).
@@ -77,10 +78,10 @@ Longterm/
 ---
 
 ## Project files
-- `data/goals.json` — planning assumptions (phases, life goals, a unified timeline, decisions, travel, career options, family planning, chart assumptions). Edit this for anything that isn't a live account balance.
-- `data/accounts.json` — net worth actuals. Edit only the `manual`-sourced fields by hand; `monarch`-sourced fields get overwritten by the scheduled pull.
-- `data/budget_tracking.json` — the three spend trackers (joint, Kevin personal, travel). Don't hand-edit `kevinPersonal`/`travel` (Monarch-sourced); `joint` is still CSV-sourced until Barclays links (see above).
-- `data/todos.json` — Planner tab **family/household** action items (`items`) and a shared family weekly goal if one exists (`weeklyGoals`, currently empty), each item tagged `owner: "kevin"|"hanna"`. Deliberately family-only — Kevin and Hanna each track their own work to-dos separately, outside this system; a work item (e.g. Kevin's consulting outreach) belongs in `goals.json`'s `decisions` as narrative, not as a `weeklyGoals` entry here. Written frequently, including by the Telegram bot (`scripts/telegram-bot-poll.mjs`), which reads/writes it directly — `dateAdded` matters more than `deadline` here, since the bot's weekly recap (`scripts/telegram-bot-recap.mjs`) nudges about family items that have sat a while, not deadline enforcement.
+- `data/goals.json` — planning assumptions (owners, phases, life goals, a unified timeline, decisions, travel, career options, family planning, chart assumptions). Edit this for anything that isn't a live account balance. `owners: [{ id, displayName }]` is the source of truth for adult ids used in accounts + personal budget trackers.
+- `data/accounts.json` — net worth actuals. Edit only the `manual`-sourced fields by hand; `monarch`-sourced fields get overwritten by the scheduled pull. Balance keys under each bucket must match `goals.owners[].id`.
+- `data/budget_tracking.json` — the spend trackers (joint, `personal.<ownerId>`, travel). Don't hand-edit `personal`/`travel` when Monarch-sourced.
+- `data/todos.json` — Planner tab **family/household** action items (`items`) and a shared family weekly goal if one exists (`weeklyGoals`, currently empty), each item tagged `owner` with an id from `goals.owners`. Deliberately family-only — each adult tracks their own work to-dos separately, outside this system; a work item belongs in `goals.json`'s `decisions` as narrative, not as a `weeklyGoals` entry here. Written frequently, including by the Telegram bot (`scripts/telegram-bot-poll.mjs`), which reads/writes it directly — `dateAdded` matters more than `deadline` here, since the bot's weekly recap (`scripts/telegram-bot-recap.mjs`) nudges about family items that have sat a while, not deadline enforcement.
 - `data/month_plan_events.json` — Month Plan calendar events, moved off browser localStorage (2026-07-31) onto this shared file so both the dashboard (via `scripts/dashboard-server.mjs`'s local API, `npm run dev`) and the Telegram bot's dining tools can read/write the same live plan. Kinds: `dining` (`set_dinner_plan` routine picks), `family` (social/spend — dinners with friends, etc.), `schedule` (appointments/logistics — PT, pediatrician; Google Cal only). The dashboard Month Plan shows and budgets only `dining` + `family` (2026-08-04); `schedule` syncs to Family Planner but is hidden from the spend view. `add_family_event` classifies via `kind` / `classifyEventKind(title)`.
 - `scripts/financial-context.mjs` — read-only budget pace / savings goal / decisions math, ported once from `dashboard_v5.html`'s inline script (2026-07-31) so the dashboard, the bot's on-demand Q&A tools (`get_budget_status`/`get_savings_goals`/`get_decisions`), and the recap script below all agree on the same numbers instead of re-deriving them.
 - `scripts/telegram-bot-recap.mjs` — sends a dynamically-composed weekly recap (one Anthropic text completion over that week's budget/dining/stale-todo/decision/calendar signal, not a fixed template) into the same Telegram group, Sun+Thu mornings via `install-telegram-recap-scheduled-task.ps1`. Dedup log: `data/telegram-recap-log.jsonl` (one line per date actually sent, so an overlapping/retried run can't double-send). Deliberately scoped to the current week only (2026-08-02) — no long-term savings-goal progress (that's the dashboard's job, a different cadence); budget pace must always cite real dollar figures, never a bare adjective. `diningSummary()` threads an accumulating exclude set across its 3 occasion calls to `get_dining_plan` (its optional `extraExcludeNames` param) so a week's 3 dining suggestions don't all independently converge on the same top-scored favorite — a real bug this fixed (all 3 slots suggested "Terra Eataly" in one live recap). Fetches calendar data once per run and passes it into `diningContext.calendarEvents` — the recap always names any non-recurring event on either calendar itself, but per-occasion calendar coverage is checked inside `get_dining_plan` (see below), not the recap's own prompt.
@@ -110,7 +111,7 @@ Longterm/
 This section is temporary: it only applies to `budget_tracking.json`'s `joint` tracker, and only
 until Barclays links in Monarch (see the follow-up note above), at which point
 `budget-tracking-pull.mjs` takes over the joint tracker the same way it already handles
-`kevinPersonal` and `travel`.
+`personal` and `travel`.
 
 `budget_ledger.csv` is the **only** place raw transaction data lives for the joint tracker.
 `data/budget_tracking.json`'s `joint` field (which feeds both `dashboard_v5.html`'s Joint panel and

@@ -492,18 +492,21 @@ export function log_decision(goals, { title, summary, status }) {
 // Read-only — reports joint/personal pace (on/over, and by how much) plus
 // travel trip actuals-vs-budgeted. financialContext.budgetStatus is
 // pre-computed by scripts/financial-context.mjs (loadBudgetStatus), the
-// same math the dashboard's Joint/Kevin personal trackers use.
+// same math the dashboard's Joint/personal trackers use.
 export function get_budget_status(financialContext) {
-  const { joint, kevinPersonal, travel } = financialContext.budgetStatus;
+  const { joint, personal, travel } = financialContext.budgetStatus;
   const paceLine = (label, t) => {
     if (!t) return `${label}: no data yet.`;
     const pace = t.variance > 0 ? 'over pace' : 'on pace';
     return `${label}: ${fmtMoney(t.total)} logged, projected ${fmtMoney(t.projected)} vs ${fmtMoney(t.target)} target (${pace}, ${t.variance >= 0 ? '+' : ''}${fmtMoney(t.variance)}).`;
   };
-  const travelLines = travel.length
+  const personalLines = Object.values(personal || {})
+    .map((p) => paceLine(p.label || p.displayName || 'Personal', p))
+    .join('\n');
+  const travelLines = (travel || []).length
     ? travel.map((t) => `${t.label}: ${fmtMoney(t.actual)}${t.budgetedAmount != null ? ` / ${fmtMoney(t.budgetedAmount)}` : ' (already paid)'}`).join('\n')
     : 'No active trips.';
-  return { reply: `${paceLine('Joint', joint)}\n${paceLine('Kevin personal', kevinPersonal)}\n\nTravel:\n${travelLines}` };
+  return { reply: `${paceLine(joint?.label || 'Joint', joint)}${personalLines ? `\n${personalLines}` : ''}\n\nTravel:\n${travelLines}` };
 }
 
 // Read-only — reports every savings goal's progress percentage.

@@ -110,13 +110,15 @@ async function main() {
   // so this is just picking which ones — deliberately not the work
   // calendar, since that's a separate concern from this household planner.
   console.log('\nWhich calendars should the bot be able to read from (for questions like "what\'s on the calendar")?');
-  console.log('Enter each calendar\'s id (usually its email address) — its own personal calendar\'s id is just that account\'s email.');
-  console.log('Do NOT include a work calendar (e.g. kevinfarino@herohealth.com) — personal/family only.');
-  const kevinPersonalId = await prompt('Kevin\'s personal calendar id (blank to skip): ');
-  const hannaId = await prompt('Hanna\'s calendar id (blank to skip): ');
+  console.log('Enter each calendar\'s id (usually its email address) — a personal calendar id is typically that account\'s email.');
+  console.log('Do NOT include a work calendar — personal/family only.');
+  const firstId = await prompt('First adult\'s personal calendar id (blank to skip): ');
+  const firstLabel = firstId.trim() ? (await prompt('Label for that calendar (e.g. first name): ')) : '';
+  const secondId = await prompt('Second adult\'s personal calendar id (blank to skip): ');
+  const secondLabel = secondId.trim() ? (await prompt('Label for that calendar (e.g. first name): ')) : '';
   const readCalendarIds = [
-    kevinPersonalId.trim() && `${kevinPersonalId.trim()}|Kevin`,
-    hannaId.trim() && `${hannaId.trim()}|Hanna`,
+    firstId.trim() && `${firstId.trim()}|${(firstLabel.trim() || 'Adult 1')}`,
+    secondId.trim() && `${secondId.trim()}|${(secondLabel.trim() || 'Adult 2')}`,
   ].filter(Boolean).join(',');
 
   writeEnvFile(envPath, {

@@ -29,6 +29,10 @@ const seedTodos = () => ({
 });
 
 const seedGoals = () => ({
+  owners: [
+    { id: 'kevin', displayName: 'Kevin' },
+    { id: 'hanna', displayName: 'Hanna' },
+  ],
   diningRoutine: [
     { dayOfWeek: 3, tier: 'mid', dynamic: false, requiresTag: 'familyFriendly' },
     { dayOfWeek: 5, tier: 'mid', dynamic: true, requiresTag: 'dinnerSpot' },
@@ -53,7 +57,9 @@ const seedFavoritePlaces = () => ({
 
 const seedBudgetTracking = () => ({
   joint: { targetExpenseKey: 'Family budget', weeks: [{ actual: 1000, days: 7 }], cycleDays: 30 },
-  kevinPersonal: { targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 },
+  personal: {
+    kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 },
+  },
   travel: { trips: [{ label: 'Test Trip', actual: 500, budgetedAmount: 1000 }] },
 });
 

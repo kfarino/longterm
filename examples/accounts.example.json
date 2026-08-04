@@ -1,62 +1,62 @@
 {
   "meta": {
-    "description": "EXAMPLE net-worth actuals — fictional. Copy to data/accounts.json. Use source \"manual\" until Monarch mapping is set up. Owner keys kevin/hanna are fixed by the app (Person A / Person B); put real people in those slots.",
+    "description": "EXAMPLE net-worth actuals — fictional. Copy to data/accounts.json. Use source \"manual\" until Monarch mapping is set up. Balance keys under each bucket must match owner ids from goals.json owners[] (example: teddy / lilly).",
     "asOf": "YYYY-MM-DD",
     "reconciliationNotes": "Filled during first-time setup. Leave mapping.accounts empty until Monarch is linked."
   },
   "balances": {
     "retirement": {
-      "kevin": {
+      "teddy": {
         "amount": 120000,
         "source": "manual",
-        "note": "Person A retirement total (401k/IRA/etc.)."
+        "note": "Teddy retirement total (401k/IRA/etc.)."
       },
-      "hanna": {
+      "lilly": {
         "amount": 95000,
         "source": "manual",
-        "note": "Person B retirement total."
+        "note": "Lilly retirement total."
       }
     },
     "brokerage": {
-      "kevin": {
+      "teddy": {
         "amount": 80000,
         "source": "manual",
-        "note": "Person A taxable brokerage."
+        "note": "Teddy taxable brokerage."
       },
-      "hanna": {
+      "lilly": {
         "amount": 45000,
         "source": "manual",
-        "note": "Person B taxable brokerage."
+        "note": "Lilly taxable brokerage."
       }
     },
     "cash": {
-      "kevin": {
+      "teddy": {
         "amount": 15000,
         "source": "manual",
-        "note": "Person A cash / HYSA / checking."
+        "note": "Teddy cash / HYSA / checking."
       },
-      "hanna": {
+      "lilly": {
         "amount": 12000,
         "source": "manual",
-        "note": "Person B cash."
+        "note": "Lilly cash."
       }
     },
     "homeEquity": {
-      "kevin": {
+      "teddy": {
         "amount": 100000,
         "source": "manual",
-        "note": "Person A's share of home equity (or full amount on one side and 0 on the other)."
+        "note": "Teddy's share of home equity (or full amount on one side and 0 on the other)."
       },
-      "hanna": {
+      "lilly": {
         "amount": 100000,
         "source": "manual",
-        "note": "Person B's share of home equity."
+        "note": "Lilly's share of home equity."
       }
     }
   },
   "futureAssets": [],
   "mapping": {
-    "notes": "Monarch get_accounts numeric id → balance field. Leave accounts empty for manual-only setup. Example target paths: balances.brokerage.kevin or balances.cash.kevin.components.Ally Savings (if you add a components array).",
+    "notes": "Monarch get_accounts numeric id → balance field. Leave accounts empty for manual-only setup. Example target paths: balances.brokerage.teddy or balances.cash.teddy.components.Ally Savings (if you add a components array).",
     "accounts": []
   }
 }

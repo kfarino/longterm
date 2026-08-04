@@ -3,6 +3,8 @@
 // accounts.json + budget_tracking.json. This file is never hand-edited —
 // goals.json is the source of truth for every figure that appears here.
 // Run after editing goals.json/accounts.json, same as build-data.mjs.
+// Owner columns and personal trackers come from goals.owners[] — no hardcoded
+// person ids.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +17,7 @@ const goals = JSON.parse(readFileSync(join(here, 'goals.json'), 'utf8'));
 const accounts = JSON.parse(readFileSync(join(here, 'accounts.json'), 'utf8'));
 const budget = JSON.parse(readFileSync(join(here, 'budget_tracking.json'), 'utf8'));
 
+const owners = goals.owners || [];
 const fmt = (n) => '$' + Math.round(n).toLocaleString();
 const fmtK = (n) => n >= 1000000 ? '$' + (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M' : '$' + Math.round(n / 1000) + 'K';
 
@@ -35,21 +38,29 @@ function expenseTable(phase) {
     (phase.allocation.length ? `\n\n**Surplus allocation**\n\n| | Monthly |\n|---|---|\n${alloc}` : '');
 }
 
-const retK = accounts.balances.retirement.kevin.amount;
-const retH = accounts.balances.retirement.hanna.amount;
-const brokK = accounts.balances.brokerage.kevin.amount;
-const brokH = accounts.balances.brokerage.hanna.amount;
-const cashK = accounts.balances.cash.kevin.amount;
-const cashH = accounts.balances.cash.hanna.amount;
-const heK = accounts.balances.homeEquity.kevin.amount;
-const heH = accounts.balances.homeEquity.hanna.amount;
-const combinedNW = retK + retH + brokK + brokH + cashK + cashH + heK + heH;
+function ownerAmount(bucket, ownerId) {
+  return accounts.balances[bucket]?.[ownerId]?.amount || 0;
+}
+
+function sumBucket(bucket) {
+  return owners.reduce((s, o) => s + ownerAmount(bucket, o.id), 0);
+}
+
+const combinedNW =
+  sumBucket('retirement') + sumBucket('brokerage') + sumBucket('cash') + sumBucket('homeEquity');
+
+const assetHeader = `| Asset | ${owners.map((o) => o.displayName).join(' | ')} | Combined |`;
+const assetSep = `|---|${owners.map(() => '---').join('|')}|---|`;
+function assetRow(label, bucket) {
+  const cells = owners.map((o) => fmt(ownerAmount(bucket, o.id))).join(' | ');
+  return `| ${label} | ${cells} | ${fmt(sumBucket(bucket))} |`;
+}
 
 const currentPhase = goals.phases[0];
 function trackerTarget(tracker) { return currentPhase.expenses[tracker.targetExpenseKey]; }
 
 function weeksTable(tracker) {
-  if (!tracker.weeks.length) return '*No weeks logged yet this cycle.*';
+  if (!tracker.weeks?.length) return '*No weeks logged yet this cycle.*';
   return `| Week | Actual | Days |\n|---|---|---|\n${tracker.weeks.map((w) => `| ${w.weekOf} | ${fmt(w.actual)} | ${w.days} |`).join('\n')}`;
 }
 
@@ -63,6 +74,25 @@ function tripsTable(travel) {
   return `| Trip | Budgeted | Actual |\n|---|---|---|\n${rows}${unmatchedNote}`;
 }
 
+const profile = goals.family.profile || {};
+const ownerProfileLines = owners
+  .map((o) => `- **${o.displayName}** — ${profile[o.id] || '(no bio yet)'}`)
+  .join('\n');
+const otherProfileKeys = Object.keys(profile).filter((k) => !owners.some((o) => o.id === k));
+const otherProfileLines = otherProfileKeys
+  .map((k) => `- **${k}** — ${profile[k]}`)
+  .join('\n');
+
+const personalSections = owners.map((o) => {
+  const tracker = budget.personal?.[o.id];
+  if (!tracker) return '';
+  const label = tracker.label || `${o.displayName} personal`;
+  return `### ${label} — target ${fmt(trackerTarget(tracker))}/mo
+*Source: ${tracker.source}.* ${tracker.note || ''}
+
+${weeksTable(tracker)}`;
+}).filter(Boolean).join('\n\n');
+
 const lifeGoalsSection = goals.lifeGoals.map((g, i) =>
   `### ${i + 1}. ${g.name}${g.targetYear ? ` (~${g.targetYear})` : ''}\n- Target: **${fmtK(g.targetAmount)}**${g.status === 'active' ? '' : ` — **${g.status}**`}\n- ${g.note}`
 ).join('\n\n');
@@ -72,100 +102,95 @@ const travelSection = goals.travel.map((t) =>
 ).join('\n');
 
 const timelineSection = goals.timeline.map((t) => `| ${t.year} | ${t.title}${t.detail ? ' — ' + t.detail : ''} |`).join('\n');
-const openDecisionsSection = goals.openDecisions.map((d) => `| ${d.decision} | ${d.status} |`).join('\n');
-const careerSection = goals.careerOptions.map((c, i) => `${i + 1}. ${c}`).join('\n');
+const decisions = goals.decisions || goals.openDecisions || [];
+const openDecisionsSection = decisions.map((d) => {
+  if (d.decision) return `| ${d.decision} | ${d.status} |`;
+  return `| ${d.title} | ${d.status} |`;
+}).join('\n');
+const careerSection = (goals.careerOptions || []).map((c, i) => `${i + 1}. ${c}`).join('\n');
 
-const md = `# Kevin & Hanna Farino — Life & Financial Goal Plan
+const md = `# ${goals.family.name} — Life & Financial Goal Plan
 *Generated from data/goals.json + data/accounts.json — do not hand-edit. Last regenerated: ${new Date().toISOString().slice(0, 10)} | Framework: ${goals.family.framework}*
 
 ---
 
-## 👨‍👩‍👧 Family Profile
-- **Kevin Farino** — ${goals.family.profile.kevin}
-- **Hanna Kamaric** — ${goals.family.profile.hanna}
-- **Baby** — ${goals.family.profile.baby}
-- **Location** — ${goals.family.location}
-- **Au pair** — ${goals.family.profile.auPair}
-- **Kevin's work** — ${goals.family.profile.kevinWork}
+## Family Profile
+${ownerProfileLines}
+${otherProfileLines ? otherProfileLines + '\n' : ''}- **Location** — ${goals.family.location}
 
 ---
 
-## 💰 Income by phase
+## Income by phase
 
 ${goals.phases.map((p) => `### Phase ${p.id} — ${p.name} (${p.period})\n${incomeTable(p)}`).join('\n\n')}
 
 ---
 
-## 📊 Monthly Expenses by phase
+## Monthly Expenses by phase
 
 ${goals.phases.filter((p) => Object.keys(p.expenses).length).map((p) => `### Phase ${p.id} — ${p.name}\n${expenseTable(p)}`).join('\n\n')}
 
 ---
 
-## 🏦 Assets
+## Assets
 *As of ${accounts.meta.asOf}. See data/accounts.json for per-field sourcing (Monarch-linked vs. manual).*
 
-| Asset | Kevin | Hanna | Combined |
-|---|---|---|---|
-| Home equity | ${fmt(heK)} | ${fmt(heH)} | ${fmt(heK + heH)} |
-| Retirement | ${fmt(retK)} | ${fmt(retH)} | ${fmt(retK + retH)} |
-| Brokerage | ${fmt(brokK)} | ${fmt(brokH)} | ${fmt(brokK + brokH)} |
-| Cash | ${fmt(cashK)} | ${fmt(cashH)} | ${fmt(cashK + cashH)} |
-| **Combined net worth** | | | **${fmt(combinedNW)}** |
+${assetHeader}
+${assetSep}
+${assetRow('Home equity', 'homeEquity')}
+${assetRow('Retirement', 'retirement')}
+${assetRow('Brokerage', 'brokerage')}
+${assetRow('Cash', 'cash')}
+| **Combined net worth** | ${owners.map(() => '').join(' | ')} | **${fmt(combinedNW)}** |
 
 ---
 
-## 📅 Spend Tracking
-*Three separate trackers — travel is excluded from the other two even when it lands on the same card.*
+## Spend Tracking
+*Travel is excluded from joint/personal even when it lands on the same card.*
 
-### Joint (Barclays) — target ${fmt(trackerTarget(budget.joint))}/mo
-*Source: ${budget.joint.source}.* ${budget.joint.note}
+### Joint — target ${fmt(trackerTarget(budget.joint))}/mo
+*Source: ${budget.joint.source}.* ${budget.joint.note || ''}
 
 ${weeksTable(budget.joint)}
 
-### Kevin personal — target ${fmt(trackerTarget(budget.kevinPersonal))}/mo
-*Source: ${budget.kevinPersonal.source}.* ${budget.kevinPersonal.note}
-
-${weeksTable(budget.kevinPersonal)}
+${personalSections}
 
 ### Travel
-${budget.travel.note}
+${budget.travel.note || ''}
 
 ${tripsTable(budget.travel)}
 
 ---
 
-## 🎯 Life Goals (confirmed)
+## Life Goals (confirmed)
 
 ${lifeGoalsSection}
 
 ---
 
-## ✈️ Travel Goals
+## Travel Goals
 *Funded from surplus flex — not a fixed expense.*
 
 ${travelSection}
 
 ---
 
-## 👶 Family Planning
+## Family Planning
 
-**Baby #2 target: ${goals.familyPlanning.baby2TargetYear}**
-**Baby #3 target: ${goals.familyPlanning.baby3TargetYear}**
+**Baby #2 target: ${goals.familyPlanning?.baby2TargetYear || '—'}**
+**Baby #3 target: ${goals.familyPlanning?.baby3TargetYear || '—'}**
 
-${goals.familyPlanning.note}
-
----
-
-## 💼 Kevin's Career Path
-
-**Target:** $300K+ total comp. Load-bearing for all goals.
-
-${careerSection}
+${goals.familyPlanning?.note || ''}
 
 ---
 
-## 📋 Open Decisions
+## Career Path
+
+${careerSection || '*No career options listed.*'}
+
+---
+
+## Open Decisions
 
 | Decision | Status |
 |---|---|
@@ -173,7 +198,7 @@ ${openDecisionsSection}
 
 ---
 
-## 🗓️ Timeline
+## Timeline
 
 | Date | Event |
 |---|---|

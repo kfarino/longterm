@@ -26,29 +26,44 @@ export function computeTrackerPacing(tracker) {
 // Reads budget_tracking.json + goals.json's phase-derived target (same
 // "target is derived from the current phase's expense line, never a
 // separately hand-typed number" rule build-data.mjs already enforces) and
-// returns pacing for all three trackers.
+// returns pacing for joint + each personal.<ownerId> tracker.
 export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
   const bt = JSON.parse(fs.readFileSync(budgetTrackingPath, 'utf8'));
   const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
   const currentPhaseExpenses = goals.phases[0].expenses;
+  const owners = goals.owners || [];
 
   const joint = { ...bt.joint, target: currentPhaseExpenses[bt.joint.targetExpenseKey] };
-  const kevinPersonal = { ...bt.kevinPersonal, target: currentPhaseExpenses[bt.kevinPersonal.targetExpenseKey] };
+  const personal = {};
+  for (const [ownerId, tracker] of Object.entries(bt.personal || {})) {
+    const withTarget = { ...tracker, target: currentPhaseExpenses[tracker.targetExpenseKey] };
+    const owner = owners.find((o) => o.id === ownerId);
+    personal[ownerId] = {
+      ...computeTrackerPacing(withTarget),
+      target: withTarget.target,
+      label: tracker.label || `${owner ? owner.displayName : ownerId} personal`,
+      displayName: owner ? owner.displayName : ownerId,
+    };
+  }
 
   return {
-    joint: { ...computeTrackerPacing(joint), target: joint.target },
-    kevinPersonal: { ...computeTrackerPacing(kevinPersonal), target: kevinPersonal.target },
+    joint: { ...computeTrackerPacing(joint), target: joint.target, label: joint.label || 'Joint' },
+    personal,
     travel: bt.travel.trips.map((t) => ({ label: t.label, actual: t.actual, budgetedAmount: t.budgetedAmount })),
   };
 }
 
+function sumOwnerAmounts(bucket) {
+  return Object.values(bucket || {}).reduce((s, entry) => s + (entry?.amount || 0), 0);
+}
+
 // Mirrors renderGoalsSection()'s current-vs-target math, including the
-// trackLiveBrokerage special case (Croatia's goal tracks the live combined
+// trackLiveBrokerage special case (brokerage goal tracks the live combined
 // brokerage total rather than a hand-typed number).
 export function loadSavingsGoals(goalsPath, accountsPath) {
   const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
   const accounts = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
-  const liveBrokerage = accounts.balances.brokerage.kevin.amount + accounts.balances.brokerage.hanna.amount;
+  const liveBrokerage = sumOwnerAmounts(accounts.balances.brokerage);
 
   return goals.lifeGoals.map((g) => {
     const current = g.trackLiveBrokerage ? liveBrokerage : g.current;
@@ -71,7 +86,7 @@ export function loadDecisions(goalsPath) {
 // loader does (a fresh checkout before these files exist shouldn't crash
 // the bot, just report emptier answers).
 export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath }) {
-  let budgetStatus = { joint: null, kevinPersonal: null, travel: [] };
+  let budgetStatus = { joint: null, personal: {}, travel: [] };
   try { budgetStatus = loadBudgetStatus(budgetTrackingPath, goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let savingsGoals = [];
   try { savingsGoals = loadSavingsGoals(goalsPath, accountsPath); } catch { /* missing/unparseable — degrade to empty */ }

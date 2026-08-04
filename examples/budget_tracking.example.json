@@ -1,6 +1,6 @@
 {
   "meta": {
-    "description": "EXAMPLE spend trackers — fictional. Copy to data/budget_tracking.json. joint.targetExpenseKey must match an expense name on phases[0] in goals.json (default \"Family budget\"). kevinPersonal is Person A's personal tracker (key name is fixed).",
+    "description": "EXAMPLE spend trackers — fictional. Copy to data/budget_tracking.json. joint.targetExpenseKey must match an expense name on phases[0] in goals.json (default \"Family budget\"). personal.<ownerId> holds each adult's personal tracker (owner ids from goals.json owners[]).",
     "lastRegenerated": "YYYY-MM-DD",
     "reconciliationNotes": "Use source \"manual\" with a couple of sample weeks until Monarch transaction mapping is live."
   },
@@ -41,21 +41,23 @@
       }
     ]
   },
-  "kevinPersonal": {
-    "label": "Person A personal",
-    "targetExpenseKey": "Alex personal",
-    "source": "manual",
-    "cycleStart": "2026-08-01",
-    "cycleDays": 31,
-    "note": "Person A personal card spend. targetExpenseKey should match a phase-1 expense label (example uses \"Alex personal\").",
-    "weeks": [
-      {
-        "weekOf": "Aug 1–7",
-        "actual": 150,
-        "days": 7
-      }
-    ],
-    "categories": []
+  "personal": {
+    "teddy": {
+      "label": "Teddy personal",
+      "targetExpenseKey": "Teddy personal",
+      "source": "manual",
+      "cycleStart": "2026-08-01",
+      "cycleDays": 31,
+      "note": "Personal card spend. targetExpenseKey should match a phase-1 expense label.",
+      "weeks": [
+        {
+          "weekOf": "Aug 1–7",
+          "actual": 150,
+          "days": 7
+        }
+      ],
+      "categories": []
+    }
   },
   "travel": {
     "label": "Travel (any card)",
@@ -64,9 +66,11 @@
     "unmatched": []
   },
   "mapping": {
-    "notes": "get_transactions uses account display-name labels (not numeric ids). Fill after Monarch link.",
+    "notes": "get_transactions uses account display-name labels (not numeric ids). Fill after Monarch link. personalAccountLabels maps owner id → label array.",
     "jointAccountLabels": [],
-    "kevinPersonalAccountLabels": [],
+    "personalAccountLabels": {
+      "teddy": []
+    },
     "travelCategoryNames": ["Travel & Vacation"]
   }
 }
