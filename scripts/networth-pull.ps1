@@ -1,24 +1,12 @@
 param(
     [string]$OutputPath = (Join-Path $PSScriptRoot '..\data\accounts.json'),
-    [string]$EnvFile = '',
-    [string]$McpServerExe = '',
+    [string]$EnvFile = (Join-Path $env:USERPROFILE '.longterm\monarch.env'),
+    [string]$McpServerExe = (Join-Path $env:USERPROFILE '.longterm\monarch-mcp-venv\Scripts\monarch-mcp-jamiew.exe'),
     [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
-$longtermHome = Join-Path $env:USERPROFILE '.longterm'
-if (-not $EnvFile) {
-    $preferred = Join-Path $longtermHome 'monarch.env'
-    $legacy = Join-Path $env:USERPROFILE '.scrooge\monarch.env'
-    if (Test-Path -LiteralPath $preferred) { $EnvFile = $preferred }
-    elseif (Test-Path -LiteralPath $legacy) { $EnvFile = $legacy }
-    else { $EnvFile = $preferred }
-}
-if (-not $McpServerExe) {
-    $McpServerExe = Join-Path $longtermHome 'monarch-mcp-venv\Scripts\monarch-mcp-jamiew.exe'
-}
 
 $NodeScript = Join-Path $PSScriptRoot 'networth-pull.mjs'
 

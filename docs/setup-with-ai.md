@@ -8,7 +8,7 @@ You are helping someone set up **Longterm** (household finance dashboard + optio
 - Never commit `data/goals.json`, `data/accounts.json`, `data/budget_tracking.json`, `data/data.js`, goal-plan markdown, todos, month-plan events, Telegram state, or favorites (they are gitignored — household-local only).
 - Start from `examples/*.example.json` via `npm run seed` — fictional Teddy & Lilly — then replace with this household’s facts.
 - Owners are configurable: `goals.json` has `"owners": [{ "id", "displayName" }, ...]`. Use those same `id` values under `accounts.json` balances and `budget_tracking.personal.<id>` / `mapping.personalAccountLabels.<id>`. Do not hardcode person names in code.
-- Secrets and tools live under `~/.longterm/` (not under a hardcoded username path). Prefer `~/.longterm/monarch.env`; legacy `~/.scrooge/monarch.env` is still accepted if present.
+- Secrets and tools live under `~/.longterm/` (not under a hardcoded username path): `monarch.env`, `telegram.env`, `google-calendar.env`, and `monarch-mcp-venv`.
 - After any edit to goals/accounts/budget JSON, run:
   - `npm run build` (or `node data/build-data.mjs` + `node data/build-goal-plan-md.mjs`)
 - Confirm each major milestone (“Dashboard loads with your names”) before moving on.
@@ -77,7 +77,7 @@ MONARCH_EMAIL=their@email.com
 MONARCH_PASSWORD=their-password
 ```
 
-3. Defaults already resolve via `scripts/longterm-paths.mjs` (`~/.longterm/…`, with a legacy fallback to `~/.scrooge/monarch.env` if that file exists). Override with `--monarch-env-file` / `--mcp-server-exe` only if needed.
+3. Defaults already resolve via `scripts/longterm-paths.mjs` to `~/.longterm/…`. Override with `--monarch-env-file` / `--mcp-server-exe` only if needed.
 4. Install the Monarch MCP venv: Python 3.12 venv at `~/.longterm/monarch-mcp-venv`, `pip install monarch-mcp-jamiew==0.4.0`.
 5. Run a dry diagnostic: call `get_accounts` via the pull tooling or a one-off script; list account ids/labels.
 6. Fill `data/accounts.json` → `mapping.accounts` with `{ monarchId, label, target }` paths.
