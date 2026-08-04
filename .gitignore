@@ -1,0 +1,6 @@
+# Real personal financial data — deliberately never committed. See README.md.
+data/accounts.json
+data/budget_tracking.json
+data/goals.json
+data/data.js
+kevin_hanna_goal_plan.md

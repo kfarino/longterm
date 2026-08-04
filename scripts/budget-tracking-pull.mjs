@@ -1,0 +1,672 @@
+#!/usr/bin/env node
+// Pulls current-cycle transactions from Monarch and refreshes
+// Longterm/data/budget_tracking.json's joint/Kevin-personal/travel trackers.
+// Sibling to networth-pull.mjs in this same folder (same JSON-RPC/auth/
+// sanitize/atomic-write pattern), calling get_transactions instead of
+// get_accounts. Part of this project's own self-contained daily pull —
+// see run-daily-pull.ps1 and install-scheduled-task.ps1 in this same folder.
+//
+// Runs monarch-mcp-jamiew from a persistent local venv (C:\Users\Family\.longterm\monarch-mcp-venv)
+// rather than via `uvx`/`uv` — see networth-pull.mjs's header for why.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import readline from 'node:readline';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function parseArgs(argv) {
+  const args = {
+    outputPath: path.join(repoRoot, 'data', 'budget_tracking.json'),
+    goalsPath: path.join(repoRoot, 'data', 'goals.json'),
+    envFile: 'C:\\Users\\Family\\.scrooge\\monarch.env',
+    mcpServerExe: 'C:\\Users\\Family\\.longterm\\monarch-mcp-venv\\Scripts\\monarch-mcp-jamiew.exe',
+    limit: 1000,
+    dryRun: false,
+  };
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--dry-run') {
+      args.dryRun = true;
+    } else if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      const value = argv[i + 1];
+      if (!value || value.startsWith('--')) {
+        throw new Error(`Missing value for ${arg}`);
+      }
+      i += 1;
+      if (key === 'output-path') args.outputPath = value;
+      else if (key === 'goals-path') args.goalsPath = value;
+      else if (key === 'monarch-env-file') args.envFile = value;
+      else if (key === 'mcp-server-exe') args.mcpServerExe = value;
+      else if (key === 'limit') args.limit = Number.parseInt(value, 10);
+      else throw new Error(`Unknown argument: ${arg}`);
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  return args;
+}
+
+// Parses a simple KEY=VALUE .env file (no quoting/multi-line support needed —
+// monarch.env has never used either) into a plain object.
+function parseEnvFile(envFilePath) {
+  const vars = {};
+  for (const line of fs.readFileSync(envFilePath, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+    if (match) vars[match[1]] = match[2];
+  }
+  return vars;
+}
+
+function sanitize(value) {
+  return String(value)
+    .replace(/(MONARCH_(?:EMAIL|PASSWORD|MFA_SECRET|SESSION_DIR)=)[^\s]+/gi, '$1[redacted]')
+    .replace(/(TELEGRAM_[A-Z_]*=)[^\s]+/gi, '$1[redacted]')
+    .replace(/(password|secret|token)(["':=\s]+)[^"',\s]+/gi, '$1$2[redacted]');
+}
+
+class McpClient {
+  constructor({ mcpServerExe, envFile }) {
+    this.nextId = 1;
+    this.pending = new Map();
+    this.stderrLines = [];
+    this.proc = spawn(mcpServerExe, [], {
+      cwd: repoRoot,
+      env: { ...process.env, ...parseEnvFile(envFile) },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    this.proc.stderr.setEncoding('utf8');
+    this.proc.stderr.on('data', (chunk) => {
+      for (const line of chunk.split(/\r?\n/)) {
+        if (line.trim()) this.stderrLines.push(sanitize(line).slice(0, 500));
+      }
+    });
+
+    const rl = readline.createInterface({ input: this.proc.stdout });
+    rl.on('line', (line) => this.handleLine(line));
+
+    this.proc.on('exit', (code, signal) => {
+      const error = new Error(`Monarch MCP process exited before completing request: code=${code} signal=${signal || ''}`.trim());
+      for (const { reject } of this.pending.values()) reject(error);
+      this.pending.clear();
+    });
+  }
+
+  handleLine(line) {
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(message, 'id')) return;
+    const pending = this.pending.get(message.id);
+    if (!pending) return;
+    this.pending.delete(message.id);
+    if (message.error) {
+      pending.reject(new Error(message.error.message || JSON.stringify(message.error)));
+    } else {
+      pending.resolve(message.result);
+    }
+  }
+
+  request(method, params = {}) {
+    const id = this.nextId;
+    this.nextId += 1;
+    const payload = { jsonrpc: '2.0', id, method, params };
+    const promise = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Timed out waiting for MCP response to ${method}`));
+      }, 120000);
+      this.pending.set(id, {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
+    });
+    this.proc.stdin.write(`${JSON.stringify(payload)}\n`);
+    return promise;
+  }
+
+  notify(method, params = {}) {
+    this.proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
+  }
+
+  async initialize() {
+    await this.request('initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'longterm-budget-tracking-pull', version: '0.1.0' },
+    });
+    this.notify('notifications/initialized');
+  }
+
+  async callTool(name, args) {
+    const result = await this.request('tools/call', { name, arguments: args });
+    return parseToolResult(result);
+  }
+
+  close() {
+    this.proc.stdin.end();
+    this.proc.kill();
+  }
+}
+
+function parseToolResult(result) {
+  const text = (result?.content || [])
+    .filter((item) => item.type === 'text' && typeof item.text === 'string')
+    .map((item) => item.text)
+    .join('\n');
+  if (!text) return result;
+  let parsed = JSON.parse(text);
+  if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+  return parsed;
+}
+
+function extractTransactions(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.transactions)) return payload.transactions;
+  if (Array.isArray(payload?.results)) return payload.results;
+  if (Array.isArray(payload?.data?.transactions)) return payload.data.transactions;
+  if (Array.isArray(payload?.data?.allTransactions?.results)) return payload.data.allTransactions.results;
+  throw new Error('Could not find a transactions array in Monarch MCP response');
+}
+
+async function fetchTransactions(client, startDate, endDate, limit) {
+  const all = [];
+  let offset = 0;
+  while (true) {
+    const payload = await client.callTool('get_transactions', {
+      start_date: startDate,
+      end_date: endDate,
+      limit,
+      offset,
+      verbose: false,
+      hidden_from_reports: false,
+    });
+    const page = extractTransactions(payload);
+    all.push(...page);
+    if (page.length < limit) break;
+    offset += limit;
+  }
+  return all;
+}
+
+// Monarch/Plaid's own categorization is sometimes just wrong or too generic
+// for this household's budget tracking (e.g. a restaurant tagged as a bare
+// "Credit Card Payment", or an AI-subscription merchant Monarch doesn't
+// recognize at all). Matched case-insensitively as a substring against the
+// merchant name, checked before falling back to Monarch's given category.
+// Applied inside categoryName() itself (not at each call site) so every
+// caller — the main joint/Kevin-personal categorization loop and
+// refreshFavoritePlaces()'s separate dining-detection pass — benefits
+// automatically from one source of truth.
+const MERCHANT_CATEGORY_OVERRIDES = [
+  { match: 'r+d', category: 'Restaurants & Bars' },
+  { match: 'anthropic', category: 'Subscriptions' },
+  { match: 'eleven labs', category: 'Subscriptions' },
+  { match: 'elevenlabs', category: 'Subscriptions' },
+  { match: 'grok', category: 'Subscriptions' },
+  { match: 'xai', category: 'Subscriptions' },
+];
+
+function categoryName(transaction) {
+  const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
+  const override = MERCHANT_CATEGORY_OVERRIDES.find((o) => merchant.includes(o.match));
+  if (override) return override.category;
+  if (typeof transaction.category === 'string') return transaction.category;
+  return transaction.category?.name || '';
+}
+
+// One-off tracker reassignments (2026-08-02) — a specific charge that landed
+// on a card its normal per-card routing wouldn't reflect (e.g. a family
+// lunch Kevin covered on his own personal card, which should count against
+// the joint budget, not his personal allowance). Deliberately NOT a standing
+// merchant rule like MERCHANT_CATEGORY_OVERRIDES above — matched by
+// merchant substring + the exact transaction date, so a different charge
+// from the same merchant on a different day still routes normally. Add/
+// remove entries here by hand as one-offs come up; expected to stay short.
+const TRACKER_REASSIGNMENTS = [
+  { merchantMatch: 'sora', date: '2026-08-01', reassignTo: 'joint', note: 'Lunch Kevin covered — a joint/family expense, per Kevin 2026-08-02.' },
+];
+
+function trackerReassignment(transaction) {
+  const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
+  return TRACKER_REASSIGNMENTS.find((r) => merchant.includes(r.merchantMatch) && transaction.date === r.date) || null;
+}
+
+// get_transactions (compact shape) exposes only a display-name string for the
+// account (e.g. "CREDIT CARD (...3939)") — no numeric id, unlike get_accounts.
+function accountLabel(transaction) {
+  if (typeof transaction.account === 'string') return transaction.account;
+  return transaction.account?.displayName || transaction.account?.name || '';
+}
+
+function spendAmount(transaction) {
+  const value = Number(transaction.amount);
+  if (!Number.isFinite(value) || value >= 0) return 0; // only negative (debit) amounts are spend
+  return Math.abs(value);
+}
+
+// Most recent 25th-of-month on or before `today` — the Barclays statement-period
+// convention. This is specific to that card; do not reuse it for other cards.
+function currentCycleStart(today) {
+  const start = new Date(today.getFullYear(), today.getMonth(), 25);
+  if (today.getDate() < 25) start.setMonth(start.getMonth() - 1);
+  return start;
+}
+
+// Kevin's personal Chase cards have no Barclays-style statement-period
+// convention to mirror — calendar-month-to-date is the only assumption that
+// doesn't arbitrarily exclude real recent spend (e.g. a 25th-cycle boundary
+// would cut off spend from the 24th even though it's clearly current).
+function currentMonthStart(today) {
+  return new Date(today.getFullYear(), today.getMonth(), 1);
+}
+
+function daysInMonth(today) {
+  return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+}
+
+const DINING_CATEGORY_NAMES = new Set(['restaurants & bars']);
+const DINING_LOOKBACK_DAYS = 90;
+
+function matchFavorite(merchant, favorites) {
+  const m = merchant.toLowerCase();
+  if (!m) return null;
+  return favorites.find((f) => {
+    const name = f.name.toLowerCase();
+    if (name.length < 5) {
+      // Short names (e.g. "Casa", "Jar") produce false-positive substring
+      // matches against unrelated merchants (e.g. "Casablanca Bistro" would
+      // otherwise match "Casa"). Require a word-boundary match instead of a
+      // raw substring for these.
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return new RegExp(`\\b${escaped}\\b`).test(m);
+    }
+    return m.includes(name) || name.includes(m);
+  }) || null;
+}
+
+function tierFromAvg(avg) {
+  if (avg < 40) return 'cheap';
+  if (avg <= 90) return 'mid';
+  return 'high';
+}
+
+// Self-updates favorite_places.json from transactions budget-tracking-pull.mjs
+// already fetched this run — zero additional Monarch calls. Silently does
+// nothing if favorite_places_raw.json hasn't been synced yet (Task 2 of the
+// dining-recommendations plan) rather than erroring the whole pull.
+// Joint-only: the Month Plan calendar/dining recommendations are a JOINT
+// budget tool (Kevin & Hanna's shared dining/social plan), so recentDiningActivity
+// only ever reflects the joint card. Kevin's personal-card dining (e.g. a
+// solo Baltaire tab he ended up not even being out-of-pocket for) has no
+// bearing on the joint plan and shouldn't show on its calendar or skew its
+// recommendations/tier estimates. jointLabels also filters the EXISTING
+// stored array on every run (not just new entries) so a personal-card charge
+// recorded before this filter existed gets purged on the next run, not just
+// suppressed going forward.
+export function refreshFavoritePlaces(rawPath, outPath, transactions, today, jointLabels) {
+  if (!fs.existsSync(rawPath)) return;
+  let raw;
+  let existing;
+  try {
+    raw = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+    existing = fs.existsSync(outPath)
+      ? JSON.parse(fs.readFileSync(outPath, 'utf8'))
+      : { recentDiningActivity: [] };
+  } catch (error) {
+    console.error(sanitize(`refreshFavoritePlaces: failed to parse dining data, skipping this run's update: ${error.message}`));
+    return;
+  }
+
+  // Identity is the transaction's own stable Monarch `id`, not date/merchant/
+  // amount/account — a charge's amount legitimately changes between pulls
+  // (pending -> posted, e.g. a tip added after the fact) while staying the
+  // same real transaction. Keying by amount instead (pre-2026-08-03) meant an
+  // amount correction looked like a brand-new transaction and got appended
+  // as a duplicate rather than updating the existing entry in place — found
+  // via a real live duplicate (Locanda Portofino, 2026-07-30: $171.11 then
+  // $201.11 once the tip posted, both retained). Two genuinely separate same-
+  // day/same-merchant charges (each with their own real id, e.g. two actual
+  // Tu Madre visits in one day) are correctly kept as two entries.
+  // Entries recorded before this fix have no `id` even though the real
+  // Monarch transaction they represent always has one — the incoming
+  // transaction being fetched again will carry an id same as any other, so
+  // the composite-key fallback below applies whenever there's no id match,
+  // not just when the incoming transaction itself lacks one. Once matched,
+  // the id gets backfilled onto the legacy entry so any later amount change
+  // to that same transaction goes through the id-matched update path above
+  // instead of hitting this fallback (and risking a duplicate) again.
+  const byId = new Map();
+  const legacyByKey = new Map();
+  for (const entry of existing.recentDiningActivity) {
+    if (entry.id) byId.set(entry.id, entry);
+    else legacyByKey.set(`${entry.date}|${entry.merchant}|${entry.amount}|${entry.account}`, entry);
+  }
+
+  const newEntries = [];
+  for (const txn of transactions) {
+    const amount = spendAmount(txn);
+    if (amount === 0) continue;
+    const cat = categoryName(txn).toLowerCase();
+    if (!DINING_CATEGORY_NAMES.has(cat)) continue;
+    const account = accountLabel(txn);
+    if (!jointLabels.has(account)) continue;
+    const merchant = txn.merchant || txn.plaidName || '';
+    const roundedAmount = Math.round(amount * 100) / 100;
+    const id = txn.id || null;
+
+    if (id && byId.has(id)) {
+      const entry = byId.get(id);
+      // Date: keep whichever of the two is EARLIER, not whatever this pull
+      // happens to report. A pending transaction's date is the real moment
+      // of spend; once it posts/settles, Monarch can report a later date
+      // (the bank's settlement date, not a new spend) — found live
+      // (Mendocino Farms: pending 2026-07-30, posted 2026-07-31, same real
+      // charge). Amount is the opposite: take the LATEST value, since a
+      // pending amount can be a pre-tip estimate and the posted amount is
+      // the true final charge (found live: Locanda Portofino, $171.11
+      // pending -> $201.11 posted).
+      entry.date = entry.date < txn.date ? entry.date : txn.date;
+      entry.merchant = merchant;
+      entry.amount = roundedAmount;
+      entry.account = account;
+      entry.matchedPlace = matchFavorite(merchant, raw)?.name ?? null;
+      continue;
+    }
+
+    const legacyKey = `${txn.date}|${merchant}|${roundedAmount}|${account}`;
+    if (legacyByKey.has(legacyKey)) {
+      if (id) legacyByKey.get(legacyKey).id = id;
+      continue;
+    }
+
+    const match = matchFavorite(merchant, raw);
+    const newEntry = {
+      id,
+      date: txn.date,
+      merchant,
+      amount: roundedAmount,
+      matchedPlace: match ? match.name : null,
+      account,
+    };
+    newEntries.push(newEntry);
+    if (id) byId.set(id, newEntry);
+  }
+
+  const cutoff = new Date(today);
+  cutoff.setDate(cutoff.getDate() - DINING_LOOKBACK_DAYS);
+  const recentDiningActivity = [...existing.recentDiningActivity, ...newEntries]
+    .filter((a) => new Date(a.date) >= cutoff && jointLabels.has(a.account))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const places = raw.map((f) => {
+    const visits = recentDiningActivity.filter((a) => a.matchedPlace === f.name);
+    if (!visits.length) return { ...f, observed: null };
+    const avgSpend = Math.round((visits.reduce((s, v) => s + v.amount, 0) / visits.length) * 100) / 100;
+    return {
+      ...f,
+      observed: {
+        tier: tierFromAvg(avgSpend),
+        avgSpend,
+        visitCount: visits.length,
+        lastVisited: visits[visits.length - 1].date,
+      },
+    };
+  });
+
+  writeJson(outPath, {
+    meta: { lastRegenerated: isoDate(today), lookbackDays: DINING_LOOKBACK_DAYS },
+    places,
+    recentDiningActivity,
+  });
+}
+
+function isoDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function weekBucket(txnDate, cycleStart) {
+  const dayIdx = Math.floor((txnDate - cycleStart) / 86400000);
+  return Math.floor(dayIdx / 7);
+}
+
+function writeJson(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp-${process.pid}`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}${os.EOL}`, { encoding: 'utf8' });
+  fs.renameSync(tempPath, filePath);
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+
+  if (args.dryRun) {
+    console.log(JSON.stringify({ ok: true, dryRun: true, outputPath: args.outputPath }));
+    return;
+  }
+
+  if (!fs.existsSync(args.envFile)) throw new Error(`Missing Monarch env file: ${args.envFile}`);
+  if (!fs.existsSync(args.mcpServerExe)) throw new Error(`Missing monarch-mcp-jamiew console script: ${args.mcpServerExe}`);
+  if (!fs.existsSync(args.outputPath)) throw new Error(`Missing Finances budget_tracking.json at ${args.outputPath}`);
+  if (!fs.existsSync(args.goalsPath)) throw new Error(`Missing Finances goals.json at ${args.goalsPath}`);
+
+  const tracking = JSON.parse(fs.readFileSync(args.outputPath, 'utf8'));
+  const goals = JSON.parse(fs.readFileSync(args.goalsPath, 'utf8'));
+
+  const today = new Date();
+  const cycleStart = currentCycleStart(today); // joint (Barclays) cycle
+  const kevinCycleStart = currentMonthStart(today); // Kevin personal cycle
+  const fetchStart = cycleStart < kevinCycleStart ? cycleStart : kevinCycleStart;
+  const startDate = isoDate(fetchStart);
+  const endDate = isoDate(today);
+
+  const client = new McpClient({ mcpServerExe: args.mcpServerExe, envFile: args.envFile });
+  try {
+    await client.initialize();
+    const transactions = await fetchTransactions(client, startDate, endDate, args.limit);
+
+    const travelCategories = new Set(tracking.mapping.travelCategoryNames.map((c) => c.toLowerCase()));
+    const kevinPersonalLabels = new Set(tracking.mapping.kevinPersonalAccountLabels);
+    const jointLabels = new Set(tracking.mapping.jointAccountLabels);
+
+    // Reset the fields this run owns; leave joint (still budget_ledger.csv-sourced) untouched.
+    const kevinBuckets = new Map(); // bucketIndex -> total
+    const kevinCategoryTotals = new Map(); // categoryDisplayName -> total, for the dashboard's spend-by-category drill-down
+    const jointCategoryTotals = new Map();
+    const kevinCategoryTransactions = new Map(); // categoryDisplayName -> [{date, merchant, amount}], for the category drill-down's own line-item drill-down
+    const jointCategoryTransactions = new Map();
+    // Flights/hotels get booked well ahead of the trip itself — matching only
+    // the stay window (startDate..endDate) misses every booking charge. Widen
+    // to a lookback before startDate too. Trips here are spaced far enough
+    // apart that overlap is rare, but if two lookback windows both contain a
+    // charge, attribute it to whichever trip happens soonest (you book your
+    // nearest trip first).
+    const BOOKING_LOOKBACK_DAYS = 300;
+    const trips = goals.travel
+      // A trip needs dates to be a match candidate at all. It's still a
+      // candidate even with no budgetedAmount (e.g. Boston, already paid) —
+      // family-trip charges (on either card) should still route to it
+      // instead of polluting joint/personal totals, per Kevin: Boston is a
+      // family trip even though it happened to be booked on his own card.
+      .filter((t) => t.startDate && t.endDate)
+      .map((t) => {
+        const start = new Date(t.startDate);
+        // A trip with no budgetedAmount is already fully settled (e.g. Boston,
+        // "Already paid") — its booking activity is done, so it only matches
+        // its own stay dates. Widening its lookback too would make it compete
+        // with real upcoming trips (Zagreb, Europe, ...) for every new charge
+        // that happens to fall within its broad pre-trip window, exactly the
+        // collision that mis-flagged real Zagreb charges as ambiguous.
+        const lookbackDays = t.budgetedAmount != null ? BOOKING_LOOKBACK_DAYS : 0;
+        const bookingStart = new Date(start); bookingStart.setDate(bookingStart.getDate() - lookbackDays);
+        return { ...t, start, end: new Date(t.endDate), bookingStart };
+      });
+    const tripActuals = new Map(trips.map((t) => [t.id, { actual: 0, transactions: [] }]));
+    const unmatched = [];
+    const jointBuckets = new Map();
+
+    for (const txn of transactions) {
+      const amount = spendAmount(txn);
+      if (amount === 0) continue;
+      const acct = accountLabel(txn);
+      const catDisplay = categoryName(txn) || 'Uncategorized';
+      const cat = catDisplay.toLowerCase();
+      const txnDate = new Date(txn.date);
+      const summary = { date: txn.date, merchant: txn.merchant || txn.plaidName || '', amount: Math.round(amount * 100) / 100 };
+
+      if (travelCategories.has(cat)) {
+        // If more than one trip's window contains this charge, don't guess —
+        // flag it for manual review instead of risking silent misattribution.
+        const candidates = trips.filter((t) => txnDate >= t.bookingStart && txnDate <= t.end);
+        if (candidates.length === 1) {
+          const bucket = tripActuals.get(candidates[0].id);
+          bucket.actual = Math.round((bucket.actual + amount) * 100) / 100;
+          bucket.transactions.push(summary);
+        } else if (candidates.length > 1) {
+          unmatched.push({ ...summary, ambiguousBetween: candidates.map((t) => t.id) });
+        } else {
+          unmatched.push(summary);
+        }
+        continue; // travel spend never counts toward joint/personal totals
+      }
+
+      // The fetch window starts at the EARLIER of the two cycles (see
+      // fetchStart above), so it can include days before the joint cycle's
+      // own start (e.g. Kevin's cycle starts the 1st, joint's starts the
+      // 25th of the prior month — the fetch has to reach back to the 1st for
+      // Kevin's sake, which drags in ~24 days of joint-card spend from
+      // BEFORE the joint cycle even began). bucketsToWeeks() already only
+      // ever reads non-negative buckets, so those pre-cycle transactions
+      // silently never counted toward `weeks`/`total` — but jointCategoryTotals
+      // had no equivalent guard and was summing them anyway, so category
+      // totals could exceed (and disagree with) the tracker's own logged
+      // total. Guarding on `b >= 0` here makes both aggregates agree.
+      // A reassignment overrides which tracker a charge counts toward,
+      // regardless of which card it's actually on — checked before the
+      // normal per-card routing below, not instead of it, so an
+      // unreassigned charge on either card still routes exactly as before.
+      const reassignment = trackerReassignment(txn);
+      const routeToKevinPersonal = reassignment ? reassignment.reassignTo === 'kevinPersonal' : kevinPersonalLabels.has(acct);
+      const routeToJoint = reassignment ? reassignment.reassignTo === 'joint' : jointLabels.has(acct);
+
+      if (routeToKevinPersonal) {
+        const b = weekBucket(txnDate, kevinCycleStart);
+        if (b >= 0) {
+          kevinBuckets.set(b, Math.round(((kevinBuckets.get(b) || 0) + amount) * 100) / 100);
+          kevinCategoryTotals.set(catDisplay, Math.round(((kevinCategoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
+          if (!kevinCategoryTransactions.has(catDisplay)) kevinCategoryTransactions.set(catDisplay, []);
+          kevinCategoryTransactions.get(catDisplay).push(summary);
+        }
+      } else if (routeToJoint) {
+        const b = weekBucket(txnDate, cycleStart);
+        if (b >= 0) {
+          jointBuckets.set(b, Math.round(((jointBuckets.get(b) || 0) + amount) * 100) / 100);
+          jointCategoryTotals.set(catDisplay, Math.round(((jointCategoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
+          if (!jointCategoryTransactions.has(catDisplay)) jointCategoryTransactions.set(catDisplay, []);
+          jointCategoryTransactions.get(catDisplay).push(summary);
+        }
+      }
+      // Anything else (Ally, Vanguard, Trinet, Ascensus, etc.) isn't a spend card — ignored here.
+    }
+
+    function bucketsToWeeks(buckets, refCycleStart) {
+      const maxBucket = Math.max(-1, ...buckets.keys());
+      const weeks = [];
+      for (let b = 0; b <= maxBucket; b += 1) {
+        const weekStart = new Date(refCycleStart); weekStart.setDate(weekStart.getDate() + b * 7);
+        const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+        const cappedEnd = weekEnd > today ? today : weekEnd;
+        const days = Math.floor((cappedEnd - weekStart) / 86400000) + 1;
+        const label = `${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}–${cappedEnd.toLocaleDateString('en-US', { day: 'numeric' })}` + (days < 7 ? ' (partial)' : '');
+        weeks.push({ weekOf: label, actual: buckets.get(b) || 0, days });
+      }
+      return weeks;
+    }
+
+    // Sorted descending by amount — drives the dashboard's spend-by-category
+    // drill-down. Each category also carries its own transactions (sorted
+    // chronologically), for that drill-down's own line-item drill-down.
+    function categoryTotalsToArray(totals, transactionsByCategory) {
+      return [...totals.entries()]
+        .map(([name, amount]) => ({
+          name,
+          amount,
+          transactions: (transactionsByCategory.get(name) || []).slice().sort((a, b) => a.date.localeCompare(b.date)),
+        }))
+        .sort((a, b) => b.amount - a.amount);
+    }
+
+    tracking.kevinPersonal.weeks = bucketsToWeeks(kevinBuckets, kevinCycleStart);
+    tracking.kevinPersonal.categories = categoryTotalsToArray(kevinCategoryTotals, kevinCategoryTransactions);
+    tracking.kevinPersonal.cycleStart = isoDate(kevinCycleStart);
+    tracking.kevinPersonal.cycleDays = daysInMonth(today);
+    if (jointLabels.size > 0) {
+      tracking.joint.weeks = bucketsToWeeks(jointBuckets, cycleStart);
+      tracking.joint.categories = categoryTotalsToArray(jointCategoryTotals, jointCategoryTransactions);
+      tracking.joint.source = 'monarch';
+      tracking.joint.cycleStart = isoDate(cycleStart);
+      tracking.joint.cycleDays = 30;
+    }
+    // Reset every actively-tracked trip (not just ones this run matched) so a
+    // trip excluded from matching this time doesn't keep a stale
+    // actual/transactions from a previous run. A trip with budgetedAmount:
+    // null is already settled (e.g. Boston) with no live-matching mechanism
+    // that could ever correctly repopulate it once matched — its bare stay-
+    // dates-only window (see the lookbackDays rule above) means a future run
+    // can never re-find those original charges, so overwriting it here would
+    // silently zero out real, possibly manually-backfilled data. Leave it
+    // exactly as it already is in tracking.travel.trips instead.
+    for (const trip of tracking.travel.trips) {
+      if (trip.budgetedAmount == null) continue;
+      const bucket = tripActuals.get(trip.id);
+      trip.actual = bucket ? bucket.actual : 0;
+      trip.transactions = bucket ? bucket.transactions : [];
+    }
+    tracking.travel.unmatched = unmatched;
+    tracking.meta.lastRegenerated = isoDate(today);
+
+    const favoriteRawPath = path.join(path.dirname(args.outputPath), 'favorite_places_raw.json');
+    const favoritePlacesPath = path.join(path.dirname(args.outputPath), 'favorite_places.json');
+    refreshFavoritePlaces(favoriteRawPath, favoritePlacesPath, transactions, today, jointLabels);
+
+    writeJson(args.outputPath, tracking);
+
+    const buildScript = path.join(path.dirname(args.outputPath), 'build-data.mjs');
+    const result = spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });
+    if (result.status !== 0) throw new Error(`build-data.mjs failed with exit code ${result.status}`);
+
+    console.log(JSON.stringify({
+      ok: true,
+      transactionCount: transactions.length,
+      kevinPersonalWeeks: tracking.kevinPersonal.weeks.length,
+      travelUnmatchedCount: unmatched.length,
+      jointUpdated: jointLabels.size > 0,
+      outputPath: args.outputPath,
+    }));
+  } catch (error) {
+    const stderrTail = client.stderrLines.slice(-5);
+    if (stderrTail.length > 0) {
+      error.message = `${error.message}${os.EOL}MCP stderr tail:${os.EOL}${stderrTail.join(os.EOL)}`;
+    }
+    throw error;
+  } finally {
+    client.close();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(sanitize(error.stack || error.message || error));
+    process.exit(1);
+  });
+}

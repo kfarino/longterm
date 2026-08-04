@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Farino Family — Financial Plan</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#f4f2ed;--white:#ffffff;--navy:#1a2744;
+  --text:#0d0d0d;--mid:#333333;--sub:#555555;
+  --rule:#b8b4ac;--rule2:#ccc8c0;
+  --gold:#7a6230;--green:#2d6a3f;--red:#8b2c2c;--blue:#1e4d8c;
+  --p1:#1e4d8c;--p2:#7a6230;--p3:#2d6a3f;--p4:#7a2e24;--p5:#4a3070;--p6:#5a5230;
+}
+html{font-size:15px}
+body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-serif;font-weight:400;line-height:1.6}
+.header{background:#fff;border-bottom:2px solid var(--navy);padding:22px 40px;display:flex;justify-content:space-between;align-items:center}
+.hname{font-size:19px;font-weight:700;color:var(--navy)}
+.hsub{font-size:13px;color:var(--sub);margin-top:3px}
+.hnw-lbl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:4px;text-align:right}
+.hnw{font-size:28px;font-weight:700;color:var(--navy)}
+.nav{background:#fff;border-bottom:1px solid var(--rule);display:flex;padding:0 40px}
+.ntab{font-size:13px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--sub);padding:12px 18px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s}
+.ntab.active{color:var(--navy);border-bottom-color:var(--navy)}
+.ntab:hover:not(.active){color:var(--text)}
+.ntab.ntab-urgent:not(.active){color:var(--red)}
+.ntab.ntab-urgent:not(.active):hover{color:var(--red)}
+.page{display:none}.page.active{display:block;animation:fadeUp .2s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.content{max-width:1080px;margin:0 auto;padding:30px 40px 60px}
+.content .content{max-width:none;margin:0;padding:0}
+.slabel{font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--sub);margin-bottom:14px;margin-top:30px;padding-bottom:8px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between}
+.slabel:first-child{margin-top:0}
+.metrics{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
+.m4{grid-template-columns:repeat(4,1fr)}.m3{grid-template-columns:repeat(3,1fr)}.m2{grid-template-columns:repeat(2,1fr)}
+.metric{background:#fff;padding:18px 22px;border-top:3px solid transparent}
+.metric.c-navy{border-top-color:var(--navy)}.metric.c-gold{border-top-color:var(--gold)}.metric.c-blue{border-top-color:var(--blue)}.metric.c-green{border-top-color:var(--green)}
+.mlabel{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--sub);margin-bottom:7px}
+.mval{font-size:24px;font-weight:600;color:var(--navy);line-height:1;margin-bottom:3px}
+.mval.gold{color:var(--gold)}.mval.green{color:var(--green)}.mval.blue{color:var(--blue)}.mval.red{color:var(--red)}
+.mnote{font-size:13px;color:var(--mid)}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px}
+.panel{background:#fff;border:1px solid var(--rule);border-radius:3px;padding:22px 26px}
+.ptitle{font-size:14px;font-weight:700;color:var(--navy);margin-bottom:14px;padding-bottom:11px;border-bottom:1px solid var(--rule2)}
+.tr{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--rule2);font-size:14px}
+.tr:last-child{border-bottom:none}
+.tl{color:var(--mid)}.tv{font-weight:600;color:var(--navy)}
+.tv.pos{color:var(--green)}.tv.neg{color:var(--red)}.tv.gold{color:var(--gold)}.tv.muted{color:var(--sub);font-weight:400}
+.tr.ttotal{padding-top:10px;border-top:1px solid var(--rule);border-bottom:none;margin-top:2px}
+.tr.ttotal .tl{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--navy)}
+.tr.ttotal .tv{font-size:20px}
+.callout{background:var(--bg);border-left:3px solid var(--navy);padding:12px 16px;font-size:13px;color:var(--mid);line-height:1.7;border-radius:0 3px 3px 0;margin-top:14px}
+.callout strong{color:var(--navy);font-weight:600}
+.goal{padding:14px 0;border-bottom:1px solid var(--rule2)}
+.goal:last-child{border-bottom:none;padding-bottom:0}
+.goal-head{display:flex;justify-content:space-between;margin-bottom:7px}
+.goal-name{font-size:14px;color:var(--navy);font-weight:600}
+.goal-num{font-size:13px;color:var(--mid)}
+.goal-bar{height:8px;background:var(--bg);border-radius:4px;overflow:hidden;margin-bottom:5px;border:1px solid var(--rule2);display:flex}
+.goal-fill{height:100%}
+.goal-fill-planned{height:100%;opacity:.35}
+.goal-note{font-size:13px;color:var(--mid)}
+.phase-card{background:#fff;border:1px solid var(--rule);border-radius:3px;padding:18px 20px;border-top:3px solid}
+.pc-phase{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
+.pc-name{font-size:14px;font-weight:700;color:var(--navy);margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid var(--rule2)}
+.pc-surplus{font-size:26px;font-weight:600;margin:8px 0 2px}
+.pc-note{font-size:13px;color:var(--mid);margin-bottom:10px}
+.pc-current{
+  display:inline-block;font-size:11px;font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;padding:2px 8px;border-radius:2px;
+  background:var(--navy);color:#fff;margin-left:8px;
+}
+.todo-owner{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:2px;margin-right:8px;color:#fff;vertical-align:middle}
+.todo-owner-kevin{background:var(--blue)}
+.todo-owner-hanna{background:var(--p5)}
+.todo-done .tl,.todo-done .tv{text-decoration:line-through;opacity:.55}
+.subnav{display:flex;gap:4px;border-bottom:1px solid var(--rule);margin-bottom:20px}
+.subtab{font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);padding:8px 14px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s}
+.subtab.active{color:var(--navy);border-bottom-color:var(--navy)}
+.subtab:hover:not(.active){color:var(--text)}
+.subpage{display:none}
+.subpage.active{display:block;animation:fadeUp .2s ease}
+.alloc-head{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin:12px 0 7px;padding-top:10px;border-top:1px solid var(--rule2)}
+.exp-toggle{cursor:pointer;user-select:none}.exp-toggle:hover .tl{color:var(--navy)}
+.exp-lines{background:var(--bg);border-radius:3px;padding:4px 0;margin-bottom:2px}
+.exp-lines .tr{padding:5px 10px;font-size:13px}
+.exp-lines .tr:last-child{border-bottom:none}
+.decision{padding:16px 0;border-bottom:1px solid var(--rule2)}
+.decision:last-child{border-bottom:none;padding-bottom:0}
+.dec-head{display:flex;align-items:center;gap:10px;margin-bottom:7px}
+.dec-status{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:2px;flex-shrink:0}
+.ds-urgent{background:#fef2f2;color:var(--red);border:1px solid #fecaca}
+.ds-active{background:#fefce8;color:#854d0e;border:1px solid #fef08a}
+.ds-good{background:#f0fdf4;color:var(--green);border:1px solid #bbf7d0}
+.ds-watch{background:#eff6ff;color:var(--blue);border:1px solid #bfdbfe}
+.dec-title{font-size:14px;font-weight:700;color:var(--navy)}
+.dec-body{font-size:13px;color:var(--mid);line-height:1.7;margin-bottom:9px}
+.dec-action{font-size:13px;color:var(--navy);padding-left:12px;border-left:2px solid var(--navy);line-height:1.6}
+.milestone{display:grid;grid-template-columns:64px 20px 1fr;gap:0 16px}
+.ms-yr{font-size:13px;font-weight:700;color:var(--mid);padding-top:16px;text-align:right}
+.ms-spine{display:flex;flex-direction:column;align-items:center;padding-top:20px}
+.ms-dot{width:8px;height:8px;border-radius:50%;background:var(--navy);flex-shrink:0}
+.ms-line{flex:1;width:1px;background:var(--rule);margin-top:4px}
+.milestone:last-child .ms-line{display:none}
+.ms-body{padding:14px 0 18px;border-bottom:1px solid var(--rule2)}
+.milestone:last-child .ms-body{border-bottom:none;padding-bottom:0}
+.ms-title{font-size:14px;font-weight:600;color:var(--navy);margin-bottom:4px}
+.ms-detail{font-size:13px;color:var(--mid);line-height:1.7}
+.chart-panel{background:#fff;border:1px solid var(--rule);border-radius:3px;padding:22px 26px}
+.chart-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 24px;padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid var(--rule2)}
+.ctrl-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:7px}
+.ctrl-row{display:flex;align-items:center;gap:8px}
+.ctrl-row input[type=range]{flex:1;height:3px;-webkit-appearance:none;appearance:none;background:var(--rule);border-radius:2px;outline:none}
+.ctrl-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--navy);cursor:pointer}
+.ctrl-val{font-size:14px;font-weight:600;min-width:44px;text-align:right;color:var(--navy)}
+.scn-row{display:flex;gap:4px}
+.scn-btn{flex:1;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:6px 4px;border:1px solid var(--rule);background:#fff;color:var(--sub);border-radius:3px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.scn-btn:hover{border-color:var(--navy);color:var(--navy)}
+.scn-btn.active{background:var(--navy);border-color:var(--navy);color:#fff}
+.chart-legend{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px}
+.leg{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mid)}
+.leg-line{width:20px;height:2px}
+.chart-wrap{position:relative;height:340px}
+.chart-foot{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:8px;align-items:center;color:var(--mid)}
+.cev{display:flex;align-items:center;gap:6px;font-size:13px}
+.ev-line{width:16px;height:0;border-top:2px dashed}
+.stat-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
+.stat-strip.stat-strip-3{grid-template-columns:repeat(3,1fr)}
+.stat-box{background:#fff;padding:15px 18px}
+.sb-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:5px}
+.sb-val{font-size:22px;font-weight:600;color:var(--navy);margin-bottom:3px}
+.sb-note{font-size:13px;color:var(--mid)}
+.p6-exp{font-size:22px;font-weight:600;transition:color .25s}
+.p6-note{font-size:13px;color:var(--mid);margin-top:5px;min-height:16px}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:20px}
+.cal-cell{background:#fff;border:1px solid var(--rule);border-radius:3px;padding:8px;min-height:88px;font-size:12px}
+.cal-cell.cal-empty{background:transparent;border:none}
+.cal-cell.cal-head{background:transparent;border:none;min-height:auto;padding:0 8px 6px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--sub)}
+.cal-cell.cal-past{opacity:.55}
+.cal-daynum{font-weight:700;color:var(--navy);margin-bottom:4px}
+.cal-occasion{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--sub);margin-top:6px}
+.cal-occasion:first-of-type{margin-top:0}
+.cal-pick{font-size:12px;color:var(--mid);line-height:1.4}
+.cal-lowkey{color:var(--green)}
+.cal-pick-select{font-size:11px;color:var(--mid);width:100%;max-width:130px;margin-top:2px;border:1px solid var(--rule2);border-radius:3px;background:#fff;padding:2px 4px}
+.cal-reset{font-size:10px;border:none;background:none;color:var(--sub);cursor:pointer;margin-left:4px;padding:0}
+.cal-reset:hover{color:var(--navy)}
+.cal-event-chip{font-size:11px;color:var(--mid);background:var(--bg);border-radius:3px;padding:2px 5px;margin-top:4px;display:flex;justify-content:space-between;align-items:center;gap:4px}
+.cal-event-chip.cal-ai-accent{border-left:2px solid var(--blue)}
+
+@media(max-width:900px){
+  .content{padding:20px}
+  .g2,.g3{grid-template-columns:1fr}
+  .m4,.m3{grid-template-columns:1fr 1fr}
+  .chart-controls{grid-template-columns:1fr 1fr}
+  .stat-strip{grid-template-columns:1fr 1fr}
+  .stat-strip.stat-strip-3{grid-template-columns:1fr 1fr}
+  .cal-grid{grid-template-columns:repeat(7,minmax(36px,1fr));font-size:10px}
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="hname">Kevin &amp; Hanna Farino</div>
+    <div class="hsub">Family Financial Plan &nbsp;·&nbsp; Brentwood, Los Angeles &nbsp;·&nbsp; July 2026 &nbsp;·&nbsp; How Will You Measure Your Life?</div>
+  </div>
+  <div>
+    <div class="hnw-lbl">Combined Net Worth</div>
+    <div class="hnw" id="h-nw"></div>
+  </div>
+</div>
+
+<div class="nav">
+  <div class="ntab active"  id="ntab-budget"    onclick="show('budget',this)">Planner</div>
+  <div class="ntab"         id="ntab-position"  onclick="show('position',this)">Current Position</div>
+  <div class="ntab"         id="ntab-goals"     onclick="show('goals',this)">Goals</div>
+  <div class="ntab"         id="ntab-decisions" onclick="show('decisions',this)">Decisions</div>
+</div>
+
+<!-- pages filled by JS -->
+<div class="page active" id="pg-budget"></div>
+<div class="page"        id="pg-position"></div>
+<div class="page"        id="pg-goals"></div>
+<div class="page"        id="pg-decisions"></div>
+
+<script src="data/data.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   Data lives in data/goals.json + data/accounts.json, bundled into
+   data/data.js by build-data.mjs (regenerate after editing either
+   JSON file). This script is a pure renderer — no figures below.
+   ═══════════════════════════════════════════════════════════ */
+const D = window.DATA;
+
+/* ═══════════════════════════════
+   HELPERS
+   ═══════════════════════════════ */
+const $ = id => document.getElementById(id);
+const fmt  = n => '$' + Math.round(n).toLocaleString();
+const fmtM = n => n >= 1000000 ? '~$' + (n/1000000).toFixed(1) + 'M' : n >= 1000 ? '~$' + Math.round(n/1000) + 'K' : fmt(n);
+const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function phaseIncome(p) { return Object.values(p.income).reduce((a,b)=>a+b,0); }
+function phaseExpenses(p) { return Object.values(p.expenses).reduce((a,b)=>a+b,0); }
+function phaseSurplus(p) { return phaseIncome(p) - phaseExpenses(p); }
+
+function totalNW() {
+  const a = D.assets;
+  return (a.retirement.kevin + a.retirement.hanna) +
+         (a.brokerage.kevin  + a.brokerage.hanna)  +
+         (a.cash.kevin       + a.cash.hanna)        +
+         (a.homeEquity.kevin + a.homeEquity.hanna);
+}
+
+function trHTML(label, value, cls='') {
+  return `<div class="tr"><span class="tl">${label}</span><span class="tv ${cls}">${value}</span></div>`;
+}
+function trTotal(label, value, cls='') {
+  return `<div class="tr ttotal"><span class="tl">${label}</span><span class="tv ${cls}">${value}</span></div>`;
+}
+
+/* ═══════════════════════════════
+   RENDER: HEADER
+   ═══════════════════════════════ */
+function renderHeader() {
+  $('h-nw').textContent = fmt(totalNW());
+}
+
+/* ═══════════════════════════════
+   RENDER: PHASES
+   ═══════════════════════════════ */
+// Extracted, pure-string version of the phase-card builder. Phase 1 (the
+// current phase) shows its expenses directly instead of behind a click —
+// this is what lets Current Position's separate Phase-1 detail panel be
+// deleted without losing at-a-glance visibility (see renderStatusSection()).
+// Phase 2 carries the "what's next" comparison Position used to show in
+// its own panel, now living directly on the card the comparison is about.
+function buildPhaseCardsHTML() {
+  const p1Surplus = phaseSurplus(D.phases[0]);
+
+  return D.phases.map((p) => {
+    const inc = phaseIncome(p);
+    const exp = phaseExpenses(p);
+    const sur = inc - exp;
+    const isCurrent = p.id === 1;
+    const incRows = Object.entries(p.income).map(([k, v]) => trHTML(k, fmt(v))).join('');
+    const allocRows = p.allocation.map((a) => trHTML(a.label, fmt(a.amount), a.amount < 0 ? 'neg' : '')).join('');
+
+    const expenseSection = isCurrent
+      ? `<div class="alloc-head">Expenses</div>
+         ${Object.entries(p.expenses).map(([k, v]) => `<div class="tr"><span class="tl">${k}</span><span class="tv muted">${fmt(v)}</span></div>`).join('')}
+         ${trTotal('Total expenses', fmt(exp))}`
+      : `<div class="tr exp-toggle" onclick="toggleExpPanel(this)" style="cursor:pointer;margin-top:2px">
+          <span class="tl">Expenses <span style="font-size:12px;color:var(--sub)">(expand)</span></span>
+          <span class="tv">${fmt(exp)} ›</span>
+        </div>
+        <div class="exp-lines" style="display:none">
+          ${Object.entries(p.expenses).map(([k, v]) => `<div class="tr"><span class="tl" style="padding-left:10px">${k}</span><span class="tv muted">${fmt(v)}</span></div>`).join('')}
+        </div>`;
+
+    // Last phase (semi-retirement) special: slider
+    const surplusSection = p.id === D.phases.length ? `
+      <div class="alloc-head">Monthly expenses — adjust</div>
+      <div class="ctrl-row" style="margin-bottom:10px">
+        <input type="range" id="sl-p6" min="8000" max="25000" step="500" value="14000" oninput="updateP6()">
+        <span class="ctrl-val" id="lbl-p6">$14,000</span>
+      </div>
+      <div class="p6-exp" id="p6-exp">+$4,000</div>
+      <div class="p6-note" id="p6-note">Surplus — savings continue growing</div>
+    ` : `
+      <div class="pc-surplus" style="color:${p.color}">${sur >= 0 ? '+' : ''}${fmt(sur)}</div>
+      <div class="pc-note">${p.note || ''}</div>
+      ${allocRows.length ? `<div class="alloc-head">Savings allocation</div>${allocRows}` : ''}
+    `;
+
+    const whatsNextCallout = p.id === 2
+      ? `<div class="callout">Surplus <strong>${sur >= p1Surplus ? 'increases' : 'decreases'}</strong> from ${fmt(p1Surplus)} to ${fmt(sur)}/mo moving into Phase ${p.id}.</div>`
+      : '';
+
+    return `
+      <div class="phase-card" style="border-top-color:${p.color}">
+        <div class="pc-phase" style="color:${p.color}">Phase ${p.id} · ${p.period}${isCurrent ? ' <span class="pc-current">Current</span>' : ''}</div>
+        <div class="pc-name">${p.name}</div>
+        ${incRows}
+        ${expenseSection}
+        ${surplusSection}
+        ${whatsNextCallout}
+      </div>`;
+  }).join('');
+}
+
+/* ═══════════════════════════════
+   RENDER: STATUS (Current Position, sub-tab 1)
+   ═══════════════════════════════ */
+function renderStatusSection() {
+  const p1 = D.phases[0];
+  const p1surplus = phaseSurplus(p1);
+  const a = D.assets;
+
+  const futureAssetsHTML = D.futureAssets.map((fa) =>
+    trHTML(`${fa.name} (${fa.owner})`, `${fmt(fa.value)} · accessible ${fa.accessibleYear}`, 'muted')
+  ).join('');
+
+  $('sub-status').innerHTML = `
+    <div class="slabel">Today <span>Phase ${p1.id} of ${D.phases.length} — ${p1.name} · live as of ${D.family.asOf}</span></div>
+    <div class="metrics m4">
+      <div class="metric c-blue">
+        <div class="mlabel">Monthly surplus</div>
+        <div class="mval blue">${fmt(p1surplus)}</div>
+        <div class="mnote">Current phase — not a future projection</div>
+      </div>
+      <div class="metric c-gold">
+        <div class="mlabel">Retirement accounts</div>
+        <div class="mval gold">${fmt(a.retirement.kevin + a.retirement.hanna)}</div>
+        <div class="mnote">Both 401K + Roth maxed annually</div>
+      </div>
+      <div class="metric c-navy">
+        <div class="mlabel">Brokerage investments</div>
+        <div class="mval">${fmt(a.brokerage.kevin + a.brokerage.hanna)}</div>
+        <div class="mnote">Kevin ${fmtM(a.brokerage.kevin)} · Hanna ${fmtM(a.brokerage.hanna)}</div>
+      </div>
+      <div class="metric c-green">
+        <div class="mlabel">Liquid cash</div>
+        <div class="mval green">${fmt(a.cash.kevin + a.cash.hanna)}</div>
+        <div class="mnote">Hanna ${fmtM(a.cash.hanna)} · Kevin ${fmtM(a.cash.kevin)}</div>
+      </div>
+    </div>
+
+    <div class="g2">
+      <div class="panel">
+        <div class="ptitle">Asset allocation</div>
+        ${trHTML('Retirement — tax-advantaged', Math.round((a.retirement.kevin + a.retirement.hanna) / totalNW() * 100) + '%')}
+        ${trHTML('Brokerage — liquid, taxable', Math.round((a.brokerage.kevin + a.brokerage.hanna) / totalNW() * 100) + '%')}
+        ${trHTML('Home equity', Math.round((a.homeEquity.kevin + a.homeEquity.hanna) / totalNW() * 100) + '%')}
+        ${trHTML('Cash', Math.round((a.cash.kevin + a.cash.hanna) / totalNW() * 100) + '%')}
+      </div>
+      <div class="panel">
+        <div class="ptitle">Future assets (not liquid today)</div>
+        ${futureAssetsHTML}
+      </div>
+    </div>
+
+    ${renderGoalsSection()}
+  `;
+}
+
+// Savings-goal progress bars + retirement stat — rendered directly under the
+// "Today" module on Current Position's Status sub-tab, right after the
+// topline readout (per Kevin: savings-goal status belongs immediately after
+// the topline "today" readout, not on a separate tab).
+function renderGoalsSection() {
+  const goalsHTML = D.goals.map((g) => {
+    const current = g.trackLiveBrokerage ? (D.assets.brokerage.kevin + D.assets.brokerage.hanna) : g.current;
+    const pct = Math.min(100, Math.round(current / g.targetAmount * 100));
+    return `
+      <div class="goal">
+        <div class="goal-head">
+          <span class="goal-name">${g.name}</span>
+          <span class="goal-num">${fmtM(current)} / ${fmtM(g.targetAmount)}</span>
+        </div>
+        <div class="goal-bar"><div class="goal-fill" style="width:${pct}%;background:${g.color}"></div></div>
+        <div class="goal-note">${g.note}</div>
+      </div>`;
+  }).join('');
+
+  const c = D.chart;
+  const proj = computeProjection(c.growthRate, c.liquidRate, c.croatiaK, c.kevin300kYr, c.sabbaticalK, c.sabbaticalYear, c.croatiaYear, c.hannaScenario);
+  const ret2050 = proj.ret[YEARS.indexOf(2050)];
+
+  return `
+    <div class="slabel">Savings goals</div>
+    <div class="g2">
+      <div class="panel">
+        <div class="ptitle">Progress toward targets</div>
+        ${goalsHTML}
+      </div>
+      <div class="panel">
+        <div class="ptitle">Retirement projection</div>
+        <div class="tr" onclick="jumpToTrajectory()" style="cursor:pointer">
+          <span class="tl">Retirement by 2050 <span style="font-size:12px;color:var(--sub)">(baseline — see full chart)</span></span>
+          <span class="tv gold">${fmtM(ret2050)} ›</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+/* ═══════════════════════════════
+   RENDER: CURRENT POSITION (2 sub-tabs: Status, Trajectory)
+   ═══════════════════════════════ */
+const renderedSections = new Set(); // sub-page ids: currently only 'trajectory' needs lazy rendering
+
+function renderPositionTab() {
+  $('pg-position').innerHTML = `
+    <div class="content">
+      <div class="subnav">
+        <div class="subtab active" id="subtab-status"     onclick="showPosition('status', this)">Status</div>
+        <div class="subtab"        id="subtab-trajectory" onclick="showPosition('trajectory', this)">Trajectory</div>
+      </div>
+      <div class="subpage active" id="sub-status"></div>
+      <div class="subpage"        id="sub-trajectory"></div>
+    </div>`;
+
+  renderStatusSection();
+}
+
+function showPosition(id, el) {
+  document.querySelectorAll('#pg-position .subpage').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('#pg-position .subtab').forEach(t => t.classList.remove('active'));
+  $('sub-' + id).classList.add('active');
+  el.classList.add('active');
+  if (id === 'trajectory' && !renderedSections.has('trajectory')) {
+    renderTrajectory(); // reveal container first, then inject+initChart — order matters, see initChart()
+    renderedSections.add('trajectory');
+  }
+}
+
+function jumpToTrajectory() {
+  show('position', $('ntab-position'));
+  showPosition('trajectory', $('subtab-trajectory'));
+  const el = $('sub-trajectory');
+  if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Weight by days-in-bucket, not entry count — otherwise a trailing partial
+// week (always present mid-cycle) drags the average down and understates
+// the projection every single week.
+function computeTrackerPacing(tracker) {
+  const weeks = tracker.weeks || [];
+  const total = weeks.reduce((s, w) => s + w.actual, 0);
+  const totalDays = weeks.reduce((s, w) => s + (w.days || 7), 0);
+  const dailyRate = totalDays ? total / totalDays : 0;
+  const projected = dailyRate * (tracker.cycleDays || 30);
+  const variance = projected - tracker.target;
+  return { total, projected, variance };
+}
+
+function toggleDrilldown(id) {
+  const el = $(id);
+  if (!el) return;
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+// Sorted server-side (categoryTotalsToArray in budget-tracking-pull.mjs) —
+// rendered here in whatever order they arrive.
+// Each category row is itself a click-to-expand toggle (reusing the same
+// .exp-toggle/.exp-lines + toggleDrilldown() convention one level up) that
+// reveals that category's real line items — a category total on its own
+// doesn't let you sanity-check it against actual transactions.
+function renderCategoryDrilldown(categories, drillId) {
+  if (!categories || !categories.length) {
+    return `<div class="exp-lines" id="${drillId}" style="display:none"><div class="callout">No category breakdown yet — populates after the next Monarch pull.</div></div>`;
+  }
+  const rows = categories.map((c, i) => {
+    const catDrillId = `${drillId}-cat-${i}`;
+    const txRows = (c.transactions && c.transactions.length)
+      ? c.transactions.map((tx) => trHTML(`${tx.date} · ${tx.merchant}`, fmt(tx.amount))).join('')
+      : `<div class="callout">No line items recorded.</div>`;
+    return `
+      <div class="tr exp-toggle" onclick="toggleDrilldown('${catDrillId}')" style="cursor:pointer">
+        <span class="tl">${c.name}</span><span class="tv">${fmt(c.amount)} ›</span>
+      </div>
+      <div class="exp-lines" id="${catDrillId}" style="display:none">${txRows}</div>`;
+  }).join('');
+  return `<div class="exp-lines" id="${drillId}" style="display:none">${rows}</div>`;
+}
+
+// Joint and Kevin-personal share the same actual-vs-target shape: a single
+// fill bar (reusing the .goal-bar/.goal-fill pattern from the savings-goals
+// list, same visual language) plus a click-through drill-down into spend by
+// category, rather than the old 4-line-per-week row list. Travel is
+// deliberately excluded from both, even when it lands on the same card —
+// it's tracked per-trip in renderTravelSummary() instead.
+//
+// plannedSpend (Joint only — see computeMonthPlanProjectedSpend()) folds the
+// Month Plan calendar's known remaining dining spend into the note, replacing
+// the old separate "Dining budget / Planned spend / Vs. budget" stat-strip
+// that used to sit on the calendar itself. This only covers dining — the
+// calendar doesn't plan other spend categories — so it's presented as a
+// floor ("known so far"), not a full month projection.
+function renderSpendTracker(label, tracker, drillId, plannedSpend) {
+  if (!tracker.weeks || !tracker.weeks.length) {
+    return `<div class="panel">
+      <div class="ptitle">${label} <span style="font-size:12px;font-weight:400;color:var(--sub)">Target: ${fmt(tracker.target)}/mo</span></div>
+      <div class="callout">No weeks logged yet this cycle.</div>
+    </div>`;
+  }
+  const { total, projected, variance } = computeTrackerPacing(tracker);
+  const actualPct = Math.min(100, Math.round(total / tracker.target * 100));
+  // Planned (calendar) spend renders as a second, semi-faded segment
+  // extending the bar from the actual/logged amount out to actual+planned —
+  // a preview of where the bar is headed, not just where it's been.
+  const knownTotal = plannedSpend != null ? total + plannedSpend : total;
+  const knownPct = Math.min(100, Math.round(knownTotal / tracker.target * 100));
+  const plannedDeltaPct = Math.max(0, knownPct - actualPct);
+  const barColor = (plannedSpend != null ? knownTotal > tracker.target : variance > 0) ? 'var(--red)' : 'var(--green)';
+  const plannedSegment = plannedDeltaPct > 0
+    ? `<div class="goal-fill-planned" style="width:${plannedDeltaPct}%;background:${barColor}"></div>`
+    : '';
+  const note = plannedSpend != null
+    ? `${fmt(total)} logged + ${fmt(plannedSpend)} planned (dining, rest of cycle) = ${fmt(knownTotal)} known so far vs. ${fmt(tracker.target)} target — other spend still to come isn't reflected`
+    : `${fmt(total)} logged · projected ${fmt(projected)} (${variance >= 0 ? '+' : ''}${fmt(variance)} vs. ${fmt(tracker.target)} target)`;
+  return `<div class="panel">
+    <div class="goal" style="border-bottom:none;padding-bottom:0">
+      <div class="goal-head">
+        <span class="goal-name">${label}</span>
+        <span class="goal-num">${fmt(total)} / ${fmt(tracker.target)}</span>
+      </div>
+      <div class="goal-bar"><div class="goal-fill" style="width:${actualPct}%;background:${barColor}"></div>${plannedSegment}</div>
+      <div class="goal-note">${note}</div>
+    </div>
+    <div class="tr exp-toggle" onclick="toggleDrilldown('${drillId}')" style="cursor:pointer;margin-top:10px">
+      <span class="tl">Spend by category</span><span class="tv">›</span>
+    </div>
+    ${renderCategoryDrilldown(tracker.categories, drillId)}
+  </div>`;
+}
+
+// Travel is per-trip lump sums, not a recurring monthly cadence, so it gets
+// its own high-level-plus-drill-down function rather than sharing
+// renderSpendTracker()'s weekly-pacing shape. Each trip's actual/budgeted
+// is a bar (or, for an already-settled trip like Boston with no
+// budgetedAmount, a plain "already paid" line); click-through reveals that
+// trip's real transactions — already collected by budget-tracking-pull.mjs,
+// no new data needed here.
+function renderTravelSummary(travel) {
+  const rows = travel.trips.map((t) => {
+    const drillId = `drill-travel-${t.id}`;
+    const pct = t.budgetedAmount ? Math.min(100, Math.round(t.actual / t.budgetedAmount * 100)) : 100;
+    const barColor = t.budgetedAmount != null && t.actual > t.budgetedAmount ? 'var(--red)' : 'var(--gold)';
+    const num = t.budgetedAmount != null ? `${fmt(t.actual)} / ${fmt(t.budgetedAmount)}` : `${fmt(t.actual)} · already paid`;
+    const txRows = (t.transactions && t.transactions.length)
+      ? t.transactions.map((tx) => trHTML(`${tx.date} · ${tx.merchant}`, fmt(tx.amount))).join('')
+      : `<div class="callout">No transactions logged yet.</div>`;
+    return `
+      <div class="goal">
+        <div class="goal-head">
+          <span class="goal-name">${t.label}</span>
+          <span class="goal-num">${num}</span>
+        </div>
+        <div class="goal-bar"><div class="goal-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <div class="tr exp-toggle" onclick="toggleDrilldown('${drillId}')" style="cursor:pointer;padding-top:4px">
+          <span class="tl" style="font-size:12px">Transactions</span><span class="tv" style="font-size:12px">›</span>
+        </div>
+        <div class="exp-lines" id="${drillId}" style="display:none">${txRows}</div>
+      </div>`;
+  }).join('');
+  const unmatchedNote = travel.unmatched.length
+    ? `<div class="callout">${travel.unmatched.length} travel transaction(s) didn't match any planned trip window — check budget_tracking.json's <code>travel.unmatched</code>.</div>`
+    : '';
+  return `<div class="panel">
+    <div class="ptitle">Travel <span style="font-size:12px;font-weight:400;color:var(--sub)">Excluded from Joint &amp; Kevin personal above</span></div>
+    ${rows}
+    ${unmatchedNote}
+  </div>`;
+}
+
+/* ═══════════════════════════════
+   DINING RECOMMENDATIONS — MONTH PLAN
+   ═══════════════════════════════ */
+const TIER_MIDPOINT = { cheap: 25, mid: 75, high: 150 };
+const TIER_RANK = { cheap: 0, mid: 1, high: 2 };
+const RESTAURANTS_HISTORICAL_SHARE = 0.24;
+const RECENT_VISIT_EXCLUSION_DAYS = 10;
+const TIER_SYMBOL = { cheap: '$', mid: '$$', high: '$$$' };
+// Reads Month Plan's saved events from the local dashboard-server.mjs API
+// (data/month_plan_events.json on disk) — moved off localStorage 2026-07-31
+// so the Telegram bot's dining tools can read/write the same live plan a
+// browser tab sees. This requires being served over http:// (via `npm run
+// dev`), not opened as a static file:// page — browser JS loaded via file://
+// cannot write to disk, which is exactly why localStorage was used before.
+// Always returns a well-formed {events} shape — a network hiccup or corrupt
+// response degrades to empty, never throws (this feeds an unattended render
+// path, same "degrade quietly" convention as build-data.mjs/refreshFavoritePlaces()).
+async function loadMonthPlanState() {
+  try {
+    const res = await fetch('/api/month-plan-events');
+    if (!res.ok) return { events: {} };
+    const parsed = await res.json();
+    return { events: parsed.events || {} };
+  } catch (err) {
+    return { events: {} };
+  }
+}
+
+const EMPTY_ROUTINE_OVERRIDES = { family_dinner: null, date_night: null, weekend_social: null };
+
+// Read-only from the dashboard's side — only the Telegram bot's
+// set_routine_day tool ever writes data/dining-routine-overrides.json (see
+// dashboard-server.mjs's matching GET-only route). Fetched live, same
+// "degrade quietly to defaults" convention as loadMonthPlanState, so a
+// server hiccup just means the goals.json default day is shown instead of
+// a crash.
+async function loadRoutineOverrides() {
+  try {
+    const res = await fetch('/api/dining-routine-overrides');
+    if (!res.ok) return { ...EMPTY_ROUTINE_OVERRIDES };
+    return { ...EMPTY_ROUTINE_OVERRIDES, ...(await res.json()) };
+  } catch (err) {
+    return { ...EMPTY_ROUTINE_OVERRIDES };
+  }
+}
+
+function cycleEndDate(cycleStartISO, cycleDays) {
+  // cycleStartISO is a date-only "YYYY-MM-DD" string. `new Date(str)` parses
+  // that as UTC midnight; callers read it back with local getters, so in any
+  // negative-UTC-offset zone (e.g. Los Angeles) the result reads one calendar
+  // day early. Parse the Y/M/D components and construct via new Date(y, m-1, d),
+  // which is local-time by construction, so the returned date agrees with
+  // local-midnight dates (e.g. `today`) elsewhere in the file.
+  const [y, m, d] = cycleStartISO.split('-').map(Number);
+  const start = new Date(y, m - 1, d);
+  const end = new Date(start);
+  end.setDate(end.getDate() + cycleDays - 1);
+  return end;
+}
+
+// Decides what happens on every remaining day of the current cycle. Fixed
+// routine slots (dynamic:false) always happen at their configured tier.
+// Dynamic slots (currently "Date night" and "Weekend social") get resolved
+// to either their configured tier (paid) or 'low-key' (free). A single
+// chronological walk through fixed routine slots, ad-hoc events, and
+// dynamic slots (in date order) subtracts each item's real cost as it's
+// encountered — an overridden dynamic slot is always honored at its
+// override's real cost, while an unresolved dynamic slot is resolved
+// against whatever social budget room remains at that point in the walk.
+// Month Plan is a spend view: dining + social (family). Pure scheduling
+// (PT, pediatrician, …) is kind:'schedule' — synced to Google Cal only.
+function isBudgetPlanEvent(ev) {
+  return ev && (ev.kind === 'dining' || ev.kind === 'family');
+}
+
+function planRemainingMonth(diningRoutine, budgetPacing, today, events, favorites, recentDiningActivity, lowKeyHangIdeas) {
+  const cycleEnd = cycleEndDate(budgetPacing.cycleStart, budgetPacing.cycleDays);
+  const todayISO = isoDate(today);
+  const cycleEndISO = isoDate(cycleEnd);
+
+  // Seed exclusion from budget-relevant stored favorites only — schedule
+  // events don't belong on this calendar's suggestion exclusion set.
+  const alreadyUsedNames = new Set();
+  for (const dayEvents of Object.values(events)) {
+    for (const ev of dayEvents) {
+      if (isBudgetPlanEvent(ev) && ev.favoriteName) alreadyUsedNames.add(ev.favoriteName);
+    }
+  }
+
+  const actualToDate = budgetPacing.weeks.reduce((s, w) => s + w.actual, 0);
+  const remainingJointRoom = Math.max(0, budgetPacing.target - actualToDate);
+  const impliedRestaurantRoom = remainingJointRoom * RESTAURANTS_HISTORICAL_SHARE;
+
+  let socialBudget = impliedRestaurantRoom;
+  let fixedRoutineCost = 0;
+  let projectedSpend = 0;
+  const resolvedSlots = [];
+
+  for (let d = new Date(today); d <= cycleEnd; d.setDate(d.getDate() + 1)) {
+    const dISO = isoDate(d);
+    if (dISO < todayISO || dISO > cycleEndISO) continue;
+
+    if (events[dISO] !== undefined) {
+      // Stored day: [] tombstone = dismissed (no routine suggestion).
+      // Budget chips (dining/family) count toward spend and suppress live
+      // routine suggestions. Schedule-only days fall through so Wed/Fri/Sat
+      // can still get dining suggestions.
+      const dayEvents = events[dISO] || [];
+      if (dayEvents.length === 0) continue;
+
+      const budgetEvents = dayEvents.filter(isBudgetPlanEvent);
+      for (const ev of budgetEvents) {
+        const cost = typeof ev.cost === 'number' && !Number.isNaN(ev.cost) ? ev.cost : (TIER_MIDPOINT[ev.tier] || TIER_MIDPOINT.mid);
+        socialBudget -= cost;
+        projectedSpend += cost;
+        resolvedSlots.push({ date: dISO, isLive: false, ...ev, cost });
+      }
+      if (budgetEvents.length > 0) continue;
+    }
+
+    const routineEntry = diningRoutine.find((r) => r.dayOfWeek === d.getDay());
+    if (!routineEntry) continue; // non-routine, untouched: nothing
+
+    const cost = TIER_MIDPOINT[routineEntry.tier] || 0;
+    const willBeLowKey = routineEntry.dynamic && socialBudget < cost;
+
+    const rec = willBeLowKey
+      ? recommendForSlot({ tier: 'low-key', dynamic: routineEntry.dynamic }, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames)
+      : recommendForSlot({ tier: routineEntry.tier, dynamic: routineEntry.dynamic, requiresTag: routineEntry.requiresTag }, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames);
+    if (rec.picks[0]) alreadyUsedNames.add(rec.picks[0]);
+
+    if (!routineEntry.dynamic) {
+      fixedRoutineCost += cost;
+      socialBudget -= cost;
+      projectedSpend += cost;
+      resolvedSlots.push({ date: dISO, isLive: true, dynamic: false, tier: routineEntry.tier, picks: rec.picks, reasoning: rec.reasoning });
+      continue;
+    }
+
+    if (willBeLowKey) {
+      resolvedSlots.push({ date: dISO, isLive: true, dynamic: true, tier: 'low-key', picks: rec.picks, reasoning: rec.reasoning });
+    } else {
+      socialBudget -= cost;
+      projectedSpend += cost;
+      resolvedSlots.push({ date: dISO, isLive: true, dynamic: true, tier: routineEntry.tier, picks: rec.picks, reasoning: rec.reasoning });
+    }
+  }
+
+  return {
+    slots: resolvedSlots,
+    impliedRestaurantRoom: Math.round(impliedRestaurantRoom),
+    fixedRoutineCost: Math.round(fixedRoutineCost),
+    socialBudgetRemaining: Math.round(socialBudget),
+    projectedSpend: Math.round(projectedSpend),
+  };
+}
+
+// Picks a place (or a low-key idea) for one slot. Ranked, not a plain
+// filter-then-array-order pick (2026-08-01): scores each eligible candidate
+// by how long it's gone without a visit (rewards rotating through the whole
+// go-to list instead of favoring whatever happens to sit first in
+// favorite_places.json), nudges down a repeat of the most recent cuisine for
+// variety, and prefers a proven 'go-to' place over an unproven 'want-to-go'
+// one. Still the same input/output shape as before — this remains the swap
+// point for an LLM/ML call later, just a more reasoned heuristic than a
+// plain filter today. Deliberately synchronous/cheap: this gets called once
+// per eligible day across a whole month's render, so a real per-call LLM
+// request here would be slow and costly. Kept identical to
+// scripts/dining-recommendation.mjs's copy (see the deliberate-duplication
+// note above) — a change here should be mirrored there too.
+// Mirrors scripts/dining-recommendation.mjs's OCCASION_DAY_OF_WEEK — kept
+// identical (deliberate duplication) so a bot-set override and the
+// dashboard's own calendar walk agree on which entry is which occasion.
+const OCCASION_DAY_OF_WEEK = { family_dinner: 3, date_night: 5, weekend_social: 6 };
+
+// Applies a bot-set day-of-week override (set_routine_day, fetched live via
+// loadRoutineOverrides()) on top of goals.json's hand-maintained
+// diningRoutine — moves the matching entry's dayOfWeek so this calendar's
+// own day-of-week walk (below) lands on the current day, not the
+// original one. Kept identical to
+// scripts/dining-recommendation.mjs's effectiveDiningRoutine() (see the
+// deliberate-duplication note above) — a change here should be mirrored there too.
+function effectiveDiningRoutine(diningRoutine, overrides) {
+  if (!overrides) return diningRoutine;
+  return diningRoutine.map((entry) => {
+    const occasion = Object.keys(OCCASION_DAY_OF_WEEK).find((occ) => OCCASION_DAY_OF_WEEK[occ] === entry.dayOfWeek);
+    if (!occasion || overrides[occasion] == null) return entry;
+    return { ...entry, dayOfWeek: overrides[occasion] };
+  });
+}
+
+function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames) {
+  if (slot.tier === 'low-key') {
+    const idea = lowKeyHangIdeas[Math.floor(Math.random() * lowKeyHangIdeas.length)];
+    return { picks: [idea], reasoning: 'Budget is tight for this occurrence — a free/low-key hang instead of a paid outing.' };
+  }
+
+  const ceilingRank = TIER_RANK[slot.tier];
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - RECENT_VISIT_EXCLUSION_DAYS);
+  const recentNames = new Set(
+    recentDiningActivity
+      .filter((a) => new Date(a.date) >= cutoff && a.matchedPlace)
+      .map((a) => a.matchedPlace)
+  );
+
+  let candidates = favorites.filter((f) => {
+    if (f.list !== 'go-to' && f.list !== 'want-to-go') return false;
+    if (recentNames.has(f.name)) return false;
+    if (slot.requiresTag && !f[slot.requiresTag]) return false;
+    if (!f.observed) return ceilingRank <= TIER_RANK.mid; // unproven cost: eligible at cheap/mid only
+    return TIER_RANK[f.observed.tier] <= ceilingRank;
+  });
+
+  // Exclude anything already used elsewhere on this render's calendar, so
+  // the month doesn't show the same place for every eligible day — but
+  // only if doing so leaves at least one candidate; a repeat beats no
+  // suggestion at all.
+  const withoutRepeats = candidates.filter((f) => !alreadyUsedNames.has(f.name));
+  if (withoutRepeats.length > 0) candidates = withoutRepeats;
+
+  const mostRecent = recentDiningActivity.length
+    ? [...recentDiningActivity].sort((a, b) => b.date.localeCompare(a.date))[0]
+    : null;
+  const recentCuisine = mostRecent && mostRecent.matchedPlace
+    ? (favorites.find((f) => f.name === mostRecent.matchedPlace) || {}).cuisine
+    : null;
+
+  const lastVisitByPlace = new Map();
+  for (const a of recentDiningActivity) {
+    if (!a.matchedPlace) continue;
+    const prev = lastVisitByPlace.get(a.matchedPlace);
+    if (!prev || a.date > prev) lastVisitByPlace.set(a.matchedPlace, a.date);
+  }
+  const today = new Date();
+  const daysSinceLastVisit = (name) => {
+    const last = lastVisitByPlace.get(name);
+    if (!last) return 365; // never visited — same max variety value as "long ago"
+    return Math.min(365, Math.floor((today - new Date(last)) / 86400000));
+  };
+
+  const scored = candidates
+    .map((f) => ({
+      f,
+      score: daysSinceLastVisit(f.name)
+        - (recentCuisine && f.cuisine === recentCuisine ? 50 : 0)
+        + (f.list === 'go-to' ? 10 : 0),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  const picks = scored.slice(0, 3).map((s) => s.f.name);
+  const reasoning = picks.length
+    ? `${slot.tier} tier, ranked by longest-since-visited (excluding anything in the last ${RECENT_VISIT_EXCLUSION_DAYS} days), preferring go-to favorites and a different cuisine than last time.`
+    : `No fresh picks — everything eligible was visited in the last ${RECENT_VISIT_EXCLUSION_DAYS} days.`;
+
+  return { picks, reasoning };
+}
+
+// Renders one event as a small, read-only chip: the pick name + tier symbol
+// (none for low-key), an AI-accent left border when it's a live, unpersisted
+// suggestion rather than a stored event (key === 'live'). Purely a display —
+// the dashboard no longer edits Month Plan (see renderMonthPlan()); planning
+// happens through the Telegram bot instead.
+function buildEventChip(dISO, slot, key) {
+  const name = slot.isLive ? (slot.picks[0] || '—') : slot.name;
+  const tierSymbol = slot.tier && slot.tier !== 'low-key' ? ` · ${TIER_SYMBOL[slot.tier] || ''}` : '';
+  const cls = (slot.isLive ? ' cal-ai-accent' : '') + (slot.tier === 'low-key' ? ' cal-lowkey' : '');
+  return `<div class="cal-event-chip${cls}"><span>${name}${tierSymbol}</span></div>`;
+}
+
+// Cheap, pure re-derivation of the Month Plan's remaining-cycle dining
+// projection — called from renderBudgetTab() so the Joint tracker's note can
+// fold it in, independently of renderMonthPlan()'s own DOM render (which
+// needs pg-monthplan to already exist, i.e. must run after renderBudgetTab()
+// has set pg-budget's innerHTML — so this can't just read renderMonthPlan()'s
+// return value; recomputing here is simpler than threading a value through
+// two different call orders for one number).
+async function computeMonthPlanProjectedSpend() {
+  const fp = D.favoritePlaces;
+  const favorites = fp ? fp.places : [];
+  const recentDiningActivity = fp ? fp.recentDiningActivity : [];
+  const state = await loadMonthPlanState();
+  const routineOverrides = await loadRoutineOverrides();
+  const diningRoutine = effectiveDiningRoutine(D.diningRoutine, routineOverrides);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const plan = planRemainingMonth(diningRoutine, D.budgetTracking.joint, today, state.events, favorites, recentDiningActivity, D.lowKeyHangIdeas);
+  return plan.projectedSpend;
+}
+
+async function renderMonthPlan() {
+  const joint = D.budgetTracking.joint;
+  const fp = D.favoritePlaces;
+  const favorites = fp ? fp.places : [];
+  const recentDiningActivity = fp ? fp.recentDiningActivity : [];
+  const routineOverrides = await loadRoutineOverrides();
+  const diningRoutine = effectiveDiningRoutine(D.diningRoutine, routineOverrides);
+  const lowKeyHangIdeas = D.lowKeyHangIdeas;
+  const state = await loadMonthPlanState();
+  const calloutHTML = fp
+    ? ''
+    : `<div class="callout">No favorites synced yet — ask Claude to sync your dining list from the Google Sheet. Ad-hoc events below still work; routine-day suggestions are limited until then.</div>`;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const plan = planRemainingMonth(diningRoutine, joint, today, state.events, favorites, recentDiningActivity, lowKeyHangIdeas);
+  const slotByDate = {};
+  plan.slots.forEach((s) => { (slotByDate[s.date] = slotByDate[s.date] || []).push(s); });
+
+  const localDateFromISO = (iso) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  };
+  const cycleStart = localDateFromISO(joint.cycleStart);
+  const cycleEnd = cycleEndDate(joint.cycleStart, joint.cycleDays);
+  const leadingBlanks = cycleStart.getDay();
+  const totalDays = Math.floor((cycleEnd - cycleStart) / 86400000) + 1;
+
+  const cells = [];
+  for (let i = 0; i < leadingBlanks; i += 1) cells.push('<div class="cal-cell cal-empty"></div>');
+  for (let i = 0; i < totalDays; i += 1) {
+    const day = new Date(cycleStart); day.setDate(day.getDate() + i);
+    const dISO = isoDate(day);
+    const isPast = day < today;
+    let body = '';
+    if (isPast) {
+      // Read-only history, built directly (not via buildEventChip, which
+      // is edit/remove-oriented and only knows tier symbols, not raw
+      // dollar amounts) — shows the real Monarch-verified spend, which
+      // always wins over whatever was planned for that date.
+      const matched = recentDiningActivity.filter((a) => a.date === dISO);
+      body = matched.map((a) =>
+        `<div class="cal-event-chip"><span>${a.matchedPlace || a.merchant} · ${fmt(a.amount)}</span></div>`
+      ).join('');
+    } else {
+      const daySlots = slotByDate[dISO] || [];
+      body = daySlots.map((s, idx) => buildEventChip(dISO, s, s.isLive ? 'live' : idx)).join('');
+    }
+    cells.push(`<div class="cal-cell${isPast ? ' cal-past' : ''}"><div class="cal-daynum">${day.getDate()}</div>${body}</div>`);
+  }
+
+  // The old "Dining budget, rest of cycle / Planned spend / Vs. budget"
+  // stat-strip that lived here moved into the Joint spend tracker on the
+  // Budget tab (see renderSpendTracker's plannedNote param) — that's where
+  // the actual budget-vs-target framing belongs; this section is just the
+  // calendar itself now.
+  $('pg-monthplan').innerHTML = `
+    <div class="content">
+      <div class="slabel">Month Plan</div>
+      ${calloutHTML}
+      <div class="cal-grid">
+        <div class="cal-cell cal-head">Sun</div><div class="cal-cell cal-head">Mon</div><div class="cal-cell cal-head">Tue</div><div class="cal-cell cal-head">Wed</div><div class="cal-cell cal-head">Thu</div><div class="cal-cell cal-head">Fri</div><div class="cal-cell cal-head">Sat</div>
+        ${cells.join('')}
+      </div>
+    </div>`;
+}
+
+// Split from Travel — Joint/Kevin lead the Budget tab (above the calendar),
+// Travel (a different cadence — per-trip lump sums, not a recurring monthly
+// budget) stays below it.
+async function renderJointKevinTrackers() {
+  const bt = D.budgetTracking;
+  const plannedSpend = await computeMonthPlanProjectedSpend();
+  return `
+    <div class="g2">
+      ${renderSpendTracker('Joint (Barclays)', bt.joint, 'drill-joint', plannedSpend)}
+      ${renderSpendTracker('Kevin personal', bt.kevinPersonal, 'drill-kevin')}
+    </div>`;
+}
+
+function toggleExpPanel(row) {
+  const lines = row.nextElementSibling;
+  const tv = row.querySelector('.tv');
+  const open = lines.style.display !== 'block';
+  lines.style.display = open ? 'block' : 'none';
+  // store original value on first open
+  if (!row.dataset.val) row.dataset.val = tv.textContent.replace(/[‹›]/g,'').trim();
+  tv.textContent = row.dataset.val + (open ? ' ‹' : ' ›');
+}
+
+function updateP6() {
+  const sl = $('sl-p6'); if (!sl) return;
+  const exp = parseInt(sl.value), inc = phaseIncome(D.phases[D.phases.length-1]), sur = inc - exp;
+  $('lbl-p6').textContent = fmt(exp);
+  const el = $('p6-exp'), no = $('p6-note');
+  if (sur >= 0) {
+    el.textContent = '+' + fmt(sur); el.style.color = 'var(--green)';
+    no.textContent = 'Surplus — portfolio continues to grow';
+  } else {
+    const yrs = Math.floor(3000000 / (Math.abs(sur) * 12));
+    el.textContent = '−' + fmt(Math.abs(sur)); el.style.color = 'var(--red)';
+    no.textContent = 'Deficit — $3M portfolio sustains ~' + yrs + ' years at this rate';
+  }
+}
+
+/* ═══════════════════════════════
+   RENDER: BUDGET TAB (default/first tab)
+   ═══════════════════════════════ */
+// Reads data/todos.json (bundled as D.todos) — a bot/hand-writable action-item
+// list, deliberately its own file rather than folded into goals.json (see
+// todos.json's own meta.description): different update cadence/writer, and a
+// future Telegram bot needs a plain file to read/write, not browser
+// localStorage. "Added N days ago" is the primary signal (drives an eventual
+// weekly-recap nudge for stale items) — deadline is secondary/optional.
+function renderTodosSection() {
+  const todos = D.todos || { items: [], weeklyGoals: [] };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysAgo = (dateStr) => Math.floor((today - new Date(dateStr)) / 86400000);
+  const ownerPill = (owner) => `<span class="todo-owner todo-owner-${owner}">${owner.charAt(0).toUpperCase() + owner.slice(1)}</span>`;
+
+  const itemsHTML = todos.items.map((t) => {
+    const age = daysAgo(t.dateAdded);
+    const ageLabel = age <= 0 ? 'Added today' : age === 1 ? 'Added 1 day ago' : `Added ${age} days ago`;
+    const deadlineLabel = t.deadline ? ` · Due ${t.deadline}` : '';
+    return `<div class="tr${t.done ? ' todo-done' : ''}">
+      <span class="tl">${ownerPill(t.owner)}${t.title}</span>
+      <span class="tv muted">${ageLabel}${deadlineLabel}</span>
+    </div>`;
+  }).join('');
+
+  // Weekly goals (rare — family-only, usually empty) share the same list panel
+  // rather than a separate monthly/weekly split.
+  const goalsHTML = todos.weeklyGoals.map((g) => {
+    const pct = g.target ? Math.min(100, Math.round(g.count / g.target * 100)) : 0;
+    return `<div class="goal">
+      <div class="goal-head">
+        <span class="goal-name">${ownerPill(g.owner)}${g.title}</span>
+        <span class="goal-num">${g.count} / ${g.target} ${g.unit} this week</span>
+      </div>
+      <div class="goal-bar"><div class="goal-fill" style="width:${pct}%;background:var(--navy)"></div></div>
+    </div>`;
+  }).join('');
+
+  const body = (itemsHTML + goalsHTML)
+    || `<div class="callout">Nothing on the list right now.</div>`;
+
+  return `
+    <div class="slabel">To-Dos</div>
+    <div class="panel">
+      ${body}
+    </div>`;
+}
+
+async function renderBudgetTab() {
+  const bt = D.budgetTracking;
+  const jointKevinHtml = await renderJointKevinTrackers();
+  $('pg-budget').innerHTML = `
+    <div class="content">
+      ${renderTodosSection()}
+      <div class="slabel">Spend tracking</div>
+      ${jointKevinHtml}
+      <div id="pg-monthplan"></div>
+      ${renderTravelSummary(bt.travel)}
+    </div>`;
+  await renderMonthPlan();
+}
+
+/* ═══════════════════════════════
+   RENDER: GOALS (savings goals, 6 phases, timeline)
+   ═══════════════════════════════ */
+function renderGoalsTab() {
+  // Merged timeline (goals.json's old separate milestones + decisionGates
+  // lists collapsed 2026-07-29 — they described mostly the same breakpoints
+  // twice, in two shapes, on two different tabs) using the same
+  // .milestone/.ms-spine/.ms-dot visual the old Goals tab already had.
+  const timelineHTML = D.timeline.map((t) => `
+    <div class="milestone">
+      <div class="ms-yr">${t.year}</div>
+      <div class="ms-spine"><div class="ms-dot" style="${t.dotColor ? 'background:' + t.dotColor : ''}"></div><div class="ms-line"></div></div>
+      <div class="ms-body">
+        <div class="ms-title">${t.title}</div>
+        <div class="ms-detail">${t.detail}</div>
+      </div>
+    </div>`).join('');
+
+  $('pg-goals').innerHTML = `
+    <div class="content">
+      <div class="slabel">Timeline</div>
+      <div class="panel">${timelineHTML}</div>
+
+      <div class="slabel">6 phases of the plan</div>
+      <div class="g3">${buildPhaseCardsHTML()}</div>
+    </div>`;
+
+  updateP6();
+}
+
+/* ═══════════════════════════════
+   RENDER: DECISIONS (next steps)
+   ═══════════════════════════════ */
+function renderDecisionsTab() {
+  const urgentDecs = D.decisions.filter(d => d.status === 'urgent');
+  const otherDecs  = D.decisions.filter(d => d.status !== 'urgent');
+
+  const decCard = d => `
+    <div class="decision">
+      <div class="dec-head">
+        <span class="dec-status ds-${d.status}">${d.status.charAt(0).toUpperCase()+d.status.slice(1)}</span>
+        <span class="dec-title">${d.title}</span>
+      </div>
+      <div class="dec-body">${d.body}</div>
+      <div class="dec-action">${d.action}</div>
+    </div>`;
+
+  $('pg-decisions').innerHTML = `
+    <div class="content">
+      <div class="slabel">Decisions &amp; actions</div>
+      <div class="g2">
+        <div class="panel">
+          <div class="ptitle">Immediate — this week</div>
+          ${urgentDecs.map(decCard).join('')}
+        </div>
+        <div class="panel">
+          <div class="ptitle">This quarter — 90 days</div>
+          ${otherDecs.map(decCard).join('')}
+        </div>
+      </div>
+    </div>`;
+
+  // Color-codes the Decisions nav tab itself when something's urgent,
+  // replacing the old Budget-tab peek banner — the signal lives on the tab
+  // you'd actually go act on, not a separate interruption elsewhere.
+  const tab = $('ntab-decisions');
+  if (tab) tab.classList.toggle('ntab-urgent', urgentDecs.length > 0);
+}
+
+/* ═══════════════════════════════
+   RENDER: TRAJECTORY (chart)
+   ═══════════════════════════════ */
+const YEARS = [2026,2027,2028,2029,2030,2031,2032,2033,2034,2035,2036,2039,2040,2045,2050];
+
+function milestoneLines() {
+  return D.timeline
+    .map(m => { const yrMatch = m.year.match(/\d{4}/); return yrMatch ? { yr: parseInt(yrMatch[0]), short: m.short, color: m.dotColor || '#8a8a8a' } : null; })
+    .filter(m => m && YEARS.includes(m.yr));
+}
+
+// Phase-boundary and contribution logic both derive from D.phases directly
+// (never hand-typed duplicate figures) so the chart can't silently drift out
+// of sync with the Phases tab.
+// Neutral and Fail land Hanna at the same $300K-equivalent income on the
+// same timeline (startup stabilizing vs. a new job by Jan 2029 are just two
+// different paths to the identical number) — so they share the same phase
+// boundaries. Only "Go" changes the trajectory math (the one-time payout,
+// applied separately in computeProjection).
+// Phase 1 (dual income, pre-transition) is a brief window inside the same
+// coarse annual step 2026 already collapses to 6 months — the trajectory
+// model has no sub-year resolution, so 2026 uses Phase 2's (the startup
+// transition's) contribution rate rather than gaining its own chart segment.
+function phaseForYear(yr, kv) {
+  if (yr < kv) return 2;
+  if (yr < 2030) return 3;
+  if (yr < 2039) return 4;
+  if (yr < 2045) return 5;
+  return 6;
+}
+function phaseContribution(phase, bucket) {
+  return phase.allocation.filter(a => a.bucket === bucket).reduce((sum,a) => sum + a.amount, 0);
+}
+
+function computeProjection(g, lr, cr, kv, sb, sabbaticalYear, croatiaYear, hannaScenario) {
+  const all = []; for (let y=2026;y<=2050;y++) all.push(y);
+  let ret=D.assets.retirement.kevin+D.assets.retirement.hanna;
+  let brok=D.assets.brokerage.kevin+D.assets.brokerage.hanna;
+  let liq=D.assets.cash.kevin+D.assets.cash.hanna;
+  const rA=[], bA=[], lA=[];
+  for (let i=0;i<all.length;i++) {
+    const yr=all[i], mo=yr===2026?6:12;
+    const ph = phaseForYear(yr, kv);
+    const phase = D.phases[ph-1];
+    const retContrib  = ph < D.phases.length ? D.chart.annualRetirementContribution * (mo/12) : 0;
+    const brokContrib = phaseContribution(phase, 'brokerage') * mo;
+    const liqContrib  = phaseContribution(phase, 'liquid') * mo;
+    ret  = ret  * (1+g)    + retContrib;
+    brok = brok * (1+g)    + brokContrib;
+    liq  = liq  * (1+lr)   + liqContrib;
+    if (yr === sabbaticalYear) liq  = Math.max(0, liq  - sb*1000);
+    if (yr === croatiaYear)    brok = Math.max(0, brok - cr*1000);
+    if (hannaScenario === 'go' && yr === D.chart.goPayoutYear) brok += D.chart.goPayout;
+    rA.push(Math.round(ret));
+    bA.push(Math.round(Math.max(0,brok)));
+    lA.push(Math.round(Math.max(0,liq)));
+  }
+  const get=(a,y)=>a[all.indexOf(y)];
+  const sR=YEARS.map(y=>get(rA,y)), sB=YEARS.map(y=>get(bA,y)), sL=YEARS.map(y=>get(lA,y));
+  return { ret:sR, brok:sB, liq:sL, tot:YEARS.map((_,i)=>sR[i]+sB[i]+sL[i]) };
+}
+
+function renderTrajectory() {
+  $('sub-trajectory').innerHTML = `
+    <div class="content">
+      <div class="slabel">Net worth trajectory</div>
+      <div class="stat-strip">
+        <div class="stat-box"><div class="sb-label">Retirement by 2050</div><div class="sb-val" id="st-ret">—</div><div class="sb-note">Maxed 401K compounding</div></div>
+        <div class="stat-box"><div class="sb-label">Brokerage pre-Croatia</div><div class="sb-val" id="st-brok">—</div><div class="sb-note">By 2033 · largely self-funded</div></div>
+        <div class="stat-box"><div class="sb-label">Liquid pre-sabbatical</div><div class="sb-val" id="st-liq">—</div><div class="sb-note">2035 · before 2036 spend</div></div>
+        <div class="stat-box"><div class="sb-label">Total net worth 2050</div><div class="sb-val" id="st-tot">—</div><div class="sb-note">Base case · excl. company exit</div></div>
+      </div>
+      <div class="chart-panel">
+        <div class="chart-controls">
+          <div><div class="ctrl-label" title="Applies to Retirement &amp; Brokerage only">Growth rate</div><div class="ctrl-row"><input type="range" id="sl-g" min="4" max="12" step="0.5" value="${D.chart.growthRate*100}"><span class="ctrl-val" id="lb-g">${(D.chart.growthRate*100).toFixed(1)}%</span></div></div>
+          <div><div class="ctrl-label" title="Applies to Liquid/Cash only — deliberately separate from Growth rate">Liquid/Cash rate</div><div class="ctrl-row"><input type="range" id="sl-lr" min="0" max="5" step="0.5" value="${D.chart.liquidRate*100}"><span class="ctrl-val" id="lb-lr">${(D.chart.liquidRate*100).toFixed(1)}%</span></div></div>
+          <div><div class="ctrl-label">Hanna scenario</div><div class="scn-row" id="scn-row">
+            <button class="scn-btn" data-v="fail">Fail</button>
+            <button class="scn-btn active" data-v="neutral">Neutral</button>
+            <button class="scn-btn" data-v="go">Success</button>
+          </div></div>
+          <div><div class="ctrl-label">Croatia budget</div><div class="ctrl-row"><input type="range" id="sl-c" min="400" max="1200" step="50" value="${D.chart.croatiaK}"><span class="ctrl-val" id="lb-c">$${D.chart.croatiaK}K</span></div></div>
+          <div><div class="ctrl-label">Kevin $300K year</div><div class="ctrl-row"><input type="range" id="sl-k" min="2027" max="2030" step="1" value="${D.chart.kevin300kYr}"><span class="ctrl-val" id="lb-k">${D.chart.kevin300kYr}</span></div></div>
+          <div><div class="ctrl-label">Sabbatical cost</div><div class="ctrl-row"><input type="range" id="sl-s" min="80" max="250" step="10" value="${D.chart.sabbaticalK}"><span class="ctrl-val" id="lb-s">$${D.chart.sabbaticalK}K</span></div></div>
+        </div>
+        <div class="chart-legend">
+          <div class="leg"><div class="leg-line" style="background:rgba(26,39,68,.6);border-top:2px dashed rgba(26,39,68,.5)"></div>Total net worth</div>
+          <div class="leg"><div class="leg-line" style="background:#7a6230"></div>Retirement</div>
+          <div class="leg"><div class="leg-line" style="background:#1e4d8c"></div>Brokerage</div>
+          <div class="leg"><div class="leg-line" style="background:#2d6a3f"></div>Liquid</div>
+        </div>
+        <div class="chart-wrap"><canvas id="mc" role="img" aria-label="Net worth trajectory 2026–2050"></canvas></div>
+        <div class="chart-foot">
+          ${milestoneLines().map(({yr,short,color})=>`<div class="cev" style="color:${color}"><div class="ev-line" style="border-color:${color}"></div>${yr} ${short}</div>`).join('')}
+          <div style="margin-left:auto;font-size:13px;color:var(--sub)">Hover for values · sliders &amp; scenario buttons model outcomes</div>
+        </div>
+      </div>
+    </div>`;
+
+  initChart();
+}
+
+let chartInst = null;
+
+const overlayPlugin = {
+  id:'ov',
+  beforeDatasetsDraw(chart) {
+    const {ctx,scales:{x,y}}=chart, L=chart.data.labels, n=L.length-1;
+    const xp=yr=>{const i=L.indexOf(yr);return i<0?null:x.getPixelForValue(i);};
+    const fill=(x1,x2,col)=>{if(!x1||!x2||x2<=x1)return;ctx.save();ctx.fillStyle=col;ctx.fillRect(x1,y.top,x2-x1,y.bottom-y.top);ctx.restore();};
+    const div=px=>{if(!px)return;ctx.save();ctx.strokeStyle='rgba(0,0,0,.07)';ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(px,y.top);ctx.lineTo(px,y.bottom);ctx.stroke();ctx.restore();};
+    fill(xp(2026),xp(2027),  'rgba(122,98,48,.05)');
+    fill(xp(2027),xp(2030),  'rgba(45,106,63,.04)');
+    fill(xp(2030),xp(2039),  'rgba(122,46,36,.04)');
+    fill(xp(2039),xp(2045),  'rgba(74,48,112,.05)');
+    fill(xp(2045),x.getPixelForValue(n),'rgba(90,82,48,.04)');
+    [xp(2027),xp(2030),xp(2039),xp(2045)].forEach(div);
+  },
+  afterDatasetsDraw(chart) {
+    const {ctx,scales:{x,y}}=chart, L=chart.data.labels;
+    const xp=yr=>{const i=L.indexOf(yr);return i<0?null:x.getPixelForValue(i);};
+    milestoneLines().forEach(({yr,color})=>{
+      const px=xp(yr);if(!px)return;
+      ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.globalAlpha=.65;
+      ctx.beginPath();ctx.moveTo(px,y.top);ctx.lineTo(px,y.bottom);ctx.stroke();ctx.restore();
+    });
+    const d=chart.data.datasets[0];
+    if(d?.data?.length){
+      const v=d.data[d.data.length-1],px=x.getPixelForValue(L.length-1),py=y.getPixelForValue(v);
+      const txt=v>=1000000?'$'+(v/1000000).toFixed(2)+'M':'$'+Math.round(v/1000)+'K';
+      ctx.save();ctx.font="600 11px 'Source Sans 3',sans-serif";
+      const tw=ctx.measureText(txt).width+10;
+      ctx.fillStyle='rgba(244,242,237,.96)';ctx.fillRect(px-tw-2,py-10,tw,18);
+      ctx.strokeStyle='rgba(0,0,0,.12)';ctx.lineWidth=.5;ctx.setLineDash([]);ctx.strokeRect(px-tw-2,py-10,tw,18);
+      ctx.fillStyle='#1a2744';ctx.textAlign='right';ctx.textBaseline='middle';ctx.fillText(txt,px-5,py);ctx.restore();
+    }
+  }
+};
+
+function initChart() {
+  const c = D.chart;
+  const proj = computeProjection(c.growthRate, c.liquidRate, c.croatiaK, c.kevin300kYr, c.sabbaticalK, c.sabbaticalYear, c.croatiaYear, c.hannaScenario);
+  const f = "'Source Sans 3',sans-serif";
+
+  chartInst = new Chart($('mc'), {
+    type:'line',
+    data:{
+      labels:YEARS,
+      datasets:[
+        {label:'Total NW',   data:proj.tot,  borderColor:'rgba(26,39,68,.65)', borderWidth:2.5, borderDash:[7,4], pointRadius:0, fill:false, tension:.35},
+        {label:'Retirement', data:proj.ret,  borderColor:'#7a6230', borderWidth:1.5, pointRadius:0, fill:false, tension:.4},
+        {label:'Brokerage',  data:proj.brok, borderColor:'#1e4d8c', borderWidth:1.5, pointRadius:0, fill:false, tension:.4},
+        {label:'Liquid',     data:proj.liq,  borderColor:'#2d6a3f', borderWidth:1.5, pointRadius:0, fill:false, tension:.1},
+      ]
+    },
+    plugins:[overlayPlugin],
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      layout:{padding:{top:6,right:22,bottom:2}},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(26,39,68,.97)',titleColor:'#f4f2ed',bodyColor:'rgba(244,242,237,.75)',
+          borderColor:'rgba(255,255,255,.08)',borderWidth:1,padding:12,
+          titleFont:{family:f,size:12,weight:'700'},bodyFont:{family:f,size:11},
+          callbacks:{
+            title:i=>String(i[0].label),
+            label:ctx=>{const v=Math.round(ctx.parsed.y);return '  '+ctx.dataset.label.padEnd(13)+(v>=1000000?'$'+(v/1000000).toFixed(2)+'M':'$'+Math.round(v/1000)+'K');}
+          }
+        }
+      },
+      scales:{
+        x:{ticks:{color:'#444',font:{family:f,size:12},autoSkip:false,maxRotation:0},grid:{color:'rgba(0,0,0,.04)'}},
+        y:{ticks:{color:'#444',font:{family:f,size:12},callback:v=>v>=1000000?'$'+(v/1000000).toFixed(1)+'M':'$'+Math.round(v/1000)+'K'},grid:{color:'rgba(0,0,0,.04)'}}
+      }
+    }
+  });
+
+  updateStats(proj);
+
+  ['sl-g','sl-lr','sl-c','sl-k','sl-s'].forEach(id=>{
+    const el=$(id); if(!el)return;
+    el.addEventListener('input',refreshChart);
+  });
+  document.querySelectorAll('#scn-row .scn-btn').forEach(btn=>{
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#scn-row .scn-btn').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      D.chart.hannaScenario = btn.dataset.v;
+      refreshChart();
+    });
+  });
+}
+
+function refreshChart() {
+  const g=parseFloat($('sl-g').value)/100, lr=parseFloat($('sl-lr').value)/100;
+  const cr=parseFloat($('sl-c').value), kv=parseInt($('sl-k').value), sb=parseFloat($('sl-s').value);
+  $('lb-g').textContent=(g*100).toFixed(1)+'%';
+  $('lb-lr').textContent=(lr*100).toFixed(1)+'%';
+  $('lb-c').textContent='$'+cr+'K';
+  $('lb-k').textContent=kv;
+  $('lb-s').textContent='$'+sb+'K';
+  const p=computeProjection(g,lr,cr,kv,sb,D.chart.sabbaticalYear,D.chart.croatiaYear,D.chart.hannaScenario);
+  chartInst.data.datasets[0].data=p.tot;
+  chartInst.data.datasets[1].data=p.ret;
+  chartInst.data.datasets[2].data=p.brok;
+  chartInst.data.datasets[3].data=p.liq;
+  chartInst.update('none');
+  updateStats(p);
+}
+
+function updateStats(p) {
+  const idx=yr=>YEARS.indexOf(yr);
+  const f2=v=>v>=1000000?'$'+(v/1000000).toFixed(1)+'M':v>=1000?'$'+Math.round(v/1000)+'K':'$'+v;
+  if($('st-ret')) $('st-ret').textContent=f2(p.ret[idx(2050)]);
+  // 2032, not 2033 — the Croatia draw is applied during 2033's own step in
+  // computeProjection, so proj.brok[2033] is already POST-draw. 2032 is the
+  // last value before that withdrawal happens.
+  if($('st-brok'))$('st-brok').textContent=f2(p.brok[idx(2032)]);
+  if($('st-liq')) $('st-liq').textContent=f2(p.liq[idx(2035)]);
+  if($('st-tot')) $('st-tot').textContent=f2(p.tot[idx(2050)]);
+}
+
+/* ═══════════════════════════════
+   PAGE NAVIGATION
+   ═══════════════════════════════ */
+const rendered = new Set();
+
+function show(id, el) {
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
+  $('pg-'+id).classList.add('active');
+  el.classList.add('active');
+  if (id === 'position' && !rendered.has('position')) {
+    renderPositionTab();
+    rendered.add('position');
+  }
+}
+
+/* ═══════════════════════════════
+   INIT
+   ═══════════════════════════════ */
+renderHeader();
+// renderBudgetTab() is async (Month Plan's storage is now a fetch() call,
+// not localStorage) — kept as a named const, not a bare call, so the test
+// harness can grab this promise and await initial-render completion before
+// asserting on pg-budget's content.
+const initReady = renderBudgetTab();
+renderGoalsTab();
+renderDecisionsTab();
+// Current Position (and, within it, Trajectory) render lazily — see show()/showPosition().
+</script>
+</body>
+</html>

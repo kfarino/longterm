@@ -1,0 +1,8 @@
+{
+  "name": "longterm-dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dashboard-server.mjs"
+  }
+}
