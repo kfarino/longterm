@@ -12,7 +12,11 @@ This repo is **code + fictional examples only**. Your household numbers, to-dos,
 Read docs/setup-with-ai.md and examples/*.example.json.
 Walk me through first-time Longterm setup for my household (full stack: dashboard, Monarch, Telegram, Google Calendar).
 
-Use Clayton Christensen’s “How Will You Measure Your Life?” as the planning frame: help me define long-term goals so everyday money and time decisions act in my family’s best interest — getting the things we actually want — instead of chasing short-term affirmation or whatever is right in front of us. Call out the trap from the book: the successful person who said they valued more time with their kids, but kept choosing more work because checking a task off the list gives a quick dopamine hit. Small decisions add up. Push for conscious saving toward big items and unlocks, not just reacting month to month.
+Order matters:
+1. Goals first — use Clayton Christensen’s “How Will You Measure Your Life?” to define what we actually want (career, relationships, integrity) and the big unlocks we’d regret not funding. Call out the trap from the book: the successful person who said they valued more time with kids, but kept choosing more work because checking a task off the list gives a quick dopamine hit. Small decisions add up.
+2. Monarch next — wire real balances and spend before inventing detailed phases. Do not guess net worth or budgets when Monarch can tell us.
+3. Then analyze — use this chat (local LLM) to review the pulled accounts/transactions and give a clear financial picture: assets, spend pace, surplus capacity, and constraints. That analysis is the context for budgeting and asset decisions.
+4. Only then write phases, surplus allocation, and next-step decisions so the plan can actually meet the goals given our real money — conscious saving toward unlocks, not reacting to what’s in front of us.
 
 Ask one question at a time. Write the real data files yourself from my answers. Do not commit my financial data.
 ```
@@ -27,17 +31,19 @@ npm run dev
 
 Open [http://localhost:4200/dashboard_v5.html](http://localhost:4200/dashboard_v5.html).
 
-## What you will need (full stack)
+## What you will need (recommended path)
 
-| Piece | Required for | What you’ll set up |
-|-------|----------------|--------------------|
-| Node + Git | Everything | Local tools |
-| `npm run seed` | Dashboard | Copies `examples/` → local `data/` (skips files that already exist) |
-| Monarch Money | Auto balances/spend | `~/.longterm/monarch.env` + account mapping |
-| Telegram bot | Chat planning | `~/.longterm/telegram.env` |
-| Google Cloud OAuth | Family Planner calendar | `~/.longterm/google-calendar.env` |
+| Piece | When | What you’ll set up |
+|-------|------|--------------------|
+| Node + Git | Start | Local tools |
+| `npm run seed` | Start | Copies `examples/` → local `data/` |
+| Life goals interview | First | Christensen frame → `goals.json` skeleton |
+| Monarch Money | Right after goals | `~/.longterm/monarch.env` + account mapping + first pull |
+| AI financial analysis | After first pull | Budget/asset context for phases |
+| Telegram bot | Later | `~/.longterm/telegram.env` |
+| Google Cloud OAuth | Later | `~/.longterm/google-calendar.env` |
 
-You can stop after the dashboard works and add Monarch / Telegram / Calendar later — tell the AI “dashboard only for now.”
+You can say **“dashboard only / no Monarch yet”** if you must — the AI will use rough manual numbers — but the default path is **goals → Monarch → analysis → phases**.
 
 ## Manual copy (if you are not using an AI)
 
