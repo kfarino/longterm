@@ -103,11 +103,12 @@ Skip if not wanted yet.
 
 ```env
 TELEGRAM_BOT_TOKEN=...
-TELEGRAM_CHAT_ID=...
+TELEGRAM_GROUP_CHAT_ID=...
+TELEGRAM_BOT_USERNAME=YourBotUsername
 ANTHROPIC_API_KEY=...
 ```
 
-(Inspect `scripts/telegram-bot-poll.mjs` / existing comments for any extra required keys; mirror what the code reads.)
+(Exact keys read by `scripts/telegram-bot-poll.mjs` — keep this list in sync if the poller gains more env vars.)
 
 3. Run `node scripts/telegram-bot-whoami.mjs` or a single poll to verify auth.
 4. Windows: `.\scripts\install-telegram-scheduled-task.ps1` and `.\scripts\install-telegram-recap-scheduled-task.ps1`.
