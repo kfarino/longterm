@@ -239,12 +239,13 @@ function trTotal(label, value, cls='') {
    ═══════════════════════════════ */
 function familySubtitle() {
   const f = D.family || {};
+  let framework = (f.framework || '').trim();
+  if (!framework) return '';
   // Prefer the short title before an em-dash (e.g. "How Will You Measure Your Life?")
   // rather than the full framework paragraph.
-  let framework = (f.framework || '').trim();
   if (framework.includes('—')) framework = framework.split('—')[0].trim();
   framework = framework.replace(/^["']+|["']+$/g, '');
-  return [f.name, f.location, framework].filter(Boolean).join(' · ');
+  return `Framework: ${framework}`;
 }
 
 function renderHeader() {
