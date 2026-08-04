@@ -20,6 +20,8 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .header{background:#fff;border-bottom:2px solid var(--navy);padding:22px 40px;display:flex;justify-content:space-between;align-items:center}
 .hname{font-size:19px;font-weight:700;color:var(--navy)}
 .hsub{font-size:13px;color:var(--sub);margin-top:3px}
+.hsub a{color:var(--navy);text-decoration:underline;text-underline-offset:2px}
+.hsub a:hover{color:var(--blue)}
 .hnw-lbl{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:4px;text-align:right}
 .hnw{font-size:28px;font-weight:700;color:var(--navy)}
 .nav{background:#fff;border-bottom:1px solid var(--rule);display:flex;padding:0 40px}
@@ -238,20 +240,20 @@ function trTotal(label, value, cls='') {
    RENDER: HEADER
    ═══════════════════════════════ */
 function familySubtitle() {
+  // Book link is intentionally hardcoded; display text still comes from goals.family.framework.
   const f = D.family || {};
   let framework = (f.framework || '').trim();
   if (!framework) return '';
-  // Prefer the short title before an em-dash (e.g. "How Will You Measure Your Life?")
-  // rather than the full framework paragraph.
   if (framework.includes('—')) framework = framework.split('—')[0].trim();
   framework = framework.replace(/^["']+|["']+$/g, '');
-  return `Framework: ${framework}`;
+  const href = 'https://www.amazon.com/Will-Measure-Your-Life-Christensen/dp/0062102419';
+  return `Framework: <a href="${href}" target="_blank" rel="noopener noreferrer">${framework}</a>`;
 }
 
 function renderHeader() {
   $('h-nw').textContent = fmt(totalNW());
   const sub = $('h-sub');
-  if (sub) sub.textContent = familySubtitle();
+  if (sub) sub.innerHTML = familySubtitle();
 }
 
 /* ═══════════════════════════════
