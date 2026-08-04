@@ -11,6 +11,9 @@ This repo is **code + fictional examples only**. Your household numbers, to-dos,
 ```text
 Read docs/setup-with-ai.md and examples/*.example.json.
 Walk me through first-time Longterm setup for my household (full stack: dashboard, Monarch, Telegram, Google Calendar).
+
+Use Clayton Christensen’s “How Will You Measure Your Life?” as the planning frame: help me define long-term goals so everyday money and time decisions act in my family’s best interest — getting the things we actually want — instead of chasing short-term affirmation or whatever is right in front of us. Call out the trap from the book: the successful person who said they valued more time with their kids, but kept choosing more work because checking a task off the list gives a quick dopamine hit. Small decisions add up. Push for conscious saving toward big items and unlocks, not just reacting month to month.
+
 Ask one question at a time. Write the real data files yourself from my answers. Do not commit my financial data.
 ```
 

@@ -2,6 +2,21 @@
 
 You are helping someone set up **Longterm** (household finance dashboard + optional Monarch pulls, Telegram bot, Google Calendar) on their machine.
 
+## Planning frame (do this first — not optional color)
+
+Use Clayton Christensen’s ***How Will You Measure Your Life?*** as the lens for the whole interview.
+
+**Purpose of this system:** help the household define long-term goals so day-to-day decisions about money, time, and career act in their *best interest toward what they say they want* — not toward short-term affirmation or whatever is loudest right now.
+
+**The trap to name early:** the successful career person who said they valued more time with their kids, but kept choosing more work because finishing a task gives a quick dopamine hit. Checking something off the list feels productive *now*; the relationship / health / freedom goal only pays off later. Small decisions add up. Your job is to make the long game visible so they can save and allocate *consciously* toward big items and unlocks (home, sabbatical, career shift, family time), not only react to the next bill or the next inbox hit.
+
+**How to interview under this frame**
+- Before deep-diving numbers, ask what a good life looks like in 5–10–20 years (career, relationships, integrity / how they’ll measure themselves).
+- Turn those answers into concrete `lifeGoals`, `timeline` milestones, `decisions`, and surplus `allocation` lines — not just a budget spreadsheet.
+- When they describe a spend or work habit, ask: “Does this move you toward a named goal, or is it the easy immediate win?”
+- Prefer deliberate monthly savings toward unlocks over leftover-at-end-of-month hoping.
+- Put the Christensen framing into `family.framework` (short book title + one sentence on deliberate allocation of time, energy, money).
+
 **Rules**
 - Ask **one question at a time**. Wait for the answer before the next.
 - Prefer writing files yourself over dumping large JSON for the human to paste.
@@ -33,21 +48,27 @@ npm run seed
 
 This copies `examples/*.example.json` into `data/` and creates empty Telegram/calendar stubs. It **never overwrites** files that already exist (safe on a machine that already has a household). On Windows PowerShell the same command works.
 
-Do **not** hand-copy Kevin/Hanna runtime leftovers — a clean clone has none.
+Do **not** hand-copy another household’s runtime leftovers — a clean clone has none.
 
 ### 1B. Interview (one at a time)
 
-Collect enough to fill the three JSON files:
+Collect enough to fill the three JSON files. **Start with life direction, then money** — numbers without goals become a short-term scoreboard.
 
-1. Household display name and city/region  
-2. Owner ids + display names for each adult (e.g. `teddy`/`Teddy`, `lilly`/`Lilly`) and one-line bios under `family.profile.<id>`  
-3. Today’s monthly take-home (or pre-tax → convert roughly) per person  
-4. Major monthly expenses (housing, shared “Family budget”, personal allowances). **One expense key must be exactly** whatever `budget_tracking.joint.targetExpenseKey` is (default `"Family budget"`). Each personal tracker’s `targetExpenseKey` must match a phase-1 expense label too.  
-5. How many life phases they want for now (minimum 1 current + optional later). For each phase: name, rough years, income, expenses, and where surplus goes (`allocation` with buckets `brokerage` | `liquid` | similar).  
-6. One or two savings goals (name, target $, year, optional `current`)  
-7. Rough net worth: retirement / brokerage / cash / home equity per owner id (all `source: "manual"` for now)  
-8. Budget cycle: `cycleStart` (YYYY-MM-DD) and `cycleDays`; optional sample week totals if they know recent spend  
-9. Dining routine: keep example Wed/Fri/Sat or change `dayOfWeek` (0=Sun … 6=Sat)
+**Life direction (Christensen frame)**  
+1. In one sentence each: what do you want career, relationships, and integrity to look like in ~10 years?  
+2. What are 1–3 big “unlocks” you’d regret not funding (examples: home, sabbatical, parental leave runway, career bet, time with kids)? Put rough $ and year when you can.  
+3. Where do you already feel the dopamine trap (work overtime, impulse spend, saying yes to every request) pulling against those unlocks? Capture as open `decisions` where useful.
+
+**Household + money mechanics**  
+4. Household display name and city/region; set `family.framework` to the Christensen framing.  
+5. Owner ids + display names for each adult (e.g. `teddy`/`Teddy`, `lilly`/`Lilly`) and one-line bios under `family.profile.<id>`  
+6. Today’s monthly take-home (or pre-tax → convert roughly) per person  
+7. Major monthly expenses (housing, shared “Family budget”, personal allowances). **One expense key must be exactly** whatever `budget_tracking.joint.targetExpenseKey` is (default `"Family budget"`). Each personal tracker’s `targetExpenseKey` must match a phase-1 expense label too.  
+8. How many life phases they want for now (minimum 1 current + optional later). For each phase: name, rough years, income, expenses, and where surplus goes (`allocation` with buckets `brokerage` | `liquid` | similar) — allocations should map to the unlocks from steps 2–3, not only “flex.”  
+9. Turn unlocks into `lifeGoals` (name, target $, year, optional `current`) and a simple `timeline`  
+10. Rough net worth: retirement / brokerage / cash / home equity per owner id (all `source: "manual"` for now)  
+11. Budget cycle: `cycleStart` (YYYY-MM-DD) and `cycleDays`; optional sample week totals if they know recent spend  
+12. Dining routine: keep example Wed/Fri/Sat or change `dayOfWeek` (0=Sun … 6=Sat)
 
 ### 1C. Write files + build
 
@@ -57,7 +78,7 @@ Collect enough to fill the three JSON files:
 - Start `npm run dev` and have them open `http://localhost:4200/dashboard_v5.html`.
 - Fix any console/render errors before Phase 2.
 
-**Success:** Budget / Position / Goals tabs show *their* names and numbers, not Teddy & Lilly.
+**Success:** Planner / Position / Goals tabs show *their* names, goals, and numbers — not Teddy & Lilly — and the header framework line reflects Christensen.
 
 ---
 
@@ -134,11 +155,12 @@ Skip if not wanted yet.
 Ask them to confirm:
 
 - [ ] `npm run dev` dashboard shows their household  
+- [ ] Goals / timeline / allocations reflect long-term unlocks, not only a monthly budget  
 - [ ] Builds run without errors after a goals edit  
 - [ ] (If Monarch) Pull scripts succeed once  
 - [ ] (If Telegram) Bot answers in the group  
 - [ ] (If Calendar) Event round-trips  
 - [ ] They understand not to `git add` real `goals`/`accounts`/`budget_tracking`  
-- [ ] They can re-open an AI later with: “Read `claude.md` and help me update our plan.”
+- [ ] They can re-open an AI later with: “Read `claude.md` and help me update our plan — keep the How Will You Measure Your Life? frame.”
 
 If something fails, paste the error, fix the file or env, and re-run the relevant command — don’t restart the whole interview.
