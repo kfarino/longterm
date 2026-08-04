@@ -167,7 +167,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 <div class="header">
   <div>
     <div class="hname">Family Planner</div>
-    <div class="hsub">Family Financial Plan &nbsp;·&nbsp; Brentwood, Los Angeles &nbsp;·&nbsp; July 2026 &nbsp;·&nbsp; How Will You Measure Your Life?</div>
+    <div class="hsub" id="h-sub"></div>
   </div>
   <div>
     <div class="hnw-lbl">Combined Net Worth</div>
@@ -237,8 +237,20 @@ function trTotal(label, value, cls='') {
 /* ═══════════════════════════════
    RENDER: HEADER
    ═══════════════════════════════ */
+function familySubtitle() {
+  const f = D.family || {};
+  // Prefer the short title before an em-dash (e.g. "How Will You Measure Your Life?")
+  // rather than the full framework paragraph.
+  let framework = (f.framework || '').trim();
+  if (framework.includes('—')) framework = framework.split('—')[0].trim();
+  framework = framework.replace(/^["']+|["']+$/g, '');
+  return [f.name, f.location, framework].filter(Boolean).join(' · ');
+}
+
 function renderHeader() {
   $('h-nw').textContent = fmt(totalNW());
+  const sub = $('h-sub');
+  if (sub) sub.textContent = familySubtitle();
 }
 
 /* ═══════════════════════════════
