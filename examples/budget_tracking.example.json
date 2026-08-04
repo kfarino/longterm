@@ -1,0 +1,72 @@
+{
+  "meta": {
+    "description": "EXAMPLE spend trackers — fictional. Copy to data/budget_tracking.json. joint.targetExpenseKey must match an expense name on phases[0] in goals.json (default \"Family budget\"). kevinPersonal is Person A's personal tracker (key name is fixed).",
+    "lastRegenerated": "YYYY-MM-DD",
+    "reconciliationNotes": "Use source \"manual\" with a couple of sample weeks until Monarch transaction mapping is live."
+  },
+  "joint": {
+    "label": "Joint household",
+    "targetExpenseKey": "Family budget",
+    "source": "manual",
+    "cycleStart": "2026-08-01",
+    "cycleDays": 31,
+    "note": "Household shared spend for the current cycle.",
+    "weeks": [
+      {
+        "weekOf": "Aug 1–7",
+        "actual": 980.5,
+        "days": 7
+      },
+      {
+        "weekOf": "Aug 8–14 (partial)",
+        "actual": 210,
+        "days": 3
+      }
+    ],
+    "categories": [
+      {
+        "name": "Groceries",
+        "amount": 420,
+        "transactions": [
+          { "date": "2026-08-02", "merchant": "Example Market", "amount": 120 },
+          { "date": "2026-08-05", "merchant": "Example Market", "amount": 95 }
+        ]
+      },
+      {
+        "name": "Dining",
+        "amount": 180,
+        "transactions": [
+          { "date": "2026-08-03", "merchant": "Example Bistro", "amount": 85 }
+        ]
+      }
+    ]
+  },
+  "kevinPersonal": {
+    "label": "Person A personal",
+    "targetExpenseKey": "Alex personal",
+    "source": "manual",
+    "cycleStart": "2026-08-01",
+    "cycleDays": 31,
+    "note": "Person A personal card spend. targetExpenseKey should match a phase-1 expense label (example uses \"Alex personal\").",
+    "weeks": [
+      {
+        "weekOf": "Aug 1–7",
+        "actual": 150,
+        "days": 7
+      }
+    ],
+    "categories": []
+  },
+  "travel": {
+    "label": "Travel (any card)",
+    "note": "Matched to goals.json travel[] by date window once Monarch pulls are live. Safe to leave trips empty at first.",
+    "trips": [],
+    "unmatched": []
+  },
+  "mapping": {
+    "notes": "get_transactions uses account display-name labels (not numeric ids). Fill after Monarch link.",
+    "jointAccountLabels": [],
+    "kevinPersonalAccountLabels": [],
+    "travelCategoryNames": ["Travel & Vacation"]
+  }
+}

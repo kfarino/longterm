@@ -1,0 +1,147 @@
+# First-time Longterm setup — playbook for the AI
+
+You are helping someone set up **Longterm** (household finance dashboard + optional Monarch pulls, Telegram bot, Google Calendar) on their machine.
+
+**Rules**
+- Ask **one question at a time**. Wait for the answer before the next.
+- Prefer writing files yourself over dumping large JSON for the human to paste.
+- Never commit `data/goals.json`, `data/accounts.json`, `data/budget_tracking.json`, `data/data.js`, or `kevin_hanna_goal_plan.md` (they are gitignored for a reason).
+- Start from `examples/*.example.json` — fictional Alex & Jordan — then replace with this household’s facts.
+- Owner keys **`kevin`** and **`hanna`** are fixed Person A / Person B slots in `accounts.json` and in `budget_tracking.kevinPersonal`. Map real people into those slots; put their real names in `family.profile` and in phase income *labels*.
+- After any edit to goals/accounts/budget JSON, run:
+  - `node data/build-data.mjs`
+  - `node data/build-goal-plan-md.mjs`
+- Confirm each major milestone (“Dashboard loads with your names”) before moving on.
+
+---
+
+## Phase 0 — Environment
+
+1. Confirm the workspace root is the Longterm repo (`package.json` name `longterm-dashboard`).
+2. Confirm `node -v` is 18+ (prefer 20+).
+3. Ask: Windows, Mac, or Linux? (Scheduled-task installers are PowerShell/Windows-oriented; on Mac/Linux, skip Windows task registration and run scripts manually or via cron.)
+
+---
+
+## Phase 1 — Dashboard data (required)
+
+### 1A. Copy starters
+
+```bash
+cp examples/goals.example.json data/goals.json
+cp examples/accounts.example.json data/accounts.json
+cp examples/budget_tracking.example.json data/budget_tracking.json
+cp examples/month_plan_events.example.json data/month_plan_events.json
+cp examples/todos.example.json data/todos.json
+```
+
+On Windows PowerShell, use `Copy-Item` equivalently.
+
+### 1B. Interview (one at a time)
+
+Collect enough to fill the three JSON files:
+
+1. Household display name and city/region  
+2. Who is Person A (`kevin` slot) and Person B (`hanna` slot) — names and one-line bios  
+3. Today’s monthly take-home (or pre-tax → convert roughly) per person  
+4. Major monthly expenses (housing, shared “Family budget”, personal allowances). **One expense key must be exactly** whatever `budget_tracking.joint.targetExpenseKey` is (default `"Family budget"`). Person A personal tracker’s `targetExpenseKey` must match a phase-1 expense label too.  
+5. How many life phases they want for now (minimum 1 current + optional later). For each phase: name, rough years, income, expenses, and where surplus goes (`allocation` with buckets `brokerage` | `liquid` | similar).  
+6. One or two savings goals (name, target $, year, optional `current`)  
+7. Rough net worth: retirement / brokerage / cash / home equity per person (all `source: "manual"` for now)  
+8. Budget cycle: `cycleStart` (YYYY-MM-DD) and `cycleDays`; optional sample week totals if they know recent spend  
+9. Dining routine: keep example Wed/Fri/Sat or change `dayOfWeek` (0=Sun … 6=Sat)
+
+### 1C. Write files + build
+
+- Edit `data/goals.json`, `data/accounts.json`, `data/budget_tracking.json` to match answers.
+- Keep JSON valid. Preserve structure from the examples.
+- Run both build scripts.
+- Start `npm run dev` and have them open `http://localhost:4200/dashboard_v5.html`.
+- Fix any console/render errors before Phase 2.
+
+**Success:** Budget / Position / Goals tabs show *their* names and numbers, not Alex & Jordan.
+
+---
+
+## Phase 2 — Monarch (auto balances + spend)
+
+Skip if they say dashboard-only.
+
+1. They need a [Monarch Money](https://www.monarchmoney.com/) account with bank/brokerage linked.
+2. Create credentials file (do **not** commit it), default path used by scripts:
+
+`C:\Users\Family\.scrooge\monarch.env` on the original machine — for a new user prefer:
+
+`C:\Users\<User>\.longterm\monarch.env` (Windows) or `~/.longterm/monarch.env` (Mac/Linux)
+
+Suggested contents:
+
+```env
+MONARCH_EMAIL=their@email.com
+MONARCH_PASSWORD=their-password
+```
+
+3. If scripts still point at `.scrooge\monarch.env`, either keep that path or pass `--monarch-env-file` / edit the default in `scripts/networth-pull.mjs` and `scripts/budget-tracking-pull.mjs` to `~/.longterm/monarch.env`.
+4. Install the Monarch MCP venv (Windows example from `claude.md`): Python 3.12 venv at `~\.longterm\monarch-mcp-venv`, `pip install monarch-mcp-jamiew==0.4.0`.
+5. Run a dry diagnostic: call `get_accounts` via the pull tooling or a one-off script; list account ids/labels.
+6. Fill `data/accounts.json` → `mapping.accounts` with `{ monarchId, label, target }` paths.
+7. Fill `data/budget_tracking.json` → `mapping.jointAccountLabels` / `kevinPersonalAccountLabels` with **exact** Monarch transaction account display names.
+8. Set tracker `source` fields to `"monarch"` once mapping works.
+9. Run `node scripts/networth-pull.mjs` and `node scripts/budget-tracking-pull.mjs` (or the `.ps1` wrappers). Confirm `data.js` regenerated.
+10. On Windows, from `scripts/`: `.\install-scheduled-task.ps1` for the daily 03:00 pull.
+
+**Success:** Position tab balances update from Monarch; Budget joint/personal weeks refill without hand-editing.
+
+---
+
+## Phase 3 — Telegram bot
+
+Skip if not wanted yet.
+
+1. Create a bot with [@BotFather](https://t.me/BotFather); create/join a household group; add the bot.
+2. Write `~\.longterm\telegram.env` (never commit):
+
+```env
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+ANTHROPIC_API_KEY=...
+```
+
+(Inspect `scripts/telegram-bot-poll.mjs` / existing comments for any extra required keys; mirror what the code reads.)
+
+3. Run `node scripts/telegram-bot-whoami.mjs` or a single poll to verify auth.
+4. Windows: `.\scripts\install-telegram-scheduled-task.ps1` and `.\scripts\install-telegram-recap-scheduled-task.ps1`.
+5. Seed `data/telegram-owners.json` so each sender maps to an owner if the bot expects it — ask them their Telegram usernames and edit the file.
+6. Clear inherited logs if any (`telegram-offset.json` can reset carefully; don’t steal another household’s chat id).
+
+**Success:** A message in the group like “add PT Thursday 10am” creates a `schedule` or dining plan event as designed.
+
+---
+
+## Phase 4 — Google Calendar (“Family Planner”)
+
+Skip if not wanted yet.
+
+1. Google Cloud project, enable Calendar API, OAuth Desktop client.
+2. Run `node scripts/calendar-auth-setup.mjs` (interactive) **or** follow its header comments / `gws` flow documented in `claude.md`.
+3. Save `~\.longterm\google-calendar.env` with client id/secret, refresh token, calendar id, and `GOOGLE_READ_CALENDAR_IDS` for personal calendars to *read* (never a work calendar unless they insist).
+4. Confirm `calendar-sync.mjs` runs at the end of the Telegram poll task (already wired on Windows once Telegram poll is installed).
+5. Remind: Google Family Planner is source of truth for synced events; Month Plan dashboard shows only `dining` + `family` (spend), not `schedule`.
+
+**Success:** A confirmed dinner appears on Family Planner within ~2 minutes; deleting it in Google removes it from the Month Plan on the next sync.
+
+---
+
+## Phase 5 — Handoff checklist
+
+Ask them to confirm:
+
+- [ ] `npm run dev` dashboard shows their household  
+- [ ] Builds run without errors after a goals edit  
+- [ ] (If Monarch) Pull scripts succeed once  
+- [ ] (If Telegram) Bot answers in the group  
+- [ ] (If Calendar) Event round-trips  
+- [ ] They understand not to `git add` real `goals`/`accounts`/`budget_tracking`  
+- [ ] They can re-open an AI later with: “Read `claude.md` and help me update our plan.”
+
+If something fails, paste the error, fix the file or env, and re-run the relevant command — don’t restart the whole interview.

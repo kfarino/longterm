@@ -1,0 +1,5 @@
+{
+  "description": "EXAMPLE empty to-do list. Copy over data/todos.json on a fresh household so you do not inherit someone else's tasks.",
+  "items": [],
+  "weeklyGoals": []
+}
