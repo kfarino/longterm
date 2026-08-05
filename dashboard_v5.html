@@ -57,6 +57,12 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .tr.ttotal .tv{font-size:20px}
 .callout{background:var(--bg);border-left:3px solid var(--navy);padding:12px 16px;font-size:13px;color:var(--mid);line-height:1.7;border-radius:0 3px 3px 0;margin-top:14px}
 .callout strong{color:var(--navy);font-weight:600}
+.drow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--rule)}
+.drow:last-child{border-bottom:none}
+.drow-name{font-size:13px;color:var(--mid)}
+.dstars{white-space:nowrap}
+.dstar{cursor:pointer;font-size:16px;color:var(--rule);user-select:none}
+.dstar.filled{color:#d4a017}
 .goal{padding:14px 0;border-bottom:1px solid var(--rule2)}
 .goal:last-child{border-bottom:none;padding-bottom:0}
 .goal-head{display:flex;justify-content:space-between;margin-bottom:7px}
@@ -182,6 +188,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
   <div class="ntab"         id="ntab-position"  onclick="show('position',this)">Current Position</div>
   <div class="ntab"         id="ntab-goals"     onclick="show('goals',this)">Goals</div>
   <div class="ntab"         id="ntab-decisions" onclick="show('decisions',this)">Decisions</div>
+  <div class="ntab"         id="ntab-dining"    onclick="show('dining',this)">Dining + Shows</div>
 </div>
 
 <!-- pages filled by JS -->
@@ -189,6 +196,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 <div class="page"        id="pg-position"></div>
 <div class="page"        id="pg-goals"></div>
 <div class="page"        id="pg-decisions"></div>
+<div class="page"        id="pg-dining"></div>
 
 <script src="data/data.js"></script>
 <script>
@@ -1080,6 +1088,138 @@ function renderGoalsTab() {
 }
 
 /* ═══════════════════════════════
+   RENDER: DINING + SHOWS
+   ═══════════════════════════════ */
+async function loadVenuesToFollow() {
+  try {
+    const res = await fetch('/api/venues-to-follow');
+    if (!res.ok) return { venues: [], weekendSocialSpots: {} };
+    return await res.json();
+  } catch (err) {
+    return { venues: [], weekendSocialSpots: {} };
+  }
+}
+
+async function loadUpcomingShowsCache() {
+  try {
+    const res = await fetch('/api/upcoming-shows-cache');
+    if (!res.ok) return { fetchedAt: null, days: null, findings: [] };
+    return await res.json();
+  } catch (err) {
+    return { fetchedAt: null, days: null, findings: [] };
+  }
+}
+
+// Named postRating, not ratePlace, to avoid confusion with
+// dashboard-server.mjs's exported ratePlace() — that one patches the JSON
+// files server-side; this one is the browser-side fetch() call to the API.
+async function postRating(name, rating, kind) {
+  try {
+    await fetch('/api/rate-place', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, rating, kind }),
+    });
+  } catch (err) {
+    // Best-effort — a failed rating write shouldn't break the page; the
+    // click just won't visually stick until the user retries.
+  }
+}
+
+// Renders one star-rating control as inline SVG stars, 1-5, no library.
+// `current` is the existing rating (or falsy). Clicking a star re-renders
+// this place's row with the new rating filled in immediately (optimistic —
+// doesn't wait for the POST to resolve) and fires the write-back.
+function starsHTML(name, kind, current) {
+  const stars = [1, 2, 3, 4, 5].map((n) => {
+    const filled = current && n <= current;
+    return `<span class="dstar${filled ? ' filled' : ''}" onclick="onRateClick('${name.replace(/'/g, "\\'")}','${kind}',${n},this)">${filled ? '★' : '☆'}</span>`;
+  }).join('');
+  return `<span class="dstars">${stars}</span>`;
+}
+
+function onRateClick(name, kind, rating, el) {
+  const container = el.closest('.dstars');
+  container.querySelectorAll('.dstar').forEach((s, i) => {
+    const filled = (i + 1) <= rating;
+    s.classList.toggle('filled', filled);
+    s.textContent = filled ? '★' : '☆';
+  });
+  postRating(name, rating, kind);
+}
+
+function placeRowHTML(place, kind) {
+  const cuisine = place.cuisine ? ` — ${place.cuisine}` : '';
+  const location = place.location ? ` (${place.location})` : '';
+  return `
+    <div class="drow">
+      <div class="drow-name">${place.name}${cuisine}${location}</div>
+      ${starsHTML(place.name, kind, place.rating)}
+    </div>`;
+}
+
+function eligibleFavorites(tag) {
+  const places = (D.favoritePlaces && D.favoritePlaces.places) || [];
+  return places.filter((p) => p[tag]);
+}
+
+function showsFindingsHTML(cache) {
+  if (!cache.findings.length) {
+    return `<div class="callout">Nothing cached yet — ask the bot about upcoming shows in Telegram to populate this.</div>`;
+  }
+  const fetchedLabel = cache.fetchedAt ? new Date(cache.fetchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  const findingsHTML = cache.findings.map((f) => `<div class="drow"><div class="drow-name" style="white-space:pre-wrap">${f.text}</div></div>`).join('');
+  return `<div class="callout">Last checked ${fetchedLabel} (next ${cache.days} days)</div>${findingsHTML}`;
+}
+
+function weekendSpotsHTML(weekendSocialSpots) {
+  // weekendSocialSpots carries a top-level "note" string alongside its
+  // per-area arrays (see data/venues_to_follow.json) — filter to
+  // array-valued entries only so that note doesn't reach .map() as "spots".
+  const areas = Object.entries(weekendSocialSpots || {}).filter(([, spots]) => Array.isArray(spots));
+  if (!areas.length) return '';
+  return areas.map(([area, spots]) => `
+    <div class="slabel" style="margin-top:18px;font-size:10px">${area}</div>
+    ${spots.map((s) => placeRowHTML(s, 'venue')).join('')}
+  `).join('');
+}
+
+async function renderDiningShowsTab() {
+  const familyDinner = eligibleFavorites('familyFriendly');
+  const dateNight = eligibleFavorites('dinnerSpot');
+  const weekendSocial = eligibleFavorites('socialSpot');
+  const [venuesData, showsCache] = await Promise.all([loadVenuesToFollow(), loadUpcomingShowsCache()]);
+
+  $('pg-dining').innerHTML = `
+    <div class="content">
+      <div class="slabel">Family Dinner</div>
+      <div class="panel">
+        ${familyDinner.length ? familyDinner.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No family-friendly favorites tagged yet.</div>'}
+      </div>
+
+      <div class="slabel">Date Night — Restaurants</div>
+      <div class="panel">
+        ${dateNight.length ? dateNight.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No date-night favorites tagged yet.</div>'}
+      </div>
+
+      <div class="slabel">Date Night &amp; Weekend Social — Upcoming Shows</div>
+      <div class="panel">
+        ${showsFindingsHTML(showsCache)}
+      </div>
+
+      <div class="slabel">Weekend Social — Restaurants</div>
+      <div class="panel">
+        ${weekendSocial.length ? weekendSocial.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No weekend-social favorites tagged yet.</div>'}
+      </div>
+
+      <div class="slabel">Weekend Social — Hangout Ideas by Neighborhood</div>
+      <div class="panel">
+        ${weekendSpotsHTML(venuesData.weekendSocialSpots)}
+      </div>
+    </div>`;
+}
+
+/* ═══════════════════════════════
    RENDER: DECISIONS (next steps)
    ═══════════════════════════════ */
 function renderDecisionsTab() {
@@ -1369,6 +1509,7 @@ renderHeader();
 const initReady = renderBudgetTab();
 renderGoalsTab();
 renderDecisionsTab();
+renderDiningShowsTab();
 // Current Position (and, within it, Trajectory) render lazily — see show()/showPosition().
 </script>
 </body>
