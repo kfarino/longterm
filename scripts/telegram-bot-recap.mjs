@@ -235,7 +235,7 @@ function diningSummary(monthPlanEvents, diningContext) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, now, unparsedMessages, calendarSummary, recentPlanChanges }) {
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges }) {
   return {
     budgetStatus: financialContext.budgetStatus,
     budgetLineItems: budgetLineItemsOver100(financialContext),
@@ -345,7 +345,7 @@ export async function runOnce(opts) {
 
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, now, unparsedMessages, calendarSummary, recentPlanChanges });
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });
