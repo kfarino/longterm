@@ -749,6 +749,16 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'get_upcoming_shows',
+    description: 'Report real upcoming shows/events (comedy, music) at the venues in venues_to_follow.json over roughly the next 2 weeks — live web search, Westside-weighted per the household\'s location preference. Only call this when the user actually asks about upcoming shows/events; it is not part of the automatic recap.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', description: 'How many days ahead to look. Defaults to 14 if not given.' },
+      },
+    },
+  },
+  {
     name: 'get_calendar_events',
     description: "Report upcoming events from the household's readable Google calendars: Kevin's personal (farinooh@gmail.com) and Hanna's (hkamaric@gmail.com, shared into Kevin's Google account so this OAuth can read it). Use this whenever Kevin or Hanna asks about their schedule, her schedule, his schedule, or what's on the calendar — Hanna's calendar IS available; never claim you can't see her schedule. Kevin's work calendar is deliberately excluded. Read-only.",
     input_schema: {

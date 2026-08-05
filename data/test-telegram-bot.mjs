@@ -1259,6 +1259,60 @@ await asyncTest('get_calendar_events: a Calendar API failure replies clearly rat
   assert.ok(result.sentReplies[0].includes('No events found'));
 });
 
+// --- get_upcoming_shows (live web search against venues_to_follow.json, mocked) ---
+
+function writeVenuesFixture(dir, venues) {
+  fs.mkdirSync(dir, { recursive: true });
+  const venuesPath = path.join(dir, 'venues_to_follow.json');
+  fs.writeFileSync(venuesPath, JSON.stringify({ venues, weekendSocialSpots: {} }, null, 2));
+  return venuesPath;
+}
+
+await asyncTest('get_upcoming_shows: reports findings and writes them to the cache file', async () => {
+  const dir = path.join(tmpRoot, 'upcoming-shows-basic');
+  const venuesPath = writeVenuesFixture(dir, [{ name: 'Largo at the Coronet', area: 'central', address: '366 N La Cienega Blvd' }]);
+  const cachePath = path.join(dir, 'upcoming_shows_cache.json');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot any good shows coming up?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'get_upcoming_shows', input: {} }],
+  });
+  const mockShowsClient = async () => ({
+    content: [
+      { type: 'text', text: 'Largo at the Coronet has a show Aug 20.' },
+      { type: 'web_search_tool_result', content: [{ url: 'https://example.com/show' }] },
+    ],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, showsClient: mockShowsClient, venuesToFollowPath: venuesPath, upcomingShowsCachePath: cachePath }));
+  assert.ok(result.sentReplies[0].includes('Largo at the Coronet has a show Aug 20.'));
+  assert.ok(result.sentReplies[0].includes('https://example.com/show'));
+
+  const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  assert.equal(cache.days, 14);
+  assert.equal(cache.findings.length, 1);
+  assert.ok(cache.fetchedAt);
+});
+
+await asyncTest('get_upcoming_shows: a failed live call degrades cleanly and leaves any existing cache untouched', async () => {
+  const dir = path.join(tmpRoot, 'upcoming-shows-failure');
+  const venuesPath = writeVenuesFixture(dir, [{ name: 'Largo at the Coronet', area: 'central', address: '366 N La Cienega Blvd' }]);
+  const cachePath = path.join(dir, 'upcoming_shows_cache.json');
+  fs.writeFileSync(cachePath, JSON.stringify({ fetchedAt: '2026-08-01T00:00:00.000Z', days: 14, findings: [{ text: 'old finding', urls: [] }] }));
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot any shows soon?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'get_upcoming_shows', input: {} }],
+  });
+  const mockShowsClient = async () => { throw new Error('network down'); };
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, showsClient: mockShowsClient, venuesToFollowPath: venuesPath, upcomingShowsCachePath: cachePath }));
+  assert.ok(result.sentReplies[0].includes("couldn't check upcoming shows" ) || result.sentReplies[0].toLowerCase().includes("couldn't check upcoming shows"));
+
+  const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  assert.equal(cache.findings[0].text, 'old finding', 'a failed call should not clear the existing cache');
+});
+
 // --- Multi-tool-per-message (2026-08-01): a single message can trigger more than one tool call ---
 
 await asyncTest('a message asking for two distinct things triggers both tool calls, both reflected in state and the reply', async () => {
