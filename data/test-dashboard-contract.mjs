@@ -225,7 +225,7 @@ await test('nav tab label reads "Planner" (renamed from "Budget")', () => {
   assert.ok(html.includes('id="ntab-budget"    onclick="show(\'budget\',this)">Planner<'), 'the Budget tab\'s visible label should now read Planner');
 });
 
-await test('renderTodosSection: renders items with owner pills, omits null deadlines, shows age, strikes through done items, and renders weekly-goal progress in one list', () => {
+await test('renderTodosSection: renders open items with owner pills, omits null deadlines, shows age, hides done items, and renders weekly-goal progress in one list', () => {
   const d = loadDashboard({
     todos: {
       items: [
@@ -245,7 +245,7 @@ await test('renderTodosSection: renders items with owner pills, omits null deadl
   assert.ok(html.includes('Fix the AC wall mount') && html.includes('Added 5 days ago'), 'should render title and age for an item with no deadline');
   assert.ok(!/Fix the AC wall mount[\s\S]{0,80}Due/.test(html), 'an item with deadline: null should not show a "Due" label');
   assert.ok(html.includes('Buy a gift') && html.includes('Due 2026-08-15'), 'an item with a real deadline should show it');
-  assert.ok(/todo-done"[^>]*>[\s\S]*?Already handled/.test(html), 'a done item should be wrapped in the todo-done (strikethrough) class');
+  assert.ok(!html.includes('Already handled'), 'done items stay in data but should not render on the dashboard');
   assert.ok(html.includes('2 / 5 contacts this week'), 'should render the weekly goal\'s current/target progress');
   assert.ok(!html.includes("This month's action items") && !html.includes('Weekly goals'), 'should be one list, not separate monthly/weekly panels');
   assert.ok(!html.includes('class="g2"'), 'should not use the two-column g2 layout for to-dos');

@@ -1001,11 +1001,12 @@ function renderTodosSection() {
     return `<span class="todo-owner${alt}">${ownerDisplayName(owner)}</span>`;
   };
 
-  const itemsHTML = todos.items.map((t) => {
+  // Done items stay in data/todos.json for history; dashboard only shows open ones.
+  const itemsHTML = todos.items.filter((t) => !t.done).map((t) => {
     const age = daysAgo(t.dateAdded);
     const ageLabel = age <= 0 ? 'Added today' : age === 1 ? 'Added 1 day ago' : `Added ${age} days ago`;
     const deadlineLabel = t.deadline ? ` · Due ${t.deadline}` : '';
-    return `<div class="tr${t.done ? ' todo-done' : ''}">
+    return `<div class="tr">
       <span class="tl">${ownerPill(t.owner)}${t.title}</span>
       <span class="tv muted">${ageLabel}${deadlineLabel}</span>
     </div>`;
