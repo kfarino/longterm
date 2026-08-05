@@ -101,17 +101,28 @@ function readJsonBody(req) {
 // (caller sends 404).
 export function ratePlace(rawPath, favoritePlacesPath, name, rating) {
   if (!fs.existsSync(rawPath)) return false;
-  const raw = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+  } catch {
+    return false;
+  }
   const rawEntry = raw.find((p) => p.name === name);
   if (!rawEntry) return false;
   rawEntry.rating = rating;
   writeJsonAtomic(rawPath, raw);
 
   if (fs.existsSync(favoritePlacesPath)) {
-    const fp = JSON.parse(fs.readFileSync(favoritePlacesPath, 'utf8'));
-    const place = (fp.places || []).find((p) => p.name === name);
-    if (place) place.rating = rating;
-    writeJsonAtomic(favoritePlacesPath, fp);
+    try {
+      const fp = JSON.parse(fs.readFileSync(favoritePlacesPath, 'utf8'));
+      const place = (fp.places || []).find((p) => p.name === name);
+      if (place) place.rating = rating;
+      writeJsonAtomic(favoritePlacesPath, fp);
+    } catch {
+      // The raw file (the real source of truth) was already patched above;
+      // a corrupt derivative file just means it stays stale rather than
+      // crashing the request — the next full regeneration re-syncs it.
+    }
   }
   return true;
 }
@@ -121,7 +132,12 @@ export function ratePlace(rawPath, favoritePlacesPath, name, rating) {
 // both shapes rather than assuming one.
 export function rateVenue(venuesPath, name, rating) {
   if (!fs.existsSync(venuesPath)) return false;
-  const data = JSON.parse(fs.readFileSync(venuesPath, 'utf8'));
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(venuesPath, 'utf8'));
+  } catch {
+    return false;
+  }
   let entry = (data.venues || []).find((v) => v.name === name);
   if (!entry && data.weekendSocialSpots) {
     for (const area of Object.values(data.weekendSocialSpots)) {

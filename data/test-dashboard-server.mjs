@@ -156,6 +156,18 @@ await test('rateVenue patches a nested weekendSocialSpots entry by name', async 
   assert.equal(data.weekendSocialSpots.venice[0].rating, 4);
 });
 
+await test('ratePlace returns false (not throws) when favorite_places_raw.json is corrupt JSON', async () => {
+  fs.writeFileSync(favoriteRawPath, '{not valid json');
+  const ok = ratePlace(favoriteRawPath, favoritePlacesPath, 'Terra Eataly', 5);
+  assert.equal(ok, false);
+});
+
+await test('rateVenue returns false (not throws) when venues_to_follow.json is corrupt JSON', async () => {
+  fs.writeFileSync(venuesToFollowPath, '{not valid json');
+  const ok = rateVenue(venuesToFollowPath, 'Largo at the Coronet', 5);
+  assert.equal(ok, false);
+});
+
 await test('POST /api/rate-place writes the rating and returns 200 with the echoed body', async () => {
   fs.writeFileSync(favoriteRawPath, JSON.stringify([{ name: 'Terra Eataly', cuisine: 'Italian', list: 'go-to' }]));
   fs.writeFileSync(favoritePlacesPath, JSON.stringify({ meta: {}, places: [{ name: 'Terra Eataly', cuisine: 'Italian', list: 'go-to' }], recentDiningActivity: [] }));
