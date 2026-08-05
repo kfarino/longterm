@@ -137,10 +137,22 @@ function loadRecentPlanChanges(goalsChangelogPath) {
 // over $100 this cycle, not just the aggregate pace number — reuses the same
 // financialContext.transactions the interactive bot's search_transactions
 // tool reads (see financial-context.mjs's loadTransactionDetail), so the
-// recap and an ad-hoc "was X charged" question always agree.
+// recap and an ad-hoc "was X charged" question always agree. Explicitly
+// excludes refund rows (type === 'refund') — those get their own
+// budgetRefunds field below, not double-counted as a spend line here.
 function budgetLineItemsOver100(financialContext) {
   return (financialContext.transactions || [])
-    .filter((t) => t.tracker === 'joint' && t.amount > 100)
+    .filter((t) => t.tracker === 'joint' && t.amount > 100 && t.type !== 'refund')
+    .sort((a, b) => b.amount - a.amount);
+}
+
+// Refunds/credits this cycle (2026-08-05) — see budget-tracking-pull.mjs's
+// detectJointRefunds and financial-context.mjs's loadTransactionDetail for
+// where these come from. Kevin: "critical change in recap. I want a line
+// item for refunds."
+function budgetRefundsThisCycle(financialContext) {
+  return (financialContext.transactions || [])
+    .filter((t) => t.tracker === 'joint' && t.type === 'refund')
     .sort((a, b) => b.amount - a.amount);
 }
 
@@ -227,6 +239,7 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
   return {
     budgetStatus: financialContext.budgetStatus,
     budgetLineItems: budgetLineItemsOver100(financialContext),
+    budgetRefunds: budgetRefundsThisCycle(financialContext),
     decisions: financialContext.decisions,
     dining: diningSummary(monthPlanEvents, diningContext),
     todosByOwner: todosByOwner(todos),
@@ -238,7 +251,7 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
 
 const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
 
-Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely.
+Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
 
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 

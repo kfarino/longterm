@@ -145,6 +145,36 @@ await asyncTest('bundle includes budgetLineItems: every joint-tracker charge ove
   assert.equal(capturedBundle.budgetLineItems[0].amount, 489.26);
 });
 
+await asyncTest('bundle includes budgetRefunds: every joint-tracker refund this cycle, and refunds are excluded from budgetLineItems', async () => {
+  const dir = path.join(tmpRoot, 'budget-refunds');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        weeks: [{ actual: 1000, days: 7 }],
+        cycleDays: 30,
+        categories: [
+          { name: 'Groceries', amount: 45, transactions: [{ date: '2026-07-28', merchant: 'Whole Foods', amount: 45 }] },
+        ],
+        refunds: [
+          { date: '2026-07-29', merchant: 'Amazon', amount: 150.5, category: 'Shopping' },
+        ],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+
+  assert.equal(capturedBundle.budgetRefunds.length, 1);
+  assert.equal(capturedBundle.budgetRefunds[0].merchant, 'Amazon');
+  assert.equal(capturedBundle.budgetRefunds[0].amount, 150.5);
+  assert.equal(capturedBundle.budgetLineItems.length, 0, 'a refund over $100 should not also appear as a budgetLineItems spend line');
+});
+
 await asyncTest('bundle includes todosByOwner: every open item grouped by owner, staleTodo is gone', async () => {
   const dir = path.join(tmpRoot, 'todos-by-owner');
   const paths = writeFixture(dir, {
@@ -193,6 +223,7 @@ await asyncTest('gathers all signal categories into the bundle handed to the LLM
   assert.equal(capturedBundle.todosByOwner.kevin[0].title, 'Oldest open item', 'bundle should group every open to-do by owner');
   assert.equal(capturedBundle.todosByOwner.hanna[0].title, 'Newer item');
   assert.deepEqual(capturedBundle.budgetLineItems, [], 'no line item over $100 in the default fixture');
+  assert.deepEqual(capturedBundle.budgetRefunds, [], 'no refunds in the default fixture');
 });
 
 await asyncTest('dining suggestions across the 3 occasions don\'t all converge on the same restaurant (real bug: all 3 slots suggested "Terra Eataly" in one live recap)', async () => {

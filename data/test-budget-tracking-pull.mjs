@@ -254,4 +254,44 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
   }
 });
 
+// --- Refund/credit detection (2026-08-05) ---
+// Reuses the same txn()/JOINT_LABELS fixtures already in this file; refund
+// detection isn't part of refreshFavoritePlaces, so these tests call the main
+// pull's transaction-processing directly via a small re-export the
+// implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
+
+import { detectJointRefunds } from '../scripts/budget-tracking-pull.mjs';
+
+test('detectJointRefunds finds a genuine merchant refund (positive amount, original spend category, joint card)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 'r1', date: '2026-07-20', amount: 39.5, merchant: 'Amazon', category: 'Shopping' }),
+  ], JOINT_LABELS, new Set());
+  assert.equal(refunds.length, 1);
+  assert.equal(refunds[0].merchant, 'Amazon');
+  assert.equal(refunds[0].amount, 39.5);
+  assert.equal(refunds[0].category, 'Shopping');
+});
+
+test('detectJointRefunds excludes the card\'s own statement payment ("Credit Card Payment" category)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 'p1', date: '2026-07-02', amount: 185, merchant: 'Payment Received', category: 'Credit Card Payment' }),
+  ], JOINT_LABELS, new Set());
+  assert.equal(refunds.length, 0);
+});
+
+test('detectJointRefunds excludes travel-category credits (travel has its own separate tracking)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 't1', date: '2026-07-28', amount: 200, merchant: 'Lufthansa', category: 'Travel & Vacation' }),
+  ], JOINT_LABELS, new Set(['travel & vacation']));
+  assert.equal(refunds.length, 0);
+});
+
+test('detectJointRefunds excludes negative-amount (regular spend) and non-joint-card transactions', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 's1', date: '2026-07-20', amount: -39.5, merchant: 'Amazon', category: 'Shopping' }),
+    txn({ id: 's2', date: '2026-07-20', amount: 39.5, merchant: 'Amazon', category: 'Shopping', account: 'Some Personal Card (...1111)' }),
+  ], JOINT_LABELS, new Set());
+  assert.equal(refunds.length, 0);
+});
+
 console.log('All budget-tracking-pull tests passed.');
