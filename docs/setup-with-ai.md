@@ -85,7 +85,7 @@ MONARCH_PASSWORD=their-password
 7. Ensure expense keys exist for tracker targets (at least `"Family budget"` and each personal allowance label) even if amounts are still provisional.  
 8. Set tracker `source` fields to `"monarch"` once mapping works.  
 9. Run `node scripts/networth-pull.mjs` and `node scripts/budget-tracking-pull.mjs`. Confirm `data.js` regenerated.  
-10. On Windows: `.\scripts\install-scheduled-task.ps1` for daily 03:00 pull.
+10. On Windows: `.\scripts\install-scheduled-task.ps1` for daily **09:30** pull (logs to `~/.longterm/logs/daily-pull.log`).
 
 **Success:** Live balances and recent spend exist locally. Do **not** jump to Telegram yet.
 
