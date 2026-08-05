@@ -65,11 +65,28 @@ const seedFavoritePlaces = () => ({
 });
 
 const seedBudgetTracking = () => ({
-  joint: { targetExpenseKey: 'Family budget', weeks: [{ actual: 1000, days: 7 }], cycleDays: 30 },
-  personal: {
-    kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 },
+  joint: {
+    targetExpenseKey: 'Family budget',
+    weeks: [{ actual: 1000, days: 7 }],
+    cycleDays: 30,
+    categories: [
+      { name: 'Insurance', amount: 489.26, transactions: [{ date: '2026-07-26', merchant: 'Geico', amount: 489.26 }] },
+      { name: 'Groceries', amount: 115.62, transactions: [{ date: '2026-07-28', merchant: 'Whole Foods', amount: 115.62 }] },
+    ],
   },
-  travel: { trips: [{ label: 'Test Trip', actual: 500, budgetedAmount: 1000 }] },
+  personal: {
+    kevin: {
+      label: 'Kevin personal',
+      targetExpenseKey: 'Kevin personal',
+      weeks: [{ actual: 900, days: 7 }],
+      cycleDays: 30,
+      categories: [{ name: 'Coffee Shops', amount: 5, transactions: [{ date: '2026-07-29', merchant: 'Blue Bottle', amount: 5 }] }],
+    },
+  },
+  travel: {
+    trips: [{ label: 'Test Trip', actual: 500, budgetedAmount: 1000, transactions: [{ date: '2026-07-27', merchant: 'United Airlines', amount: 500 }] }],
+    unmatched: [],
+  },
 });
 
 const seedAccounts = () => ({
@@ -1145,6 +1162,54 @@ await asyncTest('get_decisions: lists open decisions, urgent ones first', async 
   assert.ok(reply.includes('[urgent] Urgent test decision — Do the urgent thing'));
   assert.ok(reply.includes('[watch] Watch test decision — Keep an eye on it'));
   assert.ok(reply.indexOf('Urgent test decision') < reply.indexOf('Watch test decision'), 'urgent decisions should be listed first');
+});
+
+await asyncTest('search_transactions: finds a matching current-cycle line item by merchant, with its category and tracker', async () => {
+  const dir = path.join(tmpRoot, 'financial-search-transactions-match');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot does the joint include a geico charge?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Geico' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.todosChanged, false, 'a read-only financial tool must not change todos');
+  assert.equal(result.monthPlanEventsChanged, false, 'a read-only financial tool must not change monthPlanEvents');
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('Geico'), 'should include the matching merchant');
+  assert.ok(reply.includes('$489'), 'should include the amount (fmtMoney rounds to the nearest dollar)');
+  assert.ok(reply.includes('Insurance'), 'should include the category grouping');
+  assert.ok(reply.includes('joint'), 'should include the tracker');
+  assert.ok(!reply.includes('Whole Foods'), 'should not include non-matching merchants');
+});
+
+await asyncTest('search_transactions: an unmatched merchant replies with a clear no-match message', async () => {
+  const dir = path.join(tmpRoot, 'financial-search-transactions-no-match');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot was there a Nonexistent charge?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Nonexistent' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.todosChanged, false);
+  assert.equal(result.monthPlanEventsChanged, false);
+  assert.ok(result.sentReplies[0].includes('No matching current-cycle transactions found.'));
+});
+
+await asyncTest('search_transactions: tracker filter restricts to that tracker only', async () => {
+  const dir = path.join(tmpRoot, 'financial-search-transactions-tracker-filter');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot what\'s in the travel spending this cycle?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { tracker: 'travel' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('United Airlines'), 'should include the travel line item');
+  assert.ok(!reply.includes('Geico'), 'should not include the joint line item');
+  assert.ok(!reply.includes('Blue Bottle'), 'should not include the personal line item');
 });
 
 // --- get_calendar_events (Kevin personal + Hanna's Google Calendars, read-only) ---

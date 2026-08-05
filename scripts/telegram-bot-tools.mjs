@@ -530,11 +530,33 @@ export function get_decisions(financialContext) {
   return { reply: lines.length ? lines.join('\n') : 'No open decisions.' };
 }
 
+// Read-only — looks up individual current-cycle line items by merchant
+// and/or tracker. financialContext.transactions is pre-flattened by
+// scripts/financial-context.mjs (loadTransactionDetail) from the same
+// per-category/per-trip detail budget_tracking.json already carries for the
+// current cycle — no older history, no live Monarch call. The reply always
+// states that scope explicitly so the bot never implies it checked further
+// back than it did.
+export function search_transactions(financialContext, { merchant, tracker } = {}) {
+  let rows = financialContext.transactions || [];
+  if (merchant && merchant.trim()) {
+    const needle = merchant.trim().toLowerCase();
+    rows = rows.filter((r) => r.merchant && r.merchant.toLowerCase().includes(needle));
+  }
+  if (tracker) {
+    rows = rows.filter((r) => (tracker === 'personal' ? r.tracker.startsWith('personal:') : r.tracker === tracker));
+  }
+  const header = 'Current-cycle line items only (no earlier history):';
+  if (!rows.length) return { reply: `${header}\nNo matching current-cycle transactions found.` };
+  const lines = rows.map((r) => `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`);
+  return { reply: `${header}\n${lines.join('\n')}` };
+}
+
 // Tool names whose implementation is read-only over a financialContext
-// bundle (budget pace, savings goals, decisions) — telegram-bot-poll.mjs's
-// dispatch branches on this set the same way it already does for
-// DINING_TOOL_NAMES.
-export const FINANCIAL_TOOL_NAMES = new Set(['get_budget_status', 'get_savings_goals', 'get_decisions']);
+// bundle (budget pace, savings goals, decisions, transaction line items) —
+// telegram-bot-poll.mjs's dispatch branches on this set the same way it
+// already does for DINING_TOOL_NAMES.
+export const FINANCIAL_TOOL_NAMES = new Set(['get_budget_status', 'get_savings_goals', 'get_decisions', 'search_transactions']);
 
 // Tool names whose implementation writes to monthPlanEvents directly by an
 // explicit date, with no diningContext/occasion involved — a third distinct
@@ -716,6 +738,17 @@ export const TOOL_DEFS = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'search_transactions',
+    description: 'Look up individual current-cycle transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget" or "what\'s in the joint dining category this cycle". Current cycle only (joint\'s current ~4-week cycle, personal\'s current month, current travel trips) — cannot see older cycles or history further back.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        merchant: { type: 'string', description: 'Substring to search for in the merchant name (case-insensitive), e.g. "Geico". Omit to not filter by merchant.' },
+        tracker: { type: 'string', enum: ['joint', 'personal', 'travel'], description: 'Restrict to one tracker. Omit to search across all of them.' },
+      },
+    },
+  },
+  {
     name: 'get_calendar_events',
     description: "Report what's on Kevin's personal calendar and Hanna's calendar for the next several days (Kevin's work calendar is deliberately excluded). Read-only.",
     input_schema: {
@@ -757,6 +790,7 @@ export const TOOL_IMPL = {
   get_budget_status: (financialContext) => get_budget_status(financialContext),
   get_savings_goals: (financialContext) => get_savings_goals(financialContext),
   get_decisions: (financialContext) => get_decisions(financialContext),
+  search_transactions: (financialContext, args) => search_transactions(financialContext, { merchant: args.merchant, tracker: args.tracker }),
   add_family_event: (monthPlanEvents, args) => add_family_event(monthPlanEvents, { date: args.date, title: args.title, time: args.time, recurrenceWeeks: args.recurrenceWeeks, durationHours: args.durationHours, kind: args.kind }),
   set_routine_day: (overrides, args) => set_routine_day(overrides, { occasion: args.occasion, dayOfWeek: args.dayOfWeek }),
   update_phase_expense: (goals, args) => update_phase_expense(goals, { phaseId: args.phaseId, expenseKey: args.expenseKey, renameFrom: args.renameFrom, amount: args.amount }),

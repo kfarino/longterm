@@ -80,6 +80,37 @@ export function loadDecisions(goalsPath) {
   return goals.decisions;
 }
 
+// Flattens the per-category/per-trip transaction line items budget_tracking.json
+// already carries for the current cycle (loadBudgetStatus ignores these, reading
+// only the `weeks` array for pacing) into one array the bot can filter by
+// merchant/tracker. Current-cycle only — same window budget_tracking.json itself
+// covers, no older history.
+export function loadTransactionDetail(budgetTrackingPath) {
+  const bt = JSON.parse(fs.readFileSync(budgetTrackingPath, 'utf8'));
+  const rows = [];
+  const addCategories = (tracker, categories) => {
+    for (const cat of categories || []) {
+      for (const txn of cat.transactions || []) {
+        rows.push({ tracker, group: cat.name, date: txn.date, merchant: txn.merchant, amount: txn.amount });
+      }
+    }
+  };
+  addCategories('joint', bt.joint?.categories);
+  for (const [ownerId, tracker] of Object.entries(bt.personal || {})) {
+    addCategories(`personal:${ownerId}`, tracker.categories);
+  }
+  for (const trip of bt.travel?.trips || []) {
+    for (const txn of trip.transactions || []) {
+      rows.push({ tracker: 'travel', group: trip.label, date: txn.date, merchant: txn.merchant, amount: txn.amount });
+    }
+  }
+  for (const txn of bt.travel?.unmatched || []) {
+    rows.push({ tracker: 'travel', group: 'unmatched', date: txn.date, merchant: txn.merchant, amount: txn.amount });
+  }
+  rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return rows;
+}
+
 // Bundles all three for the recap script (Part B) and for the poller's
 // dispatch (Part C) — read-only, loaded fresh each run, tolerating missing
 // files the same "degrade quietly" way dining-recommendation.mjs's context
@@ -92,5 +123,7 @@ export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPa
   try { savingsGoals = loadSavingsGoals(goalsPath, accountsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let decisions = [];
   try { decisions = loadDecisions(goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
-  return { budgetStatus, savingsGoals, decisions };
+  let transactions = [];
+  try { transactions = loadTransactionDetail(budgetTrackingPath); } catch { /* missing/unparseable — degrade to empty */ }
+  return { budgetStatus, savingsGoals, decisions, transactions };
 }
