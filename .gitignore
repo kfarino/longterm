@@ -29,3 +29,7 @@ data/telegram-pending-clarifications.json
 data/telegram-planning-notes.jsonl
 data/telegram-recap-log.jsonl
 data/telegram-unparsed.jsonl
+
+# Oura sample pulls (connect sketch — secrets stay in ~/.longterm/)
+data/oura/*
+!data/oura/README.md
