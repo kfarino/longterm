@@ -306,11 +306,19 @@ function matchFavorite(merchant, favorites) {
 // travel refunds would need to reduce a trip's actual instead, out of scope
 // here). spendAmount() deliberately zeroes out any non-negative amount, so
 // this is a separate pass, not part of the main spend-processing loop.
-export function detectJointRefunds(transactions, jointLabels, travelCategoryNames) {
+// cycleStart (2026-08-05): the main spend-processing loop only counts
+// transactions within the current joint cycle (weekBucket's `b >= 0` guard),
+// but the fetched transaction window can start up to ~24 days earlier than
+// cycleStart (it's min(cycleStart, personalCycleStart), and personalCycleStart
+// is always the 1st of the month while cycleStart is the 25th) — without this
+// filter a refund from the tail end of the PRIOR cycle would leak into "this
+// cycle"'s refunds list. Any transaction dated before cycleStart is skipped.
+export function detectJointRefunds(transactions, jointLabels, travelCategoryNames, cycleStart) {
   const refunds = [];
   for (const txn of transactions) {
     const rawAmount = Number(txn.amount);
     if (!Number.isFinite(rawAmount) || rawAmount <= 0) continue;
+    if (new Date(txn.date) < cycleStart) continue;
     const acct = accountLabel(txn);
     if (!jointLabels.has(acct)) continue;
     const catDisplay = categoryName(txn) || 'Uncategorized';
@@ -754,7 +762,7 @@ async function main() {
       // Anything else (Ally, Vanguard, Trinet, Ascensus, etc.) isn't a spend card — ignored here.
     }
 
-    const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories);
+    const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
 
     function bucketsToWeeks(buckets, refCycleStart) {
       const maxBucket = Math.max(-1, ...buckets.keys());

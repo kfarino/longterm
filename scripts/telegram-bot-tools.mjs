@@ -548,7 +548,14 @@ export function search_transactions(financialContext, { merchant, tracker } = {}
   }
   const header = 'Current-cycle line items only (no earlier history):';
   if (!rows.length) return { reply: `${header}\nNo matching current-cycle transactions found.` };
-  const lines = rows.map((r) => `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`);
+  // A refund/credit row (financial-context.mjs's loadTransactionDetail tags
+  // these with type: 'refund') is stored as a positive amount just like a
+  // spend row — marked distinctly here (a "+" prefix and a trailing
+  // "(refund)") so the reply never reads as if money went out when it
+  // actually came back.
+  const lines = rows.map((r) => (r.type === 'refund'
+    ? `${r.group} (${r.tracker}): ${r.merchant} — +${fmtMoney(r.amount)} (refund) on ${r.date}`
+    : `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`));
   return { reply: `${header}\n${lines.join('\n')}` };
 }
 
@@ -739,7 +746,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'search_transactions',
-    description: 'Look up individual current-cycle transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget" or "what\'s in the joint dining category this cycle". Current cycle only (joint\'s current ~4-week cycle, personal\'s current month, current travel trips) — cannot see older cycles or history further back.',
+    description: 'Look up individual current-cycle transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget" or "what\'s in the joint dining category this cycle". Also surfaces refunds/credits (e.g. "was there a refund from Amazon"), marked distinctly from regular spend in the reply. Current cycle only (joint\'s current ~4-week cycle, personal\'s current month, current travel trips) — cannot see older cycles or history further back.',
     input_schema: {
       type: 'object',
       properties: {

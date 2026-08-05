@@ -1212,6 +1212,25 @@ await asyncTest('search_transactions: tracker filter restricts to that tracker o
   assert.ok(!reply.includes('Blue Bottle'), 'should not include the personal line item');
 });
 
+await asyncTest('search_transactions: a refund-type row renders distinguishably from a spend row', async () => {
+  const dir = path.join(tmpRoot, 'financial-search-transactions-refund');
+  const budgetTracking = seedBudgetTracking();
+  budgetTracking.joint.refunds = [
+    { date: '2026-07-30', merchant: 'Amazon', amount: 39.5, category: 'Shopping' },
+  ];
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot any refunds in the joint budget?' })] },
+    budgetTracking,
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { tracker: 'joint' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('Amazon — +$40 (refund) on 2026-07-30'), 'a refund row should be prefixed with + and marked (refund)');
+  assert.ok(reply.includes('Geico — $489 on 2026-07-26'), 'a spend row should render unchanged, with no refund marker');
+});
+
 // --- get_calendar_events (Kevin personal + Hanna's Google Calendars, read-only) ---
 
 await asyncTest('get_calendar_events: reports events from the configured read calendars, no writes', async () => {

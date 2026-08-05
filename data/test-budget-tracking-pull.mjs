@@ -262,10 +262,15 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 
 import { detectJointRefunds } from '../scripts/budget-tracking-pull.mjs';
 
+// All the existing fixture transactions below fall in July 2026, so this
+// keeps them in-range while still being strict enough to exercise the new
+// cycleStart filter (see the "leaked from a prior cycle" test below).
+const CYCLE_START = new Date('2026-07-01');
+
 test('detectJointRefunds finds a genuine merchant refund (positive amount, original spend category, joint card)', () => {
   const refunds = detectJointRefunds([
     txn({ id: 'r1', date: '2026-07-20', amount: 39.5, merchant: 'Amazon', category: 'Shopping' }),
-  ], JOINT_LABELS, new Set());
+  ], JOINT_LABELS, new Set(), CYCLE_START);
   assert.equal(refunds.length, 1);
   assert.equal(refunds[0].merchant, 'Amazon');
   assert.equal(refunds[0].amount, 39.5);
@@ -275,14 +280,14 @@ test('detectJointRefunds finds a genuine merchant refund (positive amount, origi
 test('detectJointRefunds excludes the card\'s own statement payment ("Credit Card Payment" category)', () => {
   const refunds = detectJointRefunds([
     txn({ id: 'p1', date: '2026-07-02', amount: 185, merchant: 'Payment Received', category: 'Credit Card Payment' }),
-  ], JOINT_LABELS, new Set());
+  ], JOINT_LABELS, new Set(), CYCLE_START);
   assert.equal(refunds.length, 0);
 });
 
 test('detectJointRefunds excludes travel-category credits (travel has its own separate tracking)', () => {
   const refunds = detectJointRefunds([
     txn({ id: 't1', date: '2026-07-28', amount: 200, merchant: 'Lufthansa', category: 'Travel & Vacation' }),
-  ], JOINT_LABELS, new Set(['travel & vacation']));
+  ], JOINT_LABELS, new Set(['travel & vacation']), CYCLE_START);
   assert.equal(refunds.length, 0);
 });
 
@@ -290,8 +295,15 @@ test('detectJointRefunds excludes negative-amount (regular spend) and non-joint-
   const refunds = detectJointRefunds([
     txn({ id: 's1', date: '2026-07-20', amount: -39.5, merchant: 'Amazon', category: 'Shopping' }),
     txn({ id: 's2', date: '2026-07-20', amount: 39.5, merchant: 'Amazon', category: 'Shopping', account: 'Some Personal Card (...1111)' }),
-  ], JOINT_LABELS, new Set());
+  ], JOINT_LABELS, new Set(), CYCLE_START);
   assert.equal(refunds.length, 0);
+});
+
+test('detectJointRefunds excludes a refund dated before cycleStart (leaked from a prior cycle)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 'old1', date: '2026-06-15', amount: 25, merchant: 'Amazon', category: 'Shopping' }),
+  ], JOINT_LABELS, new Set(), CYCLE_START);
+  assert.equal(refunds.length, 0, 'a refund dated before cycleStart must not leak into this cycle\'s refunds');
 });
 
 console.log('All budget-tracking-pull tests passed.');
