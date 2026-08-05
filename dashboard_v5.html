@@ -783,6 +783,46 @@ function effectiveDiningRoutine(diningRoutine, overrides) {
   });
 }
 
+// A star rating from the dashboard's own Dining + Shows tab (see
+// dashboard-server.mjs's ratePlace/rateVenue) is an explicit, direct signal —
+// stronger than the implicit visitStats-derived familiarityScore. 3 stars is
+// neutral (no term added); each star above/below 3 shifts the score by 6, a
+// magnitude comparable to a handful of extra visits under familiarityScore's
+// visitCount term, so a strong rating can meaningfully move the ranking
+// without completely overriding genuine visit history. Kept identical to
+// scripts/dining-recommendation.mjs's copy (see the deliberate-duplication
+// note above) — a change here should be mirrored there too.
+function ratingScore(f) {
+  if (!f.rating) return 0;
+  return (f.rating - 3) * 6;
+}
+
+// visitStats comes from a 2-year historical Monarch backfill (see
+// budget-tracking-pull.mjs's computeFavoritePlacesHistory/refreshFavoritePlaces)
+// and reflects genuine long-term visit frequency — replaces the old pure
+// days-since-last-visit novelty score (2026-08-05), which defaulted an
+// unvisited place to the max value (365) and so put every brand-new
+// want-to-go entry at the top of every suggestion by default ("never visited
+// shouldn't be default highest suggestion" — Kevin). An established favorite
+// that's genuinely due for a revisit (visited many times, but not recently)
+// can now legitimately outrank a place that's never been tried, while a
+// never-visited place still gets a fair, moderate shot at rotation rather
+// than either dominating or being buried. A place with no visitStats at all
+// (history not yet backfilled, or genuinely never visited) gets the same flat
+// "worth trying" score either way — reviving the old 90-day-window signal as
+// a fallback would just reintroduce the exact bug this replaces, so this
+// deliberately does not fall back to it. Kept identical to
+// scripts/dining-recommendation.mjs's copy (see the deliberate-duplication
+// note above) — a change here should be mirrored there too.
+function familiarityScore(f) {
+  const vs = f.visitStats;
+  if (vs && vs.visitCount > 0) {
+    const daysSince = Math.min(365, Math.floor((new Date() - new Date(vs.lastVisitDate)) / 86400000));
+    return daysSince + Math.min(vs.visitCount, 10) * 8;
+  }
+  return 90;
+}
+
 function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames) {
   if (slot.tier === 'low-key') {
     const idea = lowKeyHangIdeas[Math.floor(Math.random() * lowKeyHangIdeas.length)];
@@ -820,31 +860,19 @@ function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas
     ? (favorites.find((f) => f.name === mostRecent.matchedPlace) || {}).cuisine
     : null;
 
-  const lastVisitByPlace = new Map();
-  for (const a of recentDiningActivity) {
-    if (!a.matchedPlace) continue;
-    const prev = lastVisitByPlace.get(a.matchedPlace);
-    if (!prev || a.date > prev) lastVisitByPlace.set(a.matchedPlace, a.date);
-  }
-  const today = new Date();
-  const daysSinceLastVisit = (name) => {
-    const last = lastVisitByPlace.get(name);
-    if (!last) return 365; // never visited — same max variety value as "long ago"
-    return Math.min(365, Math.floor((today - new Date(last)) / 86400000));
-  };
-
   const scored = candidates
     .map((f) => ({
       f,
-      score: daysSinceLastVisit(f.name)
+      score: familiarityScore(f)
         - (recentCuisine && f.cuisine === recentCuisine ? 50 : 0)
-        + (f.list === 'go-to' ? 10 : 0),
+        + (f.list === 'go-to' ? 10 : 0)
+        + ratingScore(f),
     }))
     .sort((a, b) => b.score - a.score);
 
   const picks = scored.slice(0, 3).map((s) => s.f.name);
   const reasoning = picks.length
-    ? `${slot.tier} tier, ranked by longest-since-visited (excluding anything in the last ${RECENT_VISIT_EXCLUSION_DAYS} days), preferring go-to favorites and a different cuisine than last time.`
+    ? `${slot.tier} tier, ranked by visit history (favoring established go-to favorites due for a revisit, with new want-to-go picks worked in — excluding anything in the last ${RECENT_VISIT_EXCLUSION_DAYS} days) and a different cuisine than last time.`
     : `No fresh picks — everything eligible was visited in the last ${RECENT_VISIT_EXCLUSION_DAYS} days.`;
 
   return { picks, reasoning };
@@ -1110,26 +1138,46 @@ async function loadUpcomingShowsCache() {
   }
 }
 
+// Live read of favorite_places.json (2026-08-05), following the exact same
+// pattern as loadVenuesToFollow/loadUpcomingShowsCache above — the tab used
+// to render from D.favoritePlaces, a build-time snapshot bundled into
+// data/data.js, so a rating written via POST /api/rate-place never showed as
+// re-rated until the next nightly data.js rebuild. Falls back to that
+// build-time snapshot only if the live fetch itself fails (server down,
+// route missing) so the tab still renders something rather than going blank.
+async function loadFavoritePlaces() {
+  try {
+    const res = await fetch('/api/favorite-places');
+    if (!res.ok) return D.favoritePlaces || { places: [], recentDiningActivity: [] };
+    return await res.json();
+  } catch (err) {
+    return D.favoritePlaces || { places: [], recentDiningActivity: [] };
+  }
+}
+
 // Named postRating, not ratePlace, to avoid confusion with
 // dashboard-server.mjs's exported ratePlace() — that one patches the JSON
 // files server-side; this one is the browser-side fetch() call to the API.
+// Returns true only on a genuine 2xx save — false on any HTTP error status
+// or network failure, so the caller (onRateClick) can tell a real success
+// from every failure mode instead of treating them all as success.
 async function postRating(name, rating, kind) {
   try {
-    await fetch('/api/rate-place', {
+    const res = await fetch('/api/rate-place', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, rating, kind }),
     });
+    return res.ok;
   } catch (err) {
-    // Best-effort — a failed rating write shouldn't break the page; the
-    // click just won't visually stick until the user retries.
+    return false;
   }
 }
 
 // Renders one star-rating control as inline SVG stars, 1-5, no library.
-// `current` is the existing rating (or falsy). Clicking a star re-renders
-// this place's row with the new rating filled in immediately (optimistic —
-// doesn't wait for the POST to resolve) and fires the write-back.
+// `current` is the existing rating (or falsy). Clicking a star waits for the
+// write-back to genuinely succeed (see onRateClick) before the row's stars
+// ever change — no longer optimistic.
 function starsHTML(name, kind, current) {
   const stars = [1, 2, 3, 4, 5].map((n) => {
     const filled = current && n <= current;
@@ -1138,29 +1186,52 @@ function starsHTML(name, kind, current) {
   return `<span class="dstars">${stars}</span>`;
 }
 
-function onRateClick(name, kind, rating, el) {
+// Awaits postRating's result before touching the DOM at all (2026-08-05 —
+// previously updated the stars optimistically before the request even
+// resolved, so a 404/400/server-down failure looked identical to success).
+// On success, fills in the stars. On failure, leaves the stars exactly as
+// they were, logs a clear console error, and briefly appends " (save
+// failed)" to the row's name as a non-blocking inline signal that nothing
+// was actually saved.
+async function onRateClick(name, kind, rating, el) {
   const container = el.closest('.dstars');
-  container.querySelectorAll('.dstar').forEach((s, i) => {
-    const filled = (i + 1) <= rating;
-    s.classList.toggle('filled', filled);
-    s.textContent = filled ? '★' : '☆';
-  });
-  postRating(name, rating, kind);
+  const ok = await postRating(name, rating, kind);
+  if (ok) {
+    container.querySelectorAll('.dstar').forEach((s, i) => {
+      const filled = (i + 1) <= rating;
+      s.classList.toggle('filled', filled);
+      s.textContent = filled ? '★' : '☆';
+    });
+    return;
+  }
+  console.error(`Failed to save rating for "${name}" (${kind}, ${rating} stars) — stars left unchanged.`);
+  const row = container.closest('.drow');
+  const nameEl = row && row.querySelector('.drow-name');
+  if (nameEl && !nameEl.textContent.includes('(save failed)')) {
+    const original = nameEl.textContent;
+    nameEl.textContent = `${original} (save failed)`;
+    setTimeout(() => { nameEl.textContent = original; }, 4000);
+  }
 }
 
+// kind: 'restaurant' rows come from favorite_places.json (cuisine/location);
+// kind: 'venue' rows come from venues_to_follow.json's venues array
+// (vibe/area instead) — falls back across both field-name pairs so one
+// row renderer covers both shapes with the same star-control pattern.
 function placeRowHTML(place, kind) {
-  const cuisine = place.cuisine ? ` — ${place.cuisine}` : '';
-  const location = place.location ? ` (${place.location})` : '';
+  const detail = place.cuisine || place.vibe || '';
+  const location = place.location || place.area || '';
+  const detailText = detail ? ` — ${detail}` : '';
+  const locationText = location ? ` (${location})` : '';
   return `
     <div class="drow">
-      <div class="drow-name">${place.name}${cuisine}${location}</div>
+      <div class="drow-name">${place.name}${detailText}${locationText}</div>
       ${starsHTML(place.name, kind, place.rating)}
     </div>`;
 }
 
-function eligibleFavorites(tag) {
-  const places = (D.favoritePlaces && D.favoritePlaces.places) || [];
-  return places.filter((p) => p[tag]);
+function eligibleFavorites(places, tag) {
+  return (places || []).filter((p) => p[tag]);
 }
 
 function showsFindingsHTML(cache) {
@@ -1172,23 +1243,36 @@ function showsFindingsHTML(cache) {
   return `<div class="callout">Last checked ${fetchedLabel} (next ${cache.days} days)</div>${findingsHTML}`;
 }
 
-function weekendSpotsHTML(weekendSocialSpots) {
-  // weekendSocialSpots carries a top-level "note" string alongside its
-  // per-area arrays (see data/venues_to_follow.json) — filter to
-  // array-valued entries only so that note doesn't reach .map() as "spots".
-  const areas = Object.entries(weekendSocialSpots || {}).filter(([, spots]) => Array.isArray(spots));
-  if (!areas.length) return '';
-  return areas.map(([area, spots]) => `
-    <div class="slabel" style="margin-top:18px;font-size:10px">${area}</div>
-    ${spots.map((s) => placeRowHTML(s, 'venue')).join('')}
+// The real show/comedy/music venues to follow (Largo, Westside Comedy
+// Theater, Hollywood Bowl, etc.) from venues_to_follow.json's top-level
+// `venues` array — replaces the old weekendSpotsHTML(weekendSocialSpots)
+// section (2026-08-05), which rendered venuesData's OTHER field and turned
+// out to be entirely duplicate restaurant/bar data: every one of its 17
+// names already exists in favorite_places_raw.json as a want-to-go entry
+// (merged earlier this session — see claude.md's dining section), so a place
+// like Gjelina was rendering twice with two separate, disagreeing star
+// controls. Grouped by category so comedy/music/outdoor venues aren't one
+// flat undifferentiated list.
+function venuesHTML(venues) {
+  if (!venues || !venues.length) return '<div class="callout">No venues tracked yet.</div>';
+  const byCategory = new Map();
+  for (const v of venues) {
+    const cat = v.category || 'other';
+    if (!byCategory.has(cat)) byCategory.set(cat, []);
+    byCategory.get(cat).push(v);
+  }
+  return [...byCategory.entries()].map(([category, vs]) => `
+    <div class="slabel" style="margin-top:18px;font-size:10px">${category}</div>
+    ${vs.map((v) => placeRowHTML(v, 'venue')).join('')}
   `).join('');
 }
 
 async function renderDiningShowsTab() {
-  const familyDinner = eligibleFavorites('familyFriendly');
-  const dateNight = eligibleFavorites('dinnerSpot');
-  const weekendSocial = eligibleFavorites('socialSpot');
-  const [venuesData, showsCache] = await Promise.all([loadVenuesToFollow(), loadUpcomingShowsCache()]);
+  const [favoritePlacesData, venuesData, showsCache] = await Promise.all([loadFavoritePlaces(), loadVenuesToFollow(), loadUpcomingShowsCache()]);
+  const places = favoritePlacesData.places || [];
+  const familyDinner = eligibleFavorites(places, 'familyFriendly');
+  const dateNight = eligibleFavorites(places, 'dinnerSpot');
+  const weekendSocial = eligibleFavorites(places, 'socialSpot');
 
   $('pg-dining').innerHTML = `
     <div class="content">
@@ -1212,9 +1296,9 @@ async function renderDiningShowsTab() {
         ${weekendSocial.length ? weekendSocial.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No weekend-social favorites tagged yet.</div>'}
       </div>
 
-      <div class="slabel">Weekend Social — Hangout Ideas by Neighborhood</div>
+      <div class="slabel">Venues to Follow — Comedy, Music &amp; Outdoor Shows</div>
       <div class="panel">
-        ${weekendSpotsHTML(venuesData.weekendSocialSpots)}
+        ${venuesHTML(venuesData.venues)}
       </div>
     </div>`;
 }
@@ -1502,14 +1586,15 @@ function show(id, el) {
    INIT
    ═══════════════════════════════ */
 renderHeader();
-// renderBudgetTab() is async (Month Plan's storage is now a fetch() call,
-// not localStorage) — kept as a named const, not a bare call, so the test
-// harness can grab this promise and await initial-render completion before
-// asserting on pg-budget's content.
-const initReady = renderBudgetTab();
+// renderBudgetTab() and renderDiningShowsTab() are both async (Month Plan's
+// storage and the Dining + Shows tab's favorite-places/venues/shows-cache
+// reads are all fetch() calls now, not localStorage/build-time data) — kept
+// as a named const, not a bare call, so the test harness can grab this
+// promise and await initial-render completion before asserting on
+// pg-budget's/pg-dining's content.
+const initReady = Promise.all([renderBudgetTab(), renderDiningShowsTab()]);
 renderGoalsTab();
 renderDecisionsTab();
-renderDiningShowsTab();
 // Current Position (and, within it, Trajectory) render lazily — see show()/showPosition().
 </script>
 </body>

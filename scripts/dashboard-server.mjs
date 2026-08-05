@@ -80,6 +80,22 @@ export function readVenuesToFollow(venuesPath) {
   }
 }
 
+// Live read of favorite_places.json (2026-08-05) — the Dining + Shows
+// dashboard tab used to render from D.favoritePlaces, a build-time snapshot
+// bundled into data/data.js by build-data.mjs, so a rating written via
+// POST /api/rate-place never showed as re-rated until the next nightly
+// data.js rebuild. Reading this live means a star rating is visible on the
+// very next page reload. Same missing-file/corrupt-file degrade-quietly
+// shape as readVenuesToFollow above.
+export function readFavoritePlaces(favoritePlacesPath) {
+  if (!fs.existsSync(favoritePlacesPath)) return { places: [], recentDiningActivity: [] };
+  try {
+    return JSON.parse(fs.readFileSync(favoritePlacesPath, 'utf8'));
+  } catch {
+    return { places: [], recentDiningActivity: [] };
+  }
+}
+
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     let raw = '';
@@ -204,6 +220,14 @@ export function createServer(
 
     if (urlPath === '/api/venues-to-follow' && req.method === 'GET') {
       sendJson(res, 200, readVenuesToFollow(venuesToFollowPath));
+      return;
+    }
+
+    // Read-only, live — see readFavoritePlaces above for why this exists
+    // alongside the build-time D.favoritePlaces snapshot the dashboard used
+    // to render from exclusively.
+    if (urlPath === '/api/favorite-places' && req.method === 'GET') {
+      sendJson(res, 200, readFavoritePlaces(favoritePlacesPath));
       return;
     }
 

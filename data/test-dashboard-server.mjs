@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer, writeJsonAtomic, ratePlace, rateVenue } from '../scripts/dashboard-server.mjs';
+import { createServer, writeJsonAtomic, ratePlace, rateVenue, readFavoritePlaces } from '../scripts/dashboard-server.mjs';
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-server-test-'));
 const eventsPath = path.join(tmpDir, 'month_plan_events.json');
@@ -256,6 +256,41 @@ await test('GET /api/venues-to-follow returns the empty default shape when the f
   } finally {
     server.close();
   }
+});
+
+await test('GET /api/favorite-places returns the empty default shape when the file does not exist yet', async () => {
+  // Earlier ratePlace tests wrote to this same shared tmp path; remove it so
+  // this test genuinely exercises the "file does not exist yet" branch.
+  fs.rmSync(favoritePlacesPath, { force: true });
+  const server = await startFullServer();
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/favorite-places`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { places: [], recentDiningActivity: [] });
+  } finally {
+    server.close();
+  }
+});
+
+await test('GET /api/favorite-places reflects a file written directly on disk (e.g. a rating just patched in by ratePlace)', async () => {
+  writeJsonAtomic(favoritePlacesPath, { meta: {}, places: [{ name: 'Terra Eataly', cuisine: 'Italian', list: 'go-to', rating: 5 }], recentDiningActivity: [] });
+  const server = await startFullServer();
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/favorite-places`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.places[0].name, 'Terra Eataly');
+    assert.equal(body.places[0].rating, 5);
+  } finally {
+    server.close();
+  }
+});
+
+await test('readFavoritePlaces returns the empty default shape (not throws) when the file is corrupt JSON', () => {
+  fs.writeFileSync(favoritePlacesPath, '{not valid json');
+  assert.deepEqual(readFavoritePlaces(favoritePlacesPath), { places: [], recentDiningActivity: [] });
 });
 
 console.log('All tests passed.');
