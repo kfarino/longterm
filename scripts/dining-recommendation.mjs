@@ -55,17 +55,40 @@ export function effectiveDiningRoutine(diningRoutine, overrides) {
   });
 }
 
+// visitStats comes from a 2-year historical Monarch backfill (see
+// budget-tracking-pull.mjs's computeFavoritePlacesHistory/refreshFavoritePlaces)
+// and reflects genuine long-term visit frequency — replaces the old pure
+// days-since-last-visit novelty score (2026-08-05), which defaulted an
+// unvisited place to the max value (365) and so put every brand-new
+// want-to-go entry at the top of every suggestion by default ("never visited
+// shouldn't be default highest suggestion" — Kevin). An established favorite
+// that's genuinely due for a revisit (visited many times, but not recently)
+// can now legitimately outrank a place that's never been tried, while a
+// never-visited place still gets a fair, moderate shot at rotation rather
+// than either dominating or being buried. A place with no visitStats at all
+// (history not yet backfilled, or genuinely never visited) gets the same flat
+// "worth trying" score either way — reviving the old 90-day-window signal as
+// a fallback would just reintroduce the exact bug this replaces, so this
+// deliberately does not fall back to it.
+function familiarityScore(f) {
+  const vs = f.visitStats;
+  if (vs && vs.visitCount > 0) {
+    const daysSince = Math.min(365, Math.floor((new Date() - new Date(vs.lastVisitDate)) / 86400000));
+    return daysSince + Math.min(vs.visitCount, 10) * 8;
+  }
+  return 90;
+}
+
 // Picks a place (or a low-key idea) for one slot. Ranked, not a plain
 // filter-then-array-order pick (2026-08-01): scores each eligible candidate
-// by how long it's gone without a visit (rewards rotating through the whole
-// go-to list instead of favoring whatever happens to sit first in
-// favorite_places.json), nudges down a repeat of the most recent cuisine for
-// variety, and prefers a proven 'go-to' place over an unproven 'want-to-go'
-// one. Still the same input/output shape as before — this remains the swap
-// point for an LLM/ML call later (see design docs), just a more reasoned
-// heuristic than a plain filter today. Deliberately synchronous/cheap: the
-// dashboard calls this once per eligible day across a whole month's render,
-// so a real per-call LLM request here would be slow and costly.
+// by familiarityScore (see above — visit frequency/recency, not pure
+// novelty), nudges down a repeat of the most recent cuisine for variety, and
+// prefers a proven 'go-to' place over an unproven 'want-to-go' one. Still the
+// same input/output shape as before — this remains the swap point for an
+// LLM/ML call later (see design docs), just a more reasoned heuristic than a
+// plain filter today. Deliberately synchronous/cheap: the dashboard calls
+// this once per eligible day across a whole month's render, so a real
+// per-call LLM request here would be slow and costly.
 export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames) {
   if (slot.tier === 'low-key') {
     const idea = lowKeyHangIdeas[Math.floor(Math.random() * lowKeyHangIdeas.length)];
@@ -103,23 +126,10 @@ export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHa
     ? (favorites.find((f) => f.name === mostRecent.matchedPlace) || {}).cuisine
     : null;
 
-  const lastVisitByPlace = new Map();
-  for (const a of recentDiningActivity) {
-    if (!a.matchedPlace) continue;
-    const prev = lastVisitByPlace.get(a.matchedPlace);
-    if (!prev || a.date > prev) lastVisitByPlace.set(a.matchedPlace, a.date);
-  }
-  const today = new Date();
-  const daysSinceLastVisit = (name) => {
-    const last = lastVisitByPlace.get(name);
-    if (!last) return 365; // never visited — same max variety value as "long ago"
-    return Math.min(365, Math.floor((today - new Date(last)) / 86400000));
-  };
-
   const scored = candidates
     .map((f) => ({
       f,
-      score: daysSinceLastVisit(f.name)
+      score: familiarityScore(f)
         - (recentCuisine && f.cuisine === recentCuisine ? 50 : 0)
         + (f.list === 'go-to' ? 10 : 0),
     }))
@@ -127,7 +137,7 @@ export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHa
 
   const picks = scored.slice(0, 3).map((s) => s.f.name);
   const reasoning = picks.length
-    ? `${slot.tier} tier, ranked by longest-since-visited (excluding anything in the last ${RECENT_VISIT_EXCLUSION_DAYS} days), preferring go-to favorites and a different cuisine than last time.`
+    ? `${slot.tier} tier, ranked by visit history (favoring established go-to favorites due for a revisit, with new want-to-go picks worked in — excluding anything in the last ${RECENT_VISIT_EXCLUSION_DAYS} days) and a different cuisine than last time.`
     : `No fresh picks — everything eligible was visited in the last ${RECENT_VISIT_EXCLUSION_DAYS} days.`;
 
   return { picks, reasoning };

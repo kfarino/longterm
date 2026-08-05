@@ -14,6 +14,9 @@ data/todos.json
 data/month_plan_events.json
 data/favorite_places.json
 data/favorite_places_raw.json
+data/favorite_places_history.json
+data/venues_to_follow.json
+data/upcoming_shows_cache.json
 data/calendar-sync-state.json
 data/dining-routine-overrides.json
 data/goals-changelog.jsonl

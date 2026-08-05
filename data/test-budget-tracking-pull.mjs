@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { refreshFavoritePlaces } from '../scripts/budget-tracking-pull.mjs';
+import { refreshFavoritePlaces, computeFavoritePlacesHistory } from '../scripts/budget-tracking-pull.mjs';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-tracking-pull-test-'));
 
@@ -138,6 +138,120 @@ test('a legacy entry (no id, recorded before this fix) is not re-duplicated when
   const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
   const matches = result.recentDiningActivity.filter((a) => a.date === '2026-07-20');
   assert.equal(matches.length, 1, 'an unchanged legacy entry should not be duplicated by the legacy composite-key fallback');
+});
+
+// --- computeFavoritePlacesHistory (2026-08-05) ---
+
+test('computeFavoritePlacesHistory aggregates visit count, total spend, and first/last date per matched place', () => {
+  const dir = path.join(tmpRoot, 'history-basic');
+  const { rawPath } = writeFixture(dir);
+  const historyPath = path.join(dir, 'favorite_places_history.json');
+  const today = new Date('2026-08-05T00:00:00Z');
+
+  computeFavoritePlacesHistory(rawPath, historyPath, [
+    txn({ id: 't1', date: '2024-09-01', amount: -50, merchant: 'Locanda Portofino' }),
+    txn({ id: 't2', date: '2025-03-15', amount: -80, merchant: 'Locanda Portofino' }),
+    txn({ id: 't3', date: '2026-07-20', amount: -60, merchant: 'Locanda Portofino' }),
+  ], JOINT_LABELS, today, 730);
+
+  const result = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+  const stats = result.stats['Locanda Portofino'];
+  assert.equal(stats.visitCount, 3);
+  assert.equal(stats.totalSpend, 190);
+  assert.equal(stats.avgSpend, Math.round((190 / 3) * 100) / 100);
+  assert.equal(stats.firstVisitDate, '2024-09-01');
+  assert.equal(stats.lastVisitDate, '2026-07-20');
+  assert.equal(result.meta.lookbackDays, 730);
+});
+
+test('computeFavoritePlacesHistory ignores non-joint-card and unmatched-merchant transactions', () => {
+  const dir = path.join(tmpRoot, 'history-filters');
+  const { rawPath } = writeFixture(dir);
+  const historyPath = path.join(dir, 'favorite_places_history.json');
+  const today = new Date('2026-08-05T00:00:00Z');
+
+  computeFavoritePlacesHistory(rawPath, historyPath, [
+    txn({ id: 'p1', date: '2025-01-01', amount: -40, merchant: 'Locanda Portofino', account: 'Some Personal Card (...1111)' }),
+    txn({ id: 'u1', date: '2025-01-02', amount: -40, merchant: 'Totally Unknown Place' }),
+  ], JOINT_LABELS, today, 730);
+
+  const result = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+  assert.deepEqual(result.stats, {}, 'personal-card and unmatched-merchant charges should not produce any history entries');
+});
+
+test('computeFavoritePlacesHistory full-recomputes rather than accumulating across runs', () => {
+  const dir = path.join(tmpRoot, 'history-recompute');
+  const { rawPath } = writeFixture(dir);
+  const historyPath = path.join(dir, 'favorite_places_history.json');
+  const today = new Date('2026-08-05T00:00:00Z');
+
+  computeFavoritePlacesHistory(rawPath, historyPath, [
+    txn({ id: 't1', date: '2025-01-01', amount: -40, merchant: 'Tu Madre' }),
+    txn({ id: 't2', date: '2025-01-02', amount: -40, merchant: 'Tu Madre' }),
+  ], JOINT_LABELS, today, 730);
+
+  // Re-run with a narrower/different transaction set — should replace, not add to, the prior result.
+  computeFavoritePlacesHistory(rawPath, historyPath, [
+    txn({ id: 't3', date: '2025-06-01', amount: -40, merchant: 'Tu Madre' }),
+  ], JOINT_LABELS, today, 730);
+
+  const result = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
+  assert.equal(result.stats['Tu Madre'].visitCount, 1, 'a re-run should fully replace the prior computed stats, not accumulate on top of them');
+});
+
+// --- refreshFavoritePlaces + visitStats (2026-08-05) ---
+
+test('refreshFavoritePlaces attaches visitStats from favorite_places_history.json onto the matching place', () => {
+  const dir = path.join(tmpRoot, 'visitstats-attach');
+  const { rawPath, outPath } = writeFixture(dir);
+  const historyPath = path.join(dir, 'favorite_places_history.json');
+  fs.writeFileSync(historyPath, JSON.stringify({
+    meta: { lastRegenerated: '2026-08-05', lookbackDays: 730 },
+    stats: { 'Locanda Portofino': { visitCount: 5, totalSpend: 400, avgSpend: 80, firstVisitDate: '2024-01-01', lastVisitDate: '2026-06-01' } },
+  }));
+  const today = new Date('2026-08-01T00:00:00Z');
+
+  refreshFavoritePlaces(rawPath, outPath, [], today, JOINT_LABELS);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const locanda = result.places.find((p) => p.name === 'Locanda Portofino');
+  assert.deepEqual(locanda.visitStats, { visitCount: 5, totalSpend: 400, avgSpend: 80, firstVisitDate: '2024-01-01', lastVisitDate: '2026-06-01' });
+  const tuMadre = result.places.find((p) => p.name === 'Tu Madre');
+  assert.equal(tuMadre.visitStats, null, 'a place with no entry in the history file should get null visitStats, not undefined or a crash');
+});
+
+test('refreshFavoritePlaces falls back to historical avgSpend/tier for observed when there is no recent (90-day) activity', () => {
+  const dir = path.join(tmpRoot, 'visitstats-cost-fallback');
+  const { rawPath, outPath } = writeFixture(dir);
+  const historyPath = path.join(dir, 'favorite_places_history.json');
+  fs.writeFileSync(historyPath, JSON.stringify({
+    meta: { lastRegenerated: '2026-08-05', lookbackDays: 730 },
+    stats: { 'Locanda Portofino': { visitCount: 4, totalSpend: 600, avgSpend: 150, firstVisitDate: '2024-01-01', lastVisitDate: '2025-12-01' } },
+  }));
+  const today = new Date('2026-08-01T00:00:00Z');
+
+  // No transactions this run, so no 90-day recentDiningActivity for this place.
+  refreshFavoritePlaces(rawPath, outPath, [], today, JOINT_LABELS);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const locanda = result.places.find((p) => p.name === 'Locanda Portofino');
+  assert.ok(locanda.observed, 'should not be null just because nothing fell in the last 90 days — historical data exists');
+  assert.equal(locanda.observed.avgSpend, 150);
+  assert.equal(locanda.observed.tier, 'high');
+  assert.equal(locanda.observed.visitCount, 4);
+});
+
+test('refreshFavoritePlaces degrades to null visitStats on every place when favorite_places_history.json is missing', () => {
+  const dir = path.join(tmpRoot, 'visitstats-missing-history');
+  const { rawPath, outPath } = writeFixture(dir);
+  const today = new Date('2026-08-01T00:00:00Z');
+
+  refreshFavoritePlaces(rawPath, outPath, [], today, JOINT_LABELS);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  for (const place of result.places) {
+    assert.equal(place.visitStats, null);
+  }
 });
 
 console.log('All budget-tracking-pull tests passed.');

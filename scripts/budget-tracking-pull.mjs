@@ -26,6 +26,7 @@ function parseArgs(argv) {
     mcpServerExe: monarchMcpExePath(),
     limit: 1000,
     dryRun: false,
+    historyBackfillDays: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -44,6 +45,7 @@ function parseArgs(argv) {
       else if (key === 'monarch-env-file') args.envFile = value;
       else if (key === 'mcp-server-exe') args.mcpServerExe = value;
       else if (key === 'limit') args.limit = Number.parseInt(value, 10);
+      else if (key === 'history-backfill-days') args.historyBackfillDays = Number.parseInt(value, 10);
       else throw new Error(`Unknown argument: ${arg}`);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -302,6 +304,48 @@ function tierFromAvg(avg) {
   return 'high';
 }
 
+// One-off/occasional deep pull (e.g. 2 years), NOT the nightly cycle-scoped
+// fetch — see the `--history-backfill-days` CLI mode below. Full recompute
+// every run rather than an incremental merge: a wide pull is cheap enough to
+// just redo, and full recompute avoids drift/double-counting bugs an
+// incremental merge would risk. Joint-only, same reasoning as
+// refreshFavoritePlaces's recentDiningActivity below — this is a joint-budget
+// planning signal, so personal-card dining shouldn't skew "how much do we
+// actually go here." Written to its own file (not folded into
+// favorite_places.json's recentDiningActivity) because that array is
+// hard-trimmed to a 90-day rolling window every nightly run and structurally
+// cannot hold multi-year history.
+export function computeFavoritePlacesHistory(rawPath, historyPath, transactions, jointLabels, today, lookbackDays) {
+  if (!fs.existsSync(rawPath)) return null;
+  const raw = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+  const statsByName = new Map();
+  for (const txn of transactions) {
+    const amount = spendAmount(txn);
+    if (amount === 0) continue;
+    const cat = categoryName(txn).toLowerCase();
+    if (!DINING_CATEGORY_NAMES.has(cat)) continue;
+    const account = accountLabel(txn);
+    if (!jointLabels.has(account)) continue;
+    const merchant = txn.merchant || txn.plaidName || '';
+    const match = matchFavorite(merchant, raw);
+    if (!match) continue;
+    const roundedAmount = Math.round(amount * 100) / 100;
+    const entry = statsByName.get(match.name) || { visitCount: 0, totalSpend: 0, firstVisitDate: txn.date, lastVisitDate: txn.date };
+    entry.visitCount += 1;
+    entry.totalSpend = Math.round((entry.totalSpend + roundedAmount) * 100) / 100;
+    if (txn.date < entry.firstVisitDate) entry.firstVisitDate = txn.date;
+    if (txn.date > entry.lastVisitDate) entry.lastVisitDate = txn.date;
+    statsByName.set(match.name, entry);
+  }
+  const stats = {};
+  for (const [name, s] of statsByName) {
+    stats[name] = { ...s, avgSpend: Math.round((s.totalSpend / s.visitCount) * 100) / 100 };
+  }
+  const result = { meta: { lastRegenerated: isoDate(today), lookbackDays }, stats };
+  writeJson(historyPath, result);
+  return result;
+}
+
 // Self-updates favorite_places.json from transactions budget-tracking-pull.mjs
 // already fetched this run — zero additional Monarch calls. Silently does
 // nothing if favorite_places_raw.json hasn't been synced yet (Task 2 of the
@@ -327,6 +371,21 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
   } catch (error) {
     console.error(sanitize(`refreshFavoritePlaces: failed to parse dining data, skipping this run's update: ${error.message}`));
     return;
+  }
+
+  // Long-term visit history (see computeFavoritePlacesHistory above) — a
+  // separate file, not derived from recentDiningActivity below, since that
+  // array is hard-trimmed to a 90-day rolling window every run. Missing file
+  // (history never backfilled) degrades to no visitStats on any place, same
+  // "missing file degrades quietly" convention as everywhere else in this
+  // codebase — recommendForSlot() falls back to its pre-history scoring in
+  // that case.
+  const historyPath = path.join(path.dirname(rawPath), 'favorite_places_history.json');
+  let historyStats = {};
+  if (fs.existsSync(historyPath)) {
+    try {
+      historyStats = JSON.parse(fs.readFileSync(historyPath, 'utf8')).stats || {};
+    } catch { /* corrupt history file — degrade to no visitStats rather than fail the whole pull */ }
   }
 
   // Identity is the transaction's own stable Monarch `id`, not date/merchant/
@@ -412,17 +471,40 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
 
   const places = raw.map((f) => {
     const visits = recentDiningActivity.filter((a) => a.matchedPlace === f.name);
-    if (!visits.length) return { ...f, observed: null };
-    const avgSpend = Math.round((visits.reduce((s, v) => s + v.amount, 0) / visits.length) * 100) / 100;
-    return {
-      ...f,
-      observed: {
-        tier: tierFromAvg(avgSpend),
-        avgSpend,
-        visitCount: visits.length,
-        lastVisited: visits[visits.length - 1].date,
-      },
-    };
+    const visitStats = historyStats[f.name] || null;
+    if (visits.length) {
+      // Recent (90-day) activity exists — use it as the primary cost signal,
+      // since it reflects current pricing more accurately than a 2-year
+      // average (menu prices drift).
+      const avgSpend = Math.round((visits.reduce((s, v) => s + v.amount, 0) / visits.length) * 100) / 100;
+      return {
+        ...f,
+        observed: {
+          tier: tierFromAvg(avgSpend),
+          avgSpend,
+          visitCount: visits.length,
+          lastVisited: visits[visits.length - 1].date,
+        },
+        visitStats,
+      };
+    }
+    // No recent activity, but the 2-year historical backfill (visitStats) may
+    // still have real spend data for this place — fall back to that rather
+    // than leaving `observed` null just because nothing happened to fall in
+    // the last 90 days. Recent activity (above) still wins when both exist.
+    if (visitStats && visitStats.visitCount > 0) {
+      return {
+        ...f,
+        observed: {
+          tier: tierFromAvg(visitStats.avgSpend),
+          avgSpend: visitStats.avgSpend,
+          visitCount: visitStats.visitCount,
+          lastVisited: visitStats.lastVisitDate,
+        },
+        visitStats,
+      };
+    }
+    return { ...f, observed: null, visitStats };
   });
 
   writeJson(outPath, {
@@ -448,6 +530,42 @@ function writeJson(filePath, data) {
   fs.renameSync(tempPath, filePath);
 }
 
+// Separate code path from the daily cycle-scoped pull below — a one-off/
+// occasional deep pull (e.g. 2 years), not wired into run-daily-pull.ps1's
+// schedule. Reuses the same McpClient connection lifecycle as the normal
+// flow, just against a much wider date range and a different Monarch call
+// pattern (build long-term visitStats, not this cycle's category totals).
+async function runHistoryBackfill(args, tracking, today) {
+  const client = new McpClient({ mcpServerExe: args.mcpServerExe, envFile: args.envFile });
+  try {
+    await client.initialize();
+    const startDateObj = new Date(today);
+    startDateObj.setDate(startDateObj.getDate() - args.historyBackfillDays);
+    const transactions = await fetchTransactions(client, isoDate(startDateObj), isoDate(today), args.limit);
+
+    const jointLabels = new Set(tracking.mapping.jointAccountLabels || []);
+    const favoriteRawPath = path.join(path.dirname(args.outputPath), 'favorite_places_raw.json');
+    const historyPath = path.join(path.dirname(args.outputPath), 'favorite_places_history.json');
+    const result = computeFavoritePlacesHistory(favoriteRawPath, historyPath, transactions, jointLabels, today, args.historyBackfillDays);
+
+    console.log(JSON.stringify({
+      ok: true,
+      historyBackfill: true,
+      transactionCount: transactions.length,
+      placesMatched: result ? Object.keys(result.stats).length : 0,
+      historyPath,
+    }));
+  } catch (error) {
+    const stderrTail = client.stderrLines.slice(-5);
+    if (stderrTail.length > 0) {
+      error.message = `${error.message}${os.EOL}MCP stderr tail:${os.EOL}${stderrTail.join(os.EOL)}`;
+    }
+    throw error;
+  } finally {
+    client.close();
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -463,8 +581,13 @@ async function main() {
 
   const tracking = JSON.parse(fs.readFileSync(args.outputPath, 'utf8'));
   const goals = JSON.parse(fs.readFileSync(args.goalsPath, 'utf8'));
-
   const today = new Date();
+
+  if (args.historyBackfillDays) {
+    await runHistoryBackfill(args, tracking, today);
+    return;
+  }
+
   const cycleStart = currentCycleStart(today); // joint cycle
   const personalCycleStart = currentMonthStart(today); // personal trackers (calendar month)
   const fetchStart = cycleStart < personalCycleStart ? cycleStart : personalCycleStart;

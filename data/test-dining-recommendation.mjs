@@ -2,10 +2,11 @@
 //
 // Permanent regression test (NOT a temp task script — do not delete). Covers
 // recommendForSlot()'s ranking logic directly (2026-08-01 rewrite from a
-// plain filter-then-array-order pick to a scored ranking) — variety
-// (longest-since-visited wins), go-to preference, cuisine-repeat penalty,
-// and the existing recency-exclusion/already-used-elsewhere behavior. Run
-// with:
+// plain filter-then-array-order pick to a scored ranking, and the 2026-08-05
+// familiarityScore rewrite to use 2-year visitStats instead of pure
+// days-since-last-visit novelty) — variety, go-to preference, cuisine-repeat
+// penalty, and the existing recency-exclusion/already-used-elsewhere
+// behavior. Run with:
 //   node Longterm/data/test-dining-recommendation.mjs
 import assert from 'node:assert/strict';
 import { recommendForSlot } from '../scripts/dining-recommendation.mjs';
@@ -29,16 +30,33 @@ function daysAgoISO(n) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-test('ranks by longest-since-visited: a never-visited place beats one visited 20 days ago', () => {
+test('an established favorite (many visitStats, overdue for a revisit) outranks a never-visited want-to-go entry', () => {
+  // The 2026-08-05 fix: a brand-new want-to-go entry should NOT default to
+  // the top of every suggestion just because it's never been visited — see
+  // familiarityScore's own header comment in dining-recommendation.mjs.
   const favorites = [
-    { name: 'Recently Visited', list: 'go-to', cuisine: 'Italian', observed: { tier: 'mid', avgSpend: 50 } },
-    { name: 'Never Visited', list: 'go-to', cuisine: 'Thai', observed: { tier: 'mid', avgSpend: 55 } },
+    { name: 'Beloved Regular', list: 'want-to-go', cuisine: 'Italian', visitStats: { visitCount: 8, lastVisitDate: daysAgoISO(60) } },
+    { name: 'Brand New Idea', list: 'want-to-go', cuisine: 'Thai', visitStats: null },
   ];
-  const recentDiningActivity = [
-    { date: daysAgoISO(20), matchedPlace: 'Recently Visited' },
+  const rec = recommendForSlot(midSlot, favorites, [], [], new Set());
+  assert.equal(rec.picks[0], 'Beloved Regular', 'an established, overdue favorite should beat a never-visited place by default');
+});
+
+test('a never-visited place still gets picked when nothing else is eligible', () => {
+  const favorites = [
+    { name: 'Only Option', list: 'want-to-go', cuisine: 'Thai', visitStats: null },
   ];
-  const rec = recommendForSlot(midSlot, favorites, recentDiningActivity, [], new Set());
-  assert.equal(rec.picks[0], 'Never Visited');
+  const rec = recommendForSlot(midSlot, favorites, [], [], new Set());
+  assert.equal(rec.picks[0], 'Only Option');
+});
+
+test('two places with no visitStats at all tie on familiarityScore (both get the same modest "worth trying" score)', () => {
+  const favorites = [
+    { name: 'Never Visited A', list: 'go-to', cuisine: 'Italian', visitStats: null },
+    { name: 'Never Visited B', list: 'go-to', cuisine: 'Thai', visitStats: null },
+  ];
+  const rec = recommendForSlot(midSlot, favorites, [], [], new Set());
+  assert.equal(rec.picks.length, 2, 'both should be eligible picks even though neither has visit history');
 });
 
 test('go-to is preferred over want-to-go when otherwise similar', () => {
