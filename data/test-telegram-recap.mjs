@@ -118,6 +118,58 @@ const THURSDAY = new Date(2026, 7, 6, 9, 0, 0);
 
 console.log('test-telegram-recap.mjs');
 
+await asyncTest('bundle includes budgetLineItems: every joint-tracker charge over $100 this cycle', async () => {
+  const dir = path.join(tmpRoot, 'budget-line-items');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        weeks: [{ actual: 1000, days: 7 }],
+        cycleDays: 30,
+        categories: [
+          { name: 'Insurance', amount: 489.26, transactions: [{ date: '2026-07-26', merchant: 'Geico', amount: 489.26 }] },
+          { name: 'Groceries', amount: 45, transactions: [{ date: '2026-07-28', merchant: 'Whole Foods', amount: 45 }] },
+        ],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+
+  assert.equal(capturedBundle.budgetLineItems.length, 1, 'only the >$100 charge should be included');
+  assert.equal(capturedBundle.budgetLineItems[0].merchant, 'Geico');
+  assert.equal(capturedBundle.budgetLineItems[0].amount, 489.26);
+});
+
+await asyncTest('bundle includes todosByOwner: every open item grouped by owner, staleTodo is gone', async () => {
+  const dir = path.join(tmpRoot, 'todos-by-owner');
+  const paths = writeFixture(dir, {
+    todos: {
+      meta: { description: 'test' },
+      items: [
+        { title: 'Kevin item 1', owner: 'kevin', dateAdded: '2026-07-01', deadline: null, done: false },
+        { title: 'Kevin item 2', owner: 'kevin', dateAdded: '2026-07-20', deadline: null, done: false },
+        { title: 'Hanna item', owner: 'hanna', dateAdded: '2026-07-28', deadline: null, done: false },
+        { title: 'Done item', owner: 'kevin', dateAdded: '2026-06-01', deadline: null, done: true },
+      ],
+      weeklyGoals: [],
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+
+  assert.equal(capturedBundle.todosByOwner.kevin.length, 2, 'both open Kevin items, not the done one');
+  assert.equal(capturedBundle.todosByOwner.hanna.length, 1);
+  assert.equal(capturedBundle.todosByOwner.kevin[0].title, 'Kevin item 1');
+  assert.equal(capturedBundle.staleTodo, undefined, 'staleTodo field is superseded by todosByOwner');
+});
+
 await asyncTest('gathers all signal categories into the bundle handed to the LLM (scoped to the week, no long-term goals)', async () => {
   const dir = path.join(tmpRoot, 'bundle-contents');
   const paths = writeFixture(dir);
@@ -138,8 +190,9 @@ await asyncTest('gathers all signal categories into the bundle handed to the LLM
   assert.ok(capturedBundle.dining.date_night.reply);
   assert.ok(capturedBundle.dining.weekend_social.reply);
   assert.equal(capturedBundle.decisions[0].title, 'Urgent test decision', 'bundle should include open decisions');
-  assert.equal(capturedBundle.staleTodo.title, 'Oldest open item', 'bundle should surface only the single oldest open to-do');
-  assert.equal(capturedBundle.staleTodo.owner, 'kevin');
+  assert.equal(capturedBundle.todosByOwner.kevin[0].title, 'Oldest open item', 'bundle should group every open to-do by owner');
+  assert.equal(capturedBundle.todosByOwner.hanna[0].title, 'Newer item');
+  assert.deepEqual(capturedBundle.budgetLineItems, [], 'no line item over $100 in the default fixture');
 });
 
 await asyncTest('dining suggestions across the 3 occasions don\'t all converge on the same restaurant (real bug: all 3 slots suggested "Terra Eataly" in one live recap)', async () => {
@@ -222,7 +275,7 @@ await asyncTest('a different cadence day (Thursday) is not deduped against a pri
   assert.equal(sendCount, 2);
 });
 
-await asyncTest('no open to-dos: staleTodo is null rather than throwing', async () => {
+await asyncTest('no open to-dos: todosByOwner is empty rather than throwing', async () => {
   const dir = path.join(tmpRoot, 'no-open-todos');
   const paths = writeFixture(dir, { todos: { meta: { description: 'test' }, items: [], weeklyGoals: [] } });
   let capturedBundle = null;
@@ -230,7 +283,7 @@ await asyncTest('no open to-dos: staleTodo is null rather than throwing', async 
   const mockTelegram = async () => ({ ok: true });
   await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
 
-  assert.equal(capturedBundle.staleTodo, null);
+  assert.deepEqual(capturedBundle.todosByOwner, {});
 });
 
 await asyncTest('surfaces unparsed messages logged since the last recap', async () => {
