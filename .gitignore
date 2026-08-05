@@ -37,6 +37,13 @@ data/telegram-planning-notes.jsonl
 data/telegram-recap-log.jsonl
 data/telegram-unparsed.jsonl
 
+# Oura sample pulls (connect sketch — secrets stay in ~/.longterm/)
+data/oura/*
+!data/oura/README.md
+
+# Durable health corrections (household-specific — see AGENTS.md §0)
+data/health_overrides.json
+
 # Local worktrees (superpowers:using-git-worktrees fallback)
 .worktrees/
 
