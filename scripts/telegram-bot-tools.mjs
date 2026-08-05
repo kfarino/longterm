@@ -750,7 +750,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_calendar_events',
-    description: "Report what's on Kevin's personal calendar and Hanna's calendar for the next several days (Kevin's work calendar is deliberately excluded). Read-only.",
+    description: "Report upcoming events from the household's readable Google calendars: Kevin's personal (farinooh@gmail.com) and Hanna's (hkamaric@gmail.com, shared into Kevin's Google account so this OAuth can read it). Use this whenever Kevin or Hanna asks about their schedule, her schedule, his schedule, or what's on the calendar — Hanna's calendar IS available; never claim you can't see her schedule. Kevin's work calendar is deliberately excluded. Read-only.",
     input_schema: {
       type: 'object',
       properties: {
