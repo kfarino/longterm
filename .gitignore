@@ -29,3 +29,6 @@ data/telegram-pending-clarifications.json
 data/telegram-planning-notes.jsonl
 data/telegram-recap-log.jsonl
 data/telegram-unparsed.jsonl
+
+# Local worktrees (superpowers:using-git-worktrees fallback)
+.worktrees/
