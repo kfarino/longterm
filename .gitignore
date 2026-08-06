@@ -32,3 +32,6 @@ data/telegram-unparsed.jsonl
 
 # Local worktrees (superpowers:using-git-worktrees fallback)
 .worktrees/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, reports)
+.superpowers/
