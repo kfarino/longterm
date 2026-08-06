@@ -7,12 +7,24 @@ export const OURA_AUTHORIZE_URL = 'https://cloud.ouraring.com/oauth/authorize';
 export const OURA_TOKEN_URL = 'https://api.ouraring.com/oauth/token';
 export const OURA_API_BASE = 'https://api.ouraring.com/v2/usercollection';
 
-/** Loopback redirect — register this exact URI on the Oura application. */
+/**
+ * Loopback redirect — register this exact URI on the Oura application.
+ * Must be the literal hostname "localhost", not "127.0.0.1" — Oura's
+ * developer portal rejects the latter with "http protocol is only allowed
+ * for localhost" even though they're equivalent (confirmed live, 2026-08-06,
+ * registering the real app at developer.ouraring.com).
+ */
 export const OURA_REDIRECT_PORT = 51824;
-export const OURA_REDIRECT_URI = `http://127.0.0.1:${OURA_REDIRECT_PORT}/oauth2callback`;
+export const OURA_REDIRECT_URI = `http://localhost:${OURA_REDIRECT_PORT}/oauth2callback`;
 
-/** First-pull scopes — enough to see daily summaries + workouts + SpO2. */
-export const OURA_SCOPES = 'personal daily workout spo2';
+/**
+ * All 11 scopes available on the app registration (2026-08-06: Kevin opted
+ * into everything rather than the original "first pull" subset, so future
+ * pulls/brainstorms aren't blocked on a second re-auth for a scope that
+ * wasn't requested). Space-separated short names, matching the developer
+ * portal's checkbox labels with their "extapi:" prefix stripped.
+ */
+export const OURA_SCOPES = 'email personal daily heartrate tag workout session spo2 ring_configuration stress heart_health';
 
 export function parseEnvFile(envFilePath) {
   const vars = {};

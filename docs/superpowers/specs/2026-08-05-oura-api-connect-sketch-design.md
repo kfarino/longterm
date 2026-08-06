@@ -19,14 +19,17 @@ Oura **deprecated personal access tokens** (Dec 2025). New integrations must use
 
 | Piece | Location | Notes |
 |-------|----------|--------|
-| One Longterm OAuth app | `~/.longterm/oura-app.env` | `OURA_CLIENT_ID`, `OURA_CLIENT_SECRET` from [cloud.ouraring.com](https://cloud.ouraring.com/oauth/applications) |
+| One Longterm OAuth app | `~/.longterm/oura-app.env` | `OURA_CLIENT_ID`, `OURA_CLIENT_SECRET` from Oura's developer portal |
 | Per-person tokens | `~/.longterm/oura-<ownerId>.env` | e.g. `oura-kevin.env`, `oura-hanna.env` — refresh + access tokens after each adult consents |
 | Sample pulls | `data/oura/<ownerId>-latest.json` | gitignored; overwritten each pull |
 
 Both adults authorize the **same** app against **their own** Oura login (two consent flows). Active **Oura Membership** required for Gen3+ API access.
 
-**Scopes (first pull):** `personal daily workout spo2`  
-(Add `heartrate` / `tag` / `session` later if useful. Oura’s SpO2 scope name is `spo2`, not `spo2Daily`.)
+**App registration (2026-08-06 update, from actually creating it live):** the old `cloud.ouraring.com/oauth/applications` portal linked in the original version of this doc is being retired for new-app creation ("Starting October 15th, 2025 we will be migrating to our new developer portal — you can still edit existing applications here but new applications must be created in the new portal") — use **[developer.ouraring.com](https://developer.ouraring.com/applications)** instead. That portal also requires Website/Privacy Policy/Terms of Service URLs (all three set to the repo's GitHub URL here, since this is a private two-person app with no real public-facing pages) and has its own scope-checkbox UI (see below).
+
+**Redirect URI gotcha (found live):** must use the literal hostname `localhost`, not `127.0.0.1` — the developer portal actively rejects `127.0.0.1` with "http protocol is only allowed for localhost" even though they're equivalent. `oura-client.mjs`'s `OURA_REDIRECT_URI` and `oura-auth-setup.mjs`'s local callback server were both written assuming `127.0.0.1` and had to be corrected to `localhost` (the callback server now binds with no explicit host, so it answers on whichever of IPv4/IPv6 loopback the OS resolves "localhost" to).
+
+**Scopes:** Kevin opted into **all 11** available scopes at registration (`email personal daily heartrate tag workout session spo2 ring_configuration stress heart_health`) rather than the narrower "first pull" subset originally planned here — avoids a second re-authorization later if a brainstormed use ends up wanting one of the broader scopes. Oura's SpO2 scope name is `spo2`, not `spo2Daily`.
 
 **Note:** Oura refresh tokens are **single-use** — every refresh must rewrite `oura-<ownerId>.env` with the new refresh token (handled in `oura-client.mjs`).
 

@@ -41,7 +41,7 @@ function parseArgs(argv) {
 function waitForAuthCode(expectedState) {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
-      const url = new URL(req.url, `http://127.0.0.1:${OURA_REDIRECT_PORT}`);
+      const url = new URL(req.url, `http://localhost:${OURA_REDIRECT_PORT}`);
       const code = url.searchParams.get('code');
       const error = url.searchParams.get('error');
       const state = url.searchParams.get('state');
@@ -58,7 +58,12 @@ function waitForAuthCode(expectedState) {
       else resolve({ code, scope: url.searchParams.get('scope') || '' });
     });
     server.on('error', reject);
-    server.listen(OURA_REDIRECT_PORT, '127.0.0.1');
+    // No explicit host: binds all interfaces (IPv4 + IPv6), since the
+    // registered redirect URI's hostname is "localhost" and Windows/Node
+    // may resolve that to ::1 rather than 127.0.0.1 -- binding only the
+    // IPv4 loopback risked the browser's redirect never reaching this
+    // server on such a system.
+    server.listen(OURA_REDIRECT_PORT);
   });
 }
 
