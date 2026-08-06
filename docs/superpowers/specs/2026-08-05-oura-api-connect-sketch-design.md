@@ -69,9 +69,11 @@ Exact field names come from the live response — the point of this sketch is to
 ## Success criteria
 
 - [x] Kevin authorizes; pull writes a non-empty sample JSON (2026-08-06 — `personal_info`/`daily_sleep`/`daily_readiness`/`daily_spo2` returned real records; `daily_activity`/`sleep`/`workout` were empty for the 14-day window, presumably no recent logged activity rather than an error)
-- [ ] Hanna authorizes; separate sample JSON — **attempted 2026-08-06, but invalid**: the browser was still logged into Kevin's Oura session, so the consent flow silently re-authorized Kevin's account a second time instead of prompting for Hanna's login. Caught by comparing `personal_info.email` between the two pulls (identical). Bogus `oura-hanna.env`/`data/oura/hanna-latest.json` deleted. Retry needs Hanna's actual Oura login in that browser first (log out of Kevin's session, or use a separate/incognito browser profile) before starting `oura-auth-setup.mjs --owner hanna` again.
-- [x] Console inventory makes payload shape obvious for a follow-up brainstorm (confirmed via Kevin's pull output)
-- [x] No secrets or `data/oura/*` committed (verified via `git status` — `oura-app.env`/`oura-kevin.env` live under `~/.longterm/`, outside the repo entirely; `data/oura/*-latest.json` is gitignored)
+- [x] Hanna authorizes; separate sample JSON (2026-08-06 — first attempt was invalid, see below; retried in a private/incognito window with no cached Kevin session, and `personal_info.email` came back `hkamaric@gmail.com` — genuinely distinct from Kevin's `farinooh@gmail.com`. Also far richer data: 13 days of sleep/readiness/activity/SpO2 and 19 workouts, vs. Kevin's mostly-empty window — consistent with real, different accounts.)
+- [x] Console inventory makes payload shape obvious for a follow-up brainstorm (confirmed via both pulls' output — Hanna's in particular shows the full shape of populated `sleep`/`workout`/`daily_activity` records that Kevin's near-empty window didn't exercise)
+- [x] No secrets or `data/oura/*` committed (verified via `git status` — `oura-app.env`/`oura-kevin.env`/`oura-hanna.env` live under `~/.longterm/`, outside the repo entirely; `data/oura/*-latest.json` is gitignored)
+
+**Caught during verification (2026-08-06):** the first Hanna attempt silently re-authorized Kevin's own account instead — the browser was still logged into his Oura session, so the consent flow never prompted for a different login. Caught by diffing `personal_info.email` between the two pulls (identical). This is a real hazard worth remembering for any future re-auth: **always verify `personal_info.email` differs from the other owner's after authorizing a second account**, don't trust that the flow visually completing means it authorized the intended person, especially in a shared/already-logged-in browser. Bogus `oura-hanna.env`/`data/oura/hanna-latest.json` from the first attempt were deleted before the real retry.
 
 ## Follow-up (later brainstorm)
 
