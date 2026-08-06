@@ -65,7 +65,7 @@ function writeJson(filePath, data) {
 function loadReminders(remindersPath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(remindersPath, 'utf8'));
-    return { items: parsed.items || [] };
+    return { ...parsed, items: parsed.items || [] };
   } catch {
     return { items: [] };
   }
