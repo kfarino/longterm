@@ -69,9 +69,9 @@ Exact field names come from the live response — the point of this sketch is to
 ## Success criteria
 
 - [x] Kevin authorizes; pull writes a non-empty sample JSON (2026-08-06 — `personal_info`/`daily_sleep`/`daily_readiness`/`daily_spo2` returned real records; `daily_activity`/`sleep`/`workout` were empty for the 14-day window, presumably no recent logged activity rather than an error)
-- [ ] Hanna authorizes; separate sample JSON  
+- [ ] Hanna authorizes; separate sample JSON — **attempted 2026-08-06, but invalid**: the browser was still logged into Kevin's Oura session, so the consent flow silently re-authorized Kevin's account a second time instead of prompting for Hanna's login. Caught by comparing `personal_info.email` between the two pulls (identical). Bogus `oura-hanna.env`/`data/oura/hanna-latest.json` deleted. Retry needs Hanna's actual Oura login in that browser first (log out of Kevin's session, or use a separate/incognito browser profile) before starting `oura-auth-setup.mjs --owner hanna` again.
 - [x] Console inventory makes payload shape obvious for a follow-up brainstorm (confirmed via Kevin's pull output)
-- [ ] No secrets or `data/oura/*` committed  
+- [x] No secrets or `data/oura/*` committed (verified via `git status` — `oura-app.env`/`oura-kevin.env` live under `~/.longterm/`, outside the repo entirely; `data/oura/*-latest.json` is gitignored)
 
 ## Follow-up (later brainstorm)
 
