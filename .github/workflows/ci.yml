@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  no-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Ensure no household secrets are tracked
+        run: npm run check:secrets
+
+  unit-smoke:
+    runs-on: ubuntu-latest
+    needs: no-secrets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Seed fictional examples
+        run: npm run seed
+      - name: Budget-tracking unit tests
+        run: node data/test-budget-tracking-pull.mjs
+      - name: Dining recommendation unit tests
+        run: node data/test-dining-recommendation.mjs

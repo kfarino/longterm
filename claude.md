@@ -1,10 +1,12 @@
 # Claude.md — Kevin & Hanna Financial Planning
 *Paste this into Project Instructions so it loads in every chat automatically.*
 
+**Public / fork note:** This file may describe one household’s identity and workflows. It must **never** contain balances, income figures, or transaction dumps (those live only in gitignored `data/`). Forks should rewrite “Who we are” for their own family. See `AGENTS.md` and `docs/publishing.md`.
+
 ---
 
 ## START OF EVERY SESSION
-1. Acknowledge you have loaded this context
+1. Acknowledge you have loaded this context **and** `AGENTS.md` (privacy + silent failures — read before editing money/sync/bot code)
 2. Offer to review latest files or dive into a specific topic
 3. Ask: "What would you like to work on — or any updates to the plan?"
 4. If Hanna is chatting: welcome her, all context is shared

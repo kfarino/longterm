@@ -1,6 +1,10 @@
 # Real household financial data + local runtime state — never commit.
 # Fresh clones: run `npm run seed` (scripts/seed-from-examples.mjs).
 
+# Historical joint CSV (may contain real spend — never commit)
+budget_ledger.csv
+CreditCard_*.csv
+
 # Planning / balances / generated views
 data/accounts.json
 data/budget_tracking.json
@@ -15,6 +19,8 @@ data/month_plan_events.json
 data/favorite_places.json
 data/favorite_places_raw.json
 data/favorite_places_history.json
+data/transactions_ledger.json
+data/transaction_overrides.json
 data/venues_to_follow.json
 data/upcoming_shows_cache.json
 data/calendar-sync-state.json
