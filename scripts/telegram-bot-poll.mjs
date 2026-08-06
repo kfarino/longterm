@@ -374,7 +374,7 @@ async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, rem
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
       // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
       // comment on this same fix: claude-sonnet-5 defaults extended thinking
@@ -424,13 +424,17 @@ async function callAnthropicUpcomingShows({ apiKey, venues, days }) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
       // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
       // comment on this same fix.
       thinking: { type: 'disabled' },
       system: UPCOMING_SHOWS_SYSTEM_PROMPT,
-      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }],
+      // allowed_callers: ['direct'] is required for Haiku 4.5 (2026-08-06) --
+      // it doesn't support "programmatic" tool calling, which web_search's
+      // hosted tool type defaults to requiring; Sonnet/Opus don't need this
+      // but it's harmless to always set.
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8, allowed_callers: ['direct'] }],
       messages: [{ role: 'user', content: `Venues:\n${venueList}\n\nDay window: next ${days} days from today (${today}).` }],
     }),
   });
@@ -489,7 +493,7 @@ async function callAnthropicRephrase({ apiKey, items }) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 400,
       // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
       // comment on this same fix.
