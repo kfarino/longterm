@@ -7,6 +7,7 @@
     "seed": "node scripts/seed-from-examples.mjs",
     "build": "node data/build-data.mjs && node data/build-goal-plan-md.mjs",
     "oura:auth": "node scripts/oura-auth-setup.mjs",
-    "oura:pull": "node scripts/oura-pull.mjs"
+    "oura:pull": "node scripts/oura-pull.mjs",
+    "spotify:auth": "node scripts/spotify-auth-setup.mjs"
   }
 }

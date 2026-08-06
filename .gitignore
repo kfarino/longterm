@@ -33,3 +33,9 @@ data/telegram-unparsed.jsonl
 # Oura sample pulls (connect sketch — secrets stay in ~/.longterm/)
 data/oura/*
 !data/oura/README.md
+
+# Spotify taste pulls + match output (secrets stay in ~/.longterm/) --
+# sample-shows.json is a committed fixture (fake/real-ish show list), not
+# real user data, so it's excluded from the blanket ignore.
+data/spotify/*
+!data/spotify/sample-shows.json
