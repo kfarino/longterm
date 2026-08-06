@@ -489,6 +489,71 @@ export function log_decision(goals, { title, summary, status }) {
   return { goals, reply: `Added ✓ to the plan's open decisions: "${title.trim()}".` };
 }
 
+// --- Reminders (2026-08-05) ---
+// A one-off timed nudge the bot proactively announces once, on its date --
+// NOT a persistent household chore (see todos.json's own family-only scope).
+// Call shape (reminders, args, owner?), a new distinct shape alongside
+// todos/monthPlanEvents/overrides/goals/financialContext -- see
+// REMINDER_TOOL_NAMES below for how telegram-bot-poll.mjs's dispatcher
+// routes to it. Delivery itself (scanning for due reminders and sending
+// them) lives in the separate scripts/telegram-bot-reminders.mjs daily job
+// -- these functions only ever create/list/cancel, never send.
+
+function nextReminderId(reminders) {
+  const max = reminders.items.reduce((m, r) => {
+    const n = parseInt(String(r.id).slice(1), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  return `r${max + 1}`;
+}
+
+export function add_reminder(reminders, { text, date, owner }) {
+  if (!text || !text.trim()) {
+    return { reminders, reply: "Couldn't set that reminder — missing what to remind you about." };
+  }
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { reminders, reply: "Couldn't set that reminder — need a specific date (YYYY-MM-DD)." };
+  }
+  const item = { id: nextReminderId(reminders), text: text.trim(), date, owner: owner || null, createdAt: new Date().toISOString(), sent: false, sentAt: null };
+  reminders.items.push(item);
+  return { reminders, reply: `Reminder set ✓ for ${date}: ${item.text}` };
+}
+
+export function list_reminders(reminders) {
+  const open = reminders.items.filter((r) => !r.sent).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  if (!open.length) return { reminders, reply: 'No upcoming reminders.' };
+  const lines = open.map((r) => `${r.date}: ${r.text}${r.owner ? ` (${r.owner})` : ''}`);
+  return { reminders, reply: `Upcoming reminders:\n${lines.join('\n')}` };
+}
+
+// Matches by case-insensitive substring on text (+ exact date if given, to
+// disambiguate) -- same shape as remove_event's own matching, including the
+// same "never guess, ask instead" handling for more than one match.
+export function cancel_reminder(reminders, { text, date }) {
+  if (!text || !text.trim()) {
+    return { reminders, reply: "Couldn't cancel that — missing which reminder you mean." };
+  }
+  const needle = text.trim().toLowerCase();
+  const open = reminders.items.filter((r) => !r.sent);
+  const matches = open.filter((r) => r.text.toLowerCase().includes(needle) && (!date || r.date === date));
+  if (!matches.length) {
+    return { reminders, reply: `Couldn't find an upcoming reminder like "${text}".` };
+  }
+  if (matches.length > 1) {
+    const names = matches.map((r) => `${r.date}: ${r.text}`).join(', ');
+    return { reminders, reply: `Multiple reminders match "${text}": ${names}. Say which one to cancel.`, needsClarification: true };
+  }
+  const [match] = matches;
+  reminders.items = reminders.items.filter((r) => r.id !== match.id);
+  return { reminders, reply: `Cancelled ✓: ${match.text} (was ${match.date})` };
+}
+
+// Tool names whose implementation operates on a reminders object, not
+// todos/monthPlanEvents/overrides/goals/financialContext -- a distinct call
+// shape telegram-bot-poll.mjs's dispatch branches on the same way it already
+// does for ROUTINE_OVERRIDE_TOOL_NAMES/GOALS_TOOL_NAMES.
+export const REMINDER_TOOL_NAMES = new Set(['add_reminder', 'list_reminders', 'cancel_reminder']);
+
 // Read-only — reports joint/personal pace (on/over, and by how much) plus
 // travel trip actuals-vs-budgeted. financialContext.budgetStatus is
 // pre-computed by scripts/financial-context.mjs (loadBudgetStatus), the
@@ -548,7 +613,14 @@ export function search_transactions(financialContext, { merchant, tracker } = {}
   }
   const header = 'Current-cycle line items only (no earlier history):';
   if (!rows.length) return { reply: `${header}\nNo matching current-cycle transactions found.` };
-  const lines = rows.map((r) => `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`);
+  // A refund/credit row (financial-context.mjs's loadTransactionDetail tags
+  // these with type: 'refund') is stored as a positive amount just like a
+  // spend row — marked distinctly here (a "+" prefix and a trailing
+  // "(refund)") so the reply never reads as if money went out when it
+  // actually came back.
+  const lines = rows.map((r) => (r.type === 'refund'
+    ? `${r.group} (${r.tracker}): ${r.merchant} — +${fmtMoney(r.amount)} (refund) on ${r.date}`
+    : `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`));
   return { reply: `${header}\n${lines.join('\n')}` };
 }
 
@@ -739,12 +811,22 @@ export const TOOL_DEFS = [
   },
   {
     name: 'search_transactions',
-    description: 'Look up individual current-cycle transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget" or "what\'s in the joint dining category this cycle". Current cycle only (joint\'s current ~4-week cycle, personal\'s current month, current travel trips) — cannot see older cycles or history further back.',
+    description: 'Look up individual current-cycle transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget" or "what\'s in the joint dining category this cycle". Also surfaces refunds/credits (e.g. "was there a refund from Amazon"), marked distinctly from regular spend in the reply. Current cycle only (joint\'s current ~4-week cycle, personal\'s current month, current travel trips) — cannot see older cycles or history further back.',
     input_schema: {
       type: 'object',
       properties: {
         merchant: { type: 'string', description: 'Substring to search for in the merchant name (case-insensitive), e.g. "Geico". Omit to not filter by merchant.' },
         tracker: { type: 'string', enum: ['joint', 'personal', 'travel'], description: 'Restrict to one tracker. Omit to search across all of them.' },
+      },
+    },
+  },
+  {
+    name: 'get_upcoming_shows',
+    description: 'Report real upcoming shows/events (comedy, music) at the venues in venues_to_follow.json over roughly the next 2 weeks — live web search, Westside-weighted per the household\'s location preference. Only call this when the user actually asks about upcoming shows/events; it is not part of the automatic recap.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        days: { type: 'integer', description: 'How many days ahead to look. Defaults to 14 if not given.' },
       },
     },
   },
@@ -756,6 +838,35 @@ export const TOOL_DEFS = [
       properties: {
         days: { type: 'integer', description: 'How many days ahead to look, starting today. Defaults to 7 if not given.' },
       },
+    },
+  },
+  {
+    name: 'add_reminder',
+    description: 'Set a one-off reminder that proactively pings the household Telegram group on a specific date (day-level only -- no specific time-of-day support). Use this, and never add_todo, whenever the user says "remind me..." or asks for a reminder: a to-do sits on the shared Planner list until done, a reminder proactively announces itself once on its date and never appears on the Planner list.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'What to be reminded about.' },
+        date: { type: 'string', description: 'The date to fire on, as YYYY-MM-DD, resolved from whatever the user said ("tomorrow", "Friday") using today\'s date from context.' },
+      },
+      required: ['text', 'date'],
+    },
+  },
+  {
+    name: 'list_reminders',
+    description: 'List every upcoming (not yet sent) reminder.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'cancel_reminder',
+    description: 'Cancel an upcoming reminder before it fires, matched by substring on its text (and its date, if given, to disambiguate). Never guess which one if more than one matches -- ask instead.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Substring to match against the reminder\'s text.' },
+        date: { type: 'string', description: 'The reminder\'s date (YYYY-MM-DD), if known -- narrows an ambiguous match.' },
+      },
+      required: ['text'],
     },
   },
 ];
@@ -795,4 +906,7 @@ export const TOOL_IMPL = {
   set_routine_day: (overrides, args) => set_routine_day(overrides, { occasion: args.occasion, dayOfWeek: args.dayOfWeek }),
   update_phase_expense: (goals, args) => update_phase_expense(goals, { phaseId: args.phaseId, expenseKey: args.expenseKey, renameFrom: args.renameFrom, amount: args.amount }),
   log_decision: (goals, args) => log_decision(goals, { title: args.title, summary: args.summary, status: args.status }),
+  add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, owner }),
+  list_reminders: (reminders) => list_reminders(reminders),
+  cancel_reminder: (reminders, args) => cancel_reminder(reminders, { text: args.text, date: args.date }),
 };

@@ -1,6 +1,7 @@
 {
   "name": "longterm-dashboard",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dashboard-server.mjs",
@@ -8,6 +9,7 @@
     "build": "node data/build-data.mjs && node data/build-goal-plan-md.mjs",
     "oura:auth": "node scripts/oura-auth-setup.mjs",
     "oura:pull": "node scripts/oura-pull.mjs",
-    "spotify:auth": "node scripts/spotify-auth-setup.mjs"
+    "spotify:auth": "node scripts/spotify-auth-setup.mjs",
+    "check:secrets": "node scripts/check-no-secrets.mjs"
   }
 }

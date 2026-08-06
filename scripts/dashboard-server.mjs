@@ -22,6 +22,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..');
 const defaultEventsPath = path.join(repoRoot, 'data', 'month_plan_events.json');
 const defaultRoutineOverridesPath = path.join(repoRoot, 'data', 'dining-routine-overrides.json');
+const defaultFavoriteRawPath = path.join(repoRoot, 'data', 'favorite_places_raw.json');
+const defaultFavoritePlacesPath = path.join(repoRoot, 'data', 'favorite_places.json');
+const defaultVenuesToFollowPath = path.join(repoRoot, 'data', 'venues_to_follow.json');
+const defaultUpcomingShowsCachePath = path.join(repoRoot, 'data', 'upcoming_shows_cache.json');
 const PORT = Number(process.env.PORT) || 4200;
 const EMPTY_ROUTINE_OVERRIDES = { family_dinner: null, date_night: null, weekend_social: null };
 
@@ -58,6 +62,112 @@ export function readRoutineOverrides(routineOverridesPath) {
   }
 }
 
+export function readUpcomingShowsCache(cachePath) {
+  if (!fs.existsSync(cachePath)) return { fetchedAt: null, days: null, findings: [] };
+  try {
+    return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  } catch {
+    return { fetchedAt: null, days: null, findings: [] };
+  }
+}
+
+export function readVenuesToFollow(venuesPath) {
+  if (!fs.existsSync(venuesPath)) return { venues: [], weekendSocialSpots: {} };
+  try {
+    return JSON.parse(fs.readFileSync(venuesPath, 'utf8'));
+  } catch {
+    return { venues: [], weekendSocialSpots: {} };
+  }
+}
+
+// Live read of favorite_places.json (2026-08-05) — the Dining + Shows
+// dashboard tab used to render from D.favoritePlaces, a build-time snapshot
+// bundled into data/data.js by build-data.mjs, so a rating written via
+// POST /api/rate-place never showed as re-rated until the next nightly
+// data.js rebuild. Reading this live means a star rating is visible on the
+// very next page reload. Same missing-file/corrupt-file degrade-quietly
+// shape as readVenuesToFollow above.
+export function readFavoritePlaces(favoritePlacesPath) {
+  if (!fs.existsSync(favoritePlacesPath)) return { places: [], recentDiningActivity: [] };
+  try {
+    return JSON.parse(fs.readFileSync(favoritePlacesPath, 'utf8'));
+  } catch {
+    return { places: [], recentDiningActivity: [] };
+  }
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      try { resolve(JSON.parse(raw || '{}')); }
+      catch (err) { reject(err); }
+    });
+    req.on('error', reject);
+  });
+}
+
+// Patches a `rating` (1-5) field onto the matching entry, by exact name, in
+// both the hand-maintained source-of-truth file and its build-time-bundled
+// derivative, so the change is visible without needing a full Monarch-driven
+// refreshFavoritePlaces regeneration — mirrors telegram-bot-tools.mjs's
+// update_phase_expense writing straight into goals.json, no separate review
+// gate. Returns true if a match was found and patched, false otherwise
+// (caller sends 404).
+export function ratePlace(rawPath, favoritePlacesPath, name, rating) {
+  if (!fs.existsSync(rawPath)) return false;
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+  } catch {
+    return false;
+  }
+  const rawEntry = raw.find((p) => p.name === name);
+  if (!rawEntry) return false;
+  rawEntry.rating = rating;
+  writeJsonAtomic(rawPath, raw);
+
+  if (fs.existsSync(favoritePlacesPath)) {
+    try {
+      const fp = JSON.parse(fs.readFileSync(favoritePlacesPath, 'utf8'));
+      const place = (fp.places || []).find((p) => p.name === name);
+      if (place) place.rating = rating;
+      writeJsonAtomic(favoritePlacesPath, fp);
+    } catch {
+      // The raw file (the real source of truth) was already patched above;
+      // a corrupt derivative file just means it stays stale rather than
+      // crashing the request — the next full regeneration re-syncs it.
+    }
+  }
+  return true;
+}
+
+// Same idea for venues_to_follow.json — a name can be in the top-level
+// `venues` array or nested inside `weekendSocialSpots.<area>`, so this checks
+// both shapes rather than assuming one.
+export function rateVenue(venuesPath, name, rating) {
+  if (!fs.existsSync(venuesPath)) return false;
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(venuesPath, 'utf8'));
+  } catch {
+    return false;
+  }
+  let entry = (data.venues || []).find((v) => v.name === name);
+  if (!entry && data.weekendSocialSpots) {
+    for (const area of Object.values(data.weekendSocialSpots)) {
+      if (!Array.isArray(area)) continue;
+      const found = area.find((v) => v.name === name);
+      if (found) { entry = found; break; }
+    }
+  }
+  if (!entry) return false;
+  entry.rating = rating;
+  writeJsonAtomic(venuesPath, data);
+  return true;
+}
+
 function sendJson(res, status, body) {
   const buf = Buffer.from(JSON.stringify(body));
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': buf.length });
@@ -77,7 +187,14 @@ function serveStatic(req, res) {
   });
 }
 
-export function createServer(eventsPath = defaultEventsPath, routineOverridesPath = defaultRoutineOverridesPath) {
+export function createServer(
+  eventsPath = defaultEventsPath,
+  routineOverridesPath = defaultRoutineOverridesPath,
+  favoriteRawPath = defaultFavoriteRawPath,
+  favoritePlacesPath = defaultFavoritePlacesPath,
+  venuesToFollowPath = defaultVenuesToFollowPath,
+  upcomingShowsCachePath = defaultUpcomingShowsCachePath,
+) {
   return http.createServer(async (req, res) => {
     const urlPath = req.url.split('?')[0];
 
@@ -93,6 +210,45 @@ export function createServer(eventsPath = defaultEventsPath, routineOverridesPat
     // writes this file. No PUT route by design.
     if (urlPath === '/api/dining-routine-overrides' && req.method === 'GET') {
       sendJson(res, 200, readRoutineOverrides(routineOverridesPath));
+      return;
+    }
+
+    if (urlPath === '/api/upcoming-shows-cache' && req.method === 'GET') {
+      sendJson(res, 200, readUpcomingShowsCache(upcomingShowsCachePath));
+      return;
+    }
+
+    if (urlPath === '/api/venues-to-follow' && req.method === 'GET') {
+      sendJson(res, 200, readVenuesToFollow(venuesToFollowPath));
+      return;
+    }
+
+    // Read-only, live — see readFavoritePlaces above for why this exists
+    // alongside the build-time D.favoritePlaces snapshot the dashboard used
+    // to render from exclusively.
+    if (urlPath === '/api/favorite-places' && req.method === 'GET') {
+      sendJson(res, 200, readFavoritePlaces(favoritePlacesPath));
+      return;
+    }
+
+    // The one write route in this server — see ratePlace/rateVenue above for
+    // why it patches two files for a restaurant rating but one for a venue.
+    if (urlPath === '/api/rate-place' && req.method === 'POST') {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        res.writeHead(400); res.end('Invalid JSON body'); return;
+      }
+      const { name, rating, kind } = body;
+      if (!name || typeof name !== 'string' || !Number.isInteger(rating) || rating < 1 || rating > 5 || (kind !== 'restaurant' && kind !== 'venue')) {
+        res.writeHead(400); res.end('Body must be { name: string, rating: 1-5 integer, kind: "restaurant"|"venue" }'); return;
+      }
+      const ok = kind === 'restaurant'
+        ? ratePlace(favoriteRawPath, favoritePlacesPath, name, rating)
+        : rateVenue(venuesToFollowPath, name, rating);
+      if (!ok) { res.writeHead(404); res.end(`No ${kind} found named "${name}"`); return; }
+      sendJson(res, 200, { ok: true, name, rating, kind });
       return;
     }
 

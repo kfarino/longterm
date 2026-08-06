@@ -38,25 +38,161 @@ hosted `web_search_20260209` tool.
 
 ---
 
-### Task 1: Recap redesign — structured Budget/Todos/Planning sections
+### Task 1: Recap redesign — structured Budget/Todos/Planning sections, plus refunds
 
 **Files:**
+- Modify: `scripts/budget-tracking-pull.mjs` (new: refund/credit detection on the
+  joint card, feeding a new `tracking.joint.refunds` field)
+- Modify: `scripts/financial-context.mjs` (expose refunds through
+  `loadTransactionDetail`)
 - Modify: `scripts/telegram-bot-recap.mjs`
-- Test: `data/test-telegram-recap.mjs`
+- Test: `data/test-budget-tracking-pull.mjs`, `data/test-telegram-recap.mjs`
 
 **Interfaces:**
 - Consumes: `financialContext.transactions` (array of `{tracker, group, date, merchant,
-  amount}`, already produced by `scripts/financial-context.mjs`'s
-  `loadTransactionDetail`/`loadFinancialContext` — no changes needed there).
+  amount, type?}`, produced by `scripts/financial-context.mjs`'s
+  `loadTransactionDetail`/`loadFinancialContext` — `type: 'refund'` is new this task,
+  present only on refund rows; existing spend rows have no `type` field, unchanged).
   `listOpenItems(todos)` (already imported from `telegram-bot-tools.mjs`, returns
   `{title, owner, dateAdded, deadline, done}[]`).
-- Produces: `gatherBundle()`'s returned object gains `budgetLineItems` (array) and
-  `todosByOwner` (object keyed by owner id, each value an array of
-  `{title, dateAdded, deadline}`); loses `staleTodo` (superseded — the full
-  `todosByOwner` list already carries `dateAdded` for every item, so a separate
-  single-oldest-item field is redundant now).
+- Produces: `tracking.joint.refunds` (array of `{date, merchant, amount, category}`,
+  written by `budget-tracking-pull.mjs`'s main pull, same file/shape convention as
+  `tracking.joint.categories`). `gatherBundle()`'s returned object gains
+  `budgetLineItems` (array), `budgetRefunds` (array), and `todosByOwner` (object keyed
+  by owner id, each value an array of `{title, dateAdded, deadline}`); loses
+  `staleTodo` (superseded — the full `todosByOwner` list already carries `dateAdded`
+  for every item, so a separate single-oldest-item field is redundant now).
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 0: Write the failing test for refund detection**
+
+Real Monarch data confirms the exact filter needed: a card's own statement payment
+(Barclays/Chase paying off the balance) always carries category `"Credit Card
+Payment"` — a genuine merchant refund/credit keeps its original spend category (e.g.
+an Amazon return still shows category `"Shopping"`) and is a positive amount on the
+joint card. Add to `data/test-budget-tracking-pull.mjs`, after the existing tests
+(before the `computeFavoritePlacesHistory` section, or at the end — anywhere at top
+level is fine):
+
+```js
+// --- Refund/credit detection (2026-08-05) ---
+// Reuses the same txn()/JOINT_LABELS fixtures already in this file; refund
+// detection isn't part of refreshFavoritePlaces, so these tests call the main
+// pull's transaction-processing directly via a small re-export the
+// implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
+
+import { detectJointRefunds } from '../scripts/budget-tracking-pull.mjs';
+
+test('detectJointRefunds finds a genuine merchant refund (positive amount, original spend category, joint card)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 'r1', date: '2026-07-20', amount: 39.5, merchant: 'Amazon', category: 'Shopping' }),
+  ], JOINT_LABELS, new Set());
+  assert.equal(refunds.length, 1);
+  assert.equal(refunds[0].merchant, 'Amazon');
+  assert.equal(refunds[0].amount, 39.5);
+  assert.equal(refunds[0].category, 'Shopping');
+});
+
+test('detectJointRefunds excludes the card\'s own statement payment ("Credit Card Payment" category)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 'p1', date: '2026-07-02', amount: 185, merchant: 'Payment Received', category: 'Credit Card Payment' }),
+  ], JOINT_LABELS, new Set());
+  assert.equal(refunds.length, 0);
+});
+
+test('detectJointRefunds excludes travel-category credits (travel has its own separate tracking)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 't1', date: '2026-07-28', amount: 200, merchant: 'Lufthansa', category: 'Travel & Vacation' }),
+  ], JOINT_LABELS, new Set(['travel & vacation']));
+  assert.equal(refunds.length, 0);
+});
+
+test('detectJointRefunds excludes negative-amount (regular spend) and non-joint-card transactions', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 's1', date: '2026-07-20', amount: -39.5, merchant: 'Amazon', category: 'Shopping' }),
+    txn({ id: 's2', date: '2026-07-20', amount: 39.5, merchant: 'Amazon', category: 'Shopping', account: 'Some Personal Card (...1111)' }),
+  ], JOINT_LABELS, new Set());
+  assert.equal(refunds.length, 0);
+});
+```
+
+- [ ] **Step 0b: Run the test to verify it fails**
+
+Run: `node data/test-budget-tracking-pull.mjs`
+Expected: FAIL — `detectJointRefunds` is not exported yet (import error).
+
+- [ ] **Step 0c: Implement refund detection in `budget-tracking-pull.mjs`**
+
+Add this exported function, placed right after `matchFavorite` (before `tierFromAvg`):
+
+```js
+// Refunds/credits (2026-08-05): a positive-amount joint-card transaction
+// that isn't the card's own statement payment ("Credit Card Payment"
+// category — Barclays/Chase paying off the balance, not a merchant
+// crediting money back — confirmed against real Monarch data) or travel
+// (already excluded from the joint budget entirely, same as travel spend —
+// travel refunds would need to reduce a trip's actual instead, out of scope
+// here). spendAmount() deliberately zeroes out any non-negative amount, so
+// this is a separate pass, not part of the main spend-processing loop.
+export function detectJointRefunds(transactions, jointLabels, travelCategoryNames) {
+  const refunds = [];
+  for (const txn of transactions) {
+    const rawAmount = Number(txn.amount);
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) continue;
+    const acct = accountLabel(txn);
+    if (!jointLabels.has(acct)) continue;
+    const catDisplay = categoryName(txn) || 'Uncategorized';
+    const cat = catDisplay.toLowerCase();
+    if (cat === 'credit card payment') continue;
+    if (travelCategoryNames.has(cat)) continue;
+    refunds.push({
+      date: txn.date,
+      merchant: txn.merchant || txn.plaidName || '',
+      amount: Math.round(rawAmount * 100) / 100,
+      category: catDisplay,
+    });
+  }
+  return refunds.sort((a, b) => a.date.localeCompare(b.date));
+}
+```
+
+Then in `main()`, find where `travelCategories` is built (`const travelCategories = new Set(tracking.mapping.travelCategoryNames.map((c) => c.toLowerCase()));`) and, a few lines later where `jointLabels` is built, add immediately after the main `for (const txn of transactions) { ... }` processing loop finishes (i.e., right before the `function bucketsToWeeks` definition, which is itself before the `tracking.personal`/`tracking.joint` assignment block) a call to compute refunds:
+
+```js
+    const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories);
+```
+
+And in the `if (jointLabels.size > 0) { tracking.joint.weeks = ...; tracking.joint.categories = ...; ... }` block, add:
+
+```js
+      tracking.joint.refunds = jointRefunds;
+```
+
+immediately after the `tracking.joint.categories = categoryTotalsToArray(...)` line, inside that same `if` block.
+
+- [ ] **Step 0d: Run the test to verify it passes**
+
+Run: `node data/test-budget-tracking-pull.mjs`
+Expected: `All budget-tracking-pull tests passed.`
+
+- [ ] **Step 0e: Expose refunds through `financial-context.mjs`**
+
+In `scripts/financial-context.mjs`'s `loadTransactionDetail` function, find:
+
+```js
+  addCategories('joint', bt.joint?.categories);
+```
+
+and add immediately after it:
+
+```js
+  for (const txn of bt.joint?.refunds || []) {
+    rows.push({ tracker: 'joint', group: txn.category || 'Refund', date: txn.date, merchant: txn.merchant, amount: txn.amount, type: 'refund' });
+  }
+```
+
+No test file changes needed for this step — `loadTransactionDetail` has no dedicated unit test file today (it's exercised indirectly through the recap and `search_transactions` tests); Step 1 below's new bundle test is what actually verifies this wiring end-to-end.
+
+- [ ] **Step 1: Write the failing tests for the bundle/prompt redesign**
 
 Add to `data/test-telegram-recap.mjs`, after the existing
 `'gathers all signal categories...'` test:
@@ -87,6 +223,36 @@ await asyncTest('bundle includes budgetLineItems: every joint-tracker charge ove
   assert.equal(capturedBundle.budgetLineItems.length, 1, 'only the >$100 charge should be included');
   assert.equal(capturedBundle.budgetLineItems[0].merchant, 'Geico');
   assert.equal(capturedBundle.budgetLineItems[0].amount, 489.26);
+});
+
+await asyncTest('bundle includes budgetRefunds: every joint-tracker refund this cycle, and refunds are excluded from budgetLineItems', async () => {
+  const dir = path.join(tmpRoot, 'budget-refunds');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        weeks: [{ actual: 1000, days: 7 }],
+        cycleDays: 30,
+        categories: [
+          { name: 'Groceries', amount: 45, transactions: [{ date: '2026-07-28', merchant: 'Whole Foods', amount: 45 }] },
+        ],
+        refunds: [
+          { date: '2026-07-29', merchant: 'Amazon', amount: 150.5, category: 'Shopping' },
+        ],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+
+  assert.equal(capturedBundle.budgetRefunds.length, 1);
+  assert.equal(capturedBundle.budgetRefunds[0].merchant, 'Amazon');
+  assert.equal(capturedBundle.budgetRefunds[0].amount, 150.5);
+  assert.equal(capturedBundle.budgetLineItems.length, 0, 'a refund over $100 should not also appear as a budgetLineItems spend line');
 });
 
 await asyncTest('bundle includes todosByOwner: every open item grouped by owner, staleTodo is gone', async () => {
@@ -133,10 +299,22 @@ definitions) with:
 // over $100 this cycle, not just the aggregate pace number — reuses the same
 // financialContext.transactions the interactive bot's search_transactions
 // tool reads (see financial-context.mjs's loadTransactionDetail), so the
-// recap and an ad-hoc "was X charged" question always agree.
+// recap and an ad-hoc "was X charged" question always agree. Explicitly
+// excludes refund rows (type === 'refund') — those get their own
+// budgetRefunds field below, not double-counted as a spend line here.
 function budgetLineItemsOver100(financialContext) {
   return (financialContext.transactions || [])
-    .filter((t) => t.tracker === 'joint' && t.amount > 100)
+    .filter((t) => t.tracker === 'joint' && t.amount > 100 && t.type !== 'refund')
+    .sort((a, b) => b.amount - a.amount);
+}
+
+// Refunds/credits this cycle (2026-08-05) — see budget-tracking-pull.mjs's
+// detectJointRefunds and financial-context.mjs's loadTransactionDetail for
+// where these come from. Kevin: "critical change in recap. I want a line
+// item for refunds."
+function budgetRefundsThisCycle(financialContext) {
+  return (financialContext.transactions || [])
+    .filter((t) => t.tracker === 'joint' && t.type === 'refund')
     .sort((a, b) => b.amount - a.amount);
 }
 
@@ -165,6 +343,7 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
   return {
     budgetStatus: financialContext.budgetStatus,
     budgetLineItems: budgetLineItemsOver100(financialContext),
+    budgetRefunds: budgetRefundsThisCycle(financialContext),
     decisions: financialContext.decisions,
     dining: diningSummary(monthPlanEvents, diningContext),
     todosByOwner: todosByOwner(todos),
@@ -182,8 +361,8 @@ remove it too — check with a grep for other call sites before deleting it).
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `node data/test-telegram-recap.mjs`
-Expected: PASS on the two new tests. The original
-`'gathers all signal categories...'` test will now FAIL (it asserts
+Expected: PASS on the three new tests (budgetLineItems, budgetRefunds, todosByOwner).
+The original `'gathers all signal categories...'` test will now FAIL (it asserts
 `capturedBundle.staleTodo.title` — see Step 5).
 
 - [ ] **Step 5: Update the now-outdated assertion in the existing bundle-contents test**
@@ -203,6 +382,7 @@ with:
   assert.equal(capturedBundle.todosByOwner.kevin[0].title, 'Oldest open item', 'bundle should group every open to-do by owner');
   assert.equal(capturedBundle.todosByOwner.hanna[0].title, 'Newer item');
   assert.deepEqual(capturedBundle.budgetLineItems, [], 'no line item over $100 in the default fixture');
+  assert.deepEqual(capturedBundle.budgetRefunds, [], 'no refunds in the default fixture');
 ```
 
 - [ ] **Step 6: Rewrite the system prompt for the structured format**
@@ -213,7 +393,7 @@ with:
 ```js
 const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
 
-Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely.
+Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
 
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 
@@ -226,18 +406,23 @@ Then, only if there's something notable, add one or two short trailing lines for
 Never mention long-term savings goal progress or percentages — that's a different cadence of update, not part of this one. Do not use markdown formatting (no headers, no bullets, no bold) — plain text with the three section labels as the only structure. Keep the whole message focused; three clear sections plus at most a couple of trailing lines, not a wall of text.`;
 ```
 
-- [ ] **Step 7: Run the full recap test suite**
+- [ ] **Step 7: Run the full recap and budget-tracking-pull test suites**
 
 Run: `node data/test-telegram-recap.mjs`
 Expected: `All tests passed.` (every test, including the ones from earlier tasks this
 session covering dining/calendar/unparsed/plan-change behavior — none of that logic
 changed, only the bundle shape and prompt).
 
+Run: `node data/test-budget-tracking-pull.mjs`
+Expected: `All budget-tracking-pull tests passed.` (includes the new
+`detectJointRefunds` tests from Step 0, plus every existing test — refund detection is
+additive and doesn't touch the existing dedup/spend logic).
+
 - [ ] **Step 8: Commit**
 
 ```bash
-git add scripts/telegram-bot-recap.mjs data/test-telegram-recap.mjs
-git commit -m "Redesign the weekly recap into structured Budget/Todos/Planning sections"
+git add scripts/budget-tracking-pull.mjs scripts/financial-context.mjs scripts/telegram-bot-recap.mjs data/test-budget-tracking-pull.mjs data/test-telegram-recap.mjs
+git commit -m "Redesign the weekly recap into structured Budget/Todos/Planning sections, add a refunds line item"
 ```
 
 ---

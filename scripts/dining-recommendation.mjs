@@ -55,6 +55,18 @@ export function effectiveDiningRoutine(diningRoutine, overrides) {
   });
 }
 
+// A star rating from the dashboard's Dining + Shows tab (see
+// dashboard-server.mjs's ratePlace/rateVenue) is an explicit, direct signal —
+// stronger than the implicit visitStats-derived familiarityScore. 3 stars is
+// neutral (no term added); each star above/below 3 shifts the score by 6, a
+// magnitude comparable to a handful of extra visits under familiarityScore's
+// visitCount term, so a strong rating can meaningfully move the ranking
+// without completely overriding genuine visit history.
+function ratingScore(f) {
+  if (!f.rating) return 0;
+  return (f.rating - 3) * 6;
+}
+
 // visitStats comes from a 2-year historical Monarch backfill (see
 // budget-tracking-pull.mjs's computeFavoritePlacesHistory/refreshFavoritePlaces)
 // and reflects genuine long-term visit frequency — replaces the old pure
@@ -131,7 +143,8 @@ export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHa
       f,
       score: familiarityScore(f)
         - (recentCuisine && f.cuisine === recentCuisine ? 50 : 0)
-        + (f.list === 'go-to' ? 10 : 0),
+        + (f.list === 'go-to' ? 10 : 0)
+        + ratingScore(f),
     }))
     .sort((a, b) => b.score - a.score);
 

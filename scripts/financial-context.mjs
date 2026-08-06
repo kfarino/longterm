@@ -96,6 +96,9 @@ export function loadTransactionDetail(budgetTrackingPath) {
     }
   };
   addCategories('joint', bt.joint?.categories);
+  for (const txn of bt.joint?.refunds || []) {
+    rows.push({ tracker: 'joint', group: txn.category || 'Refund', date: txn.date, merchant: txn.merchant, amount: txn.amount, type: 'refund' });
+  }
   for (const [ownerId, tracker] of Object.entries(bt.personal || {})) {
     addCategories(`personal:${ownerId}`, tracker.categories);
   }

@@ -109,4 +109,31 @@ test('low-key slot still picks randomly among lowKeyHangIdeas, unaffected by sco
   assert.deepEqual(rec.picks, ['Movie night at home']);
 });
 
+test('a 5-star rated place outranks an unrated one, all else equal', () => {
+  const favorites = [
+    { name: 'Unrated', list: 'go-to', cuisine: 'Thai', visitStats: null },
+    { name: 'Five Stars', list: 'go-to', cuisine: 'Italian', visitStats: null, rating: 5 },
+  ];
+  const rec = recommendForSlot(midSlot, favorites, [], [], new Set());
+  assert.equal(rec.picks[0], 'Five Stars');
+});
+
+test('a 1-star rated place ranks below an unrated one, all else equal', () => {
+  const favorites = [
+    { name: 'One Star', list: 'go-to', cuisine: 'Thai', visitStats: null, rating: 1 },
+    { name: 'Unrated', list: 'go-to', cuisine: 'Italian', visitStats: null },
+  ];
+  const rec = recommendForSlot(midSlot, favorites, [], [], new Set());
+  assert.equal(rec.picks[0], 'Unrated');
+});
+
+test('a 3-star rating is neutral — ties with an unrated place, both remain eligible picks', () => {
+  const favorites = [
+    { name: 'Three Star', list: 'go-to', cuisine: 'Thai', visitStats: null, rating: 3 },
+    { name: 'Unrated', list: 'go-to', cuisine: 'Italian', visitStats: null },
+  ];
+  const rec = recommendForSlot(midSlot, favorites, [], [], new Set());
+  assert.equal(rec.picks.length, 2);
+});
+
 console.log('All tests passed.');

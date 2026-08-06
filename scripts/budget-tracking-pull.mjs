@@ -298,6 +298,43 @@ function matchFavorite(merchant, favorites) {
   }) || null;
 }
 
+// Refunds/credits (2026-08-05): a positive-amount joint-card transaction
+// that isn't the card's own statement payment ("Credit Card Payment"
+// category — Barclays/Chase paying off the balance, not a merchant
+// crediting money back — confirmed against real Monarch data) or travel
+// (already excluded from the joint budget entirely, same as travel spend —
+// travel refunds would need to reduce a trip's actual instead, out of scope
+// here). spendAmount() deliberately zeroes out any non-negative amount, so
+// this is a separate pass, not part of the main spend-processing loop.
+// cycleStart (2026-08-05): the main spend-processing loop only counts
+// transactions within the current joint cycle (weekBucket's `b >= 0` guard),
+// but the fetched transaction window can start up to ~24 days earlier than
+// cycleStart (it's min(cycleStart, personalCycleStart), and personalCycleStart
+// is always the 1st of the month while cycleStart is the 25th) — without this
+// filter a refund from the tail end of the PRIOR cycle would leak into "this
+// cycle"'s refunds list. Any transaction dated before cycleStart is skipped.
+export function detectJointRefunds(transactions, jointLabels, travelCategoryNames, cycleStart) {
+  const refunds = [];
+  for (const txn of transactions) {
+    const rawAmount = Number(txn.amount);
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) continue;
+    if (new Date(txn.date) < cycleStart) continue;
+    const acct = accountLabel(txn);
+    if (!jointLabels.has(acct)) continue;
+    const catDisplay = categoryName(txn) || 'Uncategorized';
+    const cat = catDisplay.toLowerCase();
+    if (cat === 'credit card payment') continue;
+    if (travelCategoryNames.has(cat)) continue;
+    refunds.push({
+      date: txn.date,
+      merchant: txn.merchant || txn.plaidName || '',
+      amount: Math.round(rawAmount * 100) / 100,
+      category: catDisplay,
+    });
+  }
+  return refunds.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 function tierFromAvg(avg) {
   if (avg < 40) return 'cheap';
   if (avg <= 90) return 'mid';
@@ -725,6 +762,8 @@ async function main() {
       // Anything else (Ally, Vanguard, Trinet, Ascensus, etc.) isn't a spend card — ignored here.
     }
 
+    const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
+
     function bucketsToWeeks(buckets, refCycleStart) {
       const maxBucket = Math.max(-1, ...buckets.keys());
       const weeks = [];
@@ -762,6 +801,7 @@ async function main() {
     if (jointLabels.size > 0) {
       tracking.joint.weeks = bucketsToWeeks(jointBuckets, cycleStart);
       tracking.joint.categories = categoryTotalsToArray(jointCategoryTotals, jointCategoryTransactions);
+      tracking.joint.refunds = jointRefunds;
       tracking.joint.source = 'monarch';
       tracking.joint.cycleStart = isoDate(cycleStart);
       tracking.joint.cycleDays = 30;

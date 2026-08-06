@@ -75,7 +75,7 @@ Default: do this **before** locking phases. Skip only if they refuse Monarch.
 
 ```env
 MONARCH_EMAIL=their@email.com
-MONARCH_PASSWORD=their-password
+MONARCH_PASSWORD=<password>
 ```
 
 3. Install the Monarch MCP venv: Python 3.12 at `~/.longterm/monarch-mcp-venv`, `pip install monarch-mcp-jamiew==0.4.0`. Paths resolve via `scripts/longterm-paths.mjs`.  
@@ -132,10 +132,10 @@ Skip if not wanted yet.
 2. Write `~\.longterm\telegram.env` (never commit):
 
 ```env
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_GROUP_CHAT_ID=...
+TELEGRAM_BOT_TOKEN=<token from BotFather>
+TELEGRAM_GROUP_CHAT_ID=<group chat id>
 TELEGRAM_BOT_USERNAME=YourBotUsername
-ANTHROPIC_API_KEY=...
+ANTHROPIC_API_KEY=<anthropic api key>
 ```
 
 3. Run `node scripts/telegram-bot-whoami.mjs` or a single poll to verify auth.  

@@ -1,6 +1,10 @@
 # Real household financial data + local runtime state — never commit.
 # Fresh clones: run `npm run seed` (scripts/seed-from-examples.mjs).
 
+# Historical joint CSV (may contain real spend — never commit)
+budget_ledger.csv
+CreditCard_*.csv
+
 # Planning / balances / generated views
 data/accounts.json
 data/budget_tracking.json
@@ -15,6 +19,8 @@ data/month_plan_events.json
 data/favorite_places.json
 data/favorite_places_raw.json
 data/favorite_places_history.json
+data/transactions_ledger.json
+data/transaction_overrides.json
 data/venues_to_follow.json
 data/upcoming_shows_cache.json
 data/calendar-sync-state.json
@@ -26,6 +32,7 @@ data/telegram-owners.json
 data/telegram-offset.json
 data/telegram-conversation-log.jsonl
 data/telegram-pending-clarifications.json
+data/reminders.json
 data/telegram-planning-notes.jsonl
 data/telegram-recap-log.jsonl
 data/telegram-unparsed.jsonl
@@ -39,3 +46,15 @@ data/oura/*
 # real user data, so it's excluded from the blanket ignore.
 data/spotify/*
 !data/spotify/sample-shows.json
+
+# Durable health corrections (household-specific — see AGENTS.md §0)
+data/health_overrides.json
+
+# Local worktrees (superpowers:using-git-worktrees fallback)
+.worktrees/
+
+# Subagent-driven-development scratch workspace (ledgers, briefs, reports)
+.superpowers/
+
+# Claude Code local session/tool state (native worktree management, etc.)
+.claude/

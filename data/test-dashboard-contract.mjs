@@ -45,6 +45,8 @@ await test('at load (no show() calls): budget/goals/decisions populated, positio
   assert.ok(d.elements['pg-goals'].innerHTML.length > 0, 'pg-goals should be populated');
   assert.ok(d.elements['pg-decisions'], 'pg-decisions should have been rendered into');
   assert.ok(d.elements['pg-decisions'].innerHTML.length > 0, 'pg-decisions should be populated');
+  assert.ok(d.elements['pg-dining'], 'pg-dining should have been rendered into');
+  assert.ok(d.elements['pg-dining'].innerHTML.length > 0, 'pg-dining should be populated');
 
   assert.equal(d.elements['pg-position'], undefined, 'pg-position must never be touched before the tab is shown');
   assert.equal(d.elements['sub-status'], undefined, 'sub-status must never be touched before the tab is shown');

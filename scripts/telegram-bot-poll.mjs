@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
 import { runSync as runCalendarSync } from './calendar-sync.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
@@ -34,7 +34,10 @@ function parseArgs(argv) {
     unparsedPath: path.join(repoDataDir, 'telegram-unparsed.jsonl'),
     goalsPath: path.join(repoDataDir, 'goals.json'),
     favoritePlacesPath: path.join(repoDataDir, 'favorite_places.json'),
+    venuesToFollowPath: path.join(repoDataDir, 'venues_to_follow.json'),
+    upcomingShowsCachePath: path.join(repoDataDir, 'upcoming_shows_cache.json'),
     monthPlanEventsPath: path.join(repoDataDir, 'month_plan_events.json'),
+    remindersPath: path.join(repoDataDir, 'reminders.json'),
     budgetTrackingPath: path.join(repoDataDir, 'budget_tracking.json'),
     accountsPath: path.join(repoDataDir, 'accounts.json'),
     routineOverridesPath: path.join(repoDataDir, 'dining-routine-overrides.json'),
@@ -58,7 +61,10 @@ function parseArgs(argv) {
       else if (key === 'unparsed-path') args.unparsedPath = value;
       else if (key === 'goals-path') args.goalsPath = value;
       else if (key === 'favorite-places-path') args.favoritePlacesPath = value;
+      else if (key === 'venues-to-follow-path') args.venuesToFollowPath = value;
+      else if (key === 'upcoming-shows-cache-path') args.upcomingShowsCachePath = value;
       else if (key === 'month-plan-events-path') args.monthPlanEventsPath = value;
+      else if (key === 'reminders-path') args.remindersPath = value;
       else if (key === 'budget-tracking-path') args.budgetTrackingPath = value;
       else if (key === 'accounts-path') args.accountsPath = value;
       else if (key === 'routine-overrides-path') args.routineOverridesPath = value;
@@ -223,6 +229,18 @@ function loadMonthPlanEvents(monthPlanEventsPath) {
   }
 }
 
+// Bot-owned (add_reminder/cancel_reminder), not read/written by anything
+// else. Missing/unparseable degrades to no reminders, same convention as
+// every other loader here.
+function loadReminders(remindersPath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(remindersPath, 'utf8'));
+    return { ...parsed, items: parsed.items || [] };
+  } catch {
+    return { items: [] };
+  }
+}
+
 function readLocalEnv(filePath) {
   const values = {};
   if (!fs.existsSync(filePath)) throw new Error(`Missing env file: ${filePath}`);
@@ -347,7 +365,7 @@ function formatPendingClarification(pendingClarification) {
   return `You previously asked a clarifying question in response to this same conversation: "${pendingClarification.question}" — asked because of their earlier message: "${pendingClarification.originalText}". Decide what their new message below means for that: if it answers your question, call the appropriate tool(s) now using the combined information (don't ask again for something they already told you). If it's still not enough to act safely, ask one more short, specific follow-up question (reply with text only, no tool call). If it's clearly unrelated to your question, ignore the question and just handle the new message on its own.\n\n`;
 }
 
-async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, diningContext, financialContext, recentConversation = [], goals, pendingClarification = null }) {
+async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, reminders, diningContext, financialContext, recentConversation = [], goals, pendingClarification = null }) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -356,12 +374,19 @@ async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, din
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
+      // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
+      // comment on this same fix: claude-sonnet-5 defaults extended thinking
+      // on, and tool selection here doesn't need it; left enabled, thinking
+      // can consume the whole token budget and leave neither a tool_use nor
+      // a text block, degrading every such message to the generic helpText
+      // fallback instead of a real reply.
+      thinking: { type: 'disabled' },
       tools: TOOL_DEFS,
-      system: 'You manage a shared household to-do list, weekly goals, dining plan (family_dinner=Wed, date_night=Fri, weekend_social=Sat by default — see the current dining routine below, since these can be rescheduled), one-off events via add_family_event (kind family=social/spend on Month Plan; kind schedule=appointments Google-Cal-only — classify from the title and pass kind; if ambiguous ask instead of guessing), can answer financial questions (budget pace, savings goals, open decisions), can report what\'s on Kevin\'s and Hanna\'s Google calendars via get_calendar_events (Hanna\'s calendar is shared into Kevin\'s Google account and is already wired for reading — when Hanna asks about her schedule / "my schedule," or Kevin asks about hers, call get_calendar_events; never say you lack access to Hanna\'s calendar; Kevin\'s work calendar is deliberately excluded), and can directly edit the real long-term financial plan (goals.json) over Telegram. The user\'s message is below, along with the current state, today\'s date, and (when available) the last few exchanges in the group — use that recent conversation to resolve references like "that," "it," or unstated context in a follow-up (e.g. if the prior exchange set a specific dining plan and this message says "actually make it 6pm," apply the time to that same plan). Decide which tool (if any) to call. If the message is a question you can answer from the current state without changing anything, call the relevant read-only tool (list_todos, get_dining_plan, get_budget_status, get_savings_goals, get_decisions, get_calendar_events, search_transactions) and answer conversationally in your final text — do not fabricate data not present in the provided state. If asked whether a specific charge/merchant is included in a budget, or for a category\'s individual line items (not just its total), call search_transactions rather than guessing from the aggregate pace numbers alone — it only covers the current cycle, so say so if that is relevant to the answer. Dining plans have two distinct states: a live suggestion (nothing stored, recomputed every time) and a confirmed pick (stored, and eventually pushed to the shared Google Calendar). Only call set_dinner_plan when the user is explicitly confirming or booking a specific choice — never just because they asked what the plan or suggestion is, which is get_dining_plan\'s job. If they mention a time (e.g. "5pm", "7:30") or duration (e.g. "for an hour"), pass them as set_dinner_plan\'s time/durationHours arguments so the Calendar event lands on the right slot instead of a default all-day/2-hour one. For anything that is not one of the 3 dining occasions — an appointment, school event, trip note, dinner with friends, any other one-off — call add_family_event instead, resolving any relative day they gave ("tomorrow", "Thursday", "next Friday") into an explicit YYYY-MM-DD using today\'s date as the anchor; pass kind \"family\" for social/spend plans (shows on Month Plan) or kind \"schedule\" for appointments/logistics (Google Cal only); only pass its time argument if they gave an unambiguous one (explicit AM/PM or 24-hour), since a general event has no "always evening" assumption to fall back on; if they mention it repeats weekly, pass recurrenceWeeks. If they want to reschedule which weekday a routine occasion falls on (e.g. "let\'s move family dinner to Thursdays"), call set_routine_day — this only changes future scheduling, not any already-confirmed plan. Use delete_todo (not mark_done) when the user says a to-do is no longer relevant rather than finished. Use remove_event to cancel a dining plan (by occasion) or a family event (by date, plus a title if more than one event is on that date) — never guess which event they mean if it\'s ambiguous; ask instead. If the message clearly asks for more than one distinct thing (e.g. "add milk to the list and what\'s the budget status"), call more than one tool in this same turn rather than only handling the first. If the message describes a financial/family-planning change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase), call update_phase_expense directly — this REALLY changes the plan, immediately, not a note for later review; use the phases list in context to pick the right phaseId(s) and see current expense labels for renaming. There is no way to store a cost that changes on a future date as a schedule — just set today\'s real current rate, and expect to be asked again when it actually changes. If the ask is narrative rather than a dollar figure (an open question, a decision to track), call log_decision instead. Never just apologize that you can\'t do something financial — one of these two tools almost always applies, and a reasonable default (today\'s date as anchor, a default duration, an existing label) should be used rather than asked about. The one exception: if something you genuinely cannot proceed without is simply absent from the message — no dollar amount at all for a cost change, no way to tell which of several candidates is meant, no indication which phase a change applies to — don\'t guess at it. Reply with a short, specific question naming exactly what\'s missing, and don\'t call any tool yet; you\'ll get the answer as a follow-up message with this same context attached, so you can complete the action then. This is the exception, not the default — most messages have enough to act on immediately. When you reply after taking a real action, only state what you actually did — never invent or promise a review process, notification, or follow-up mechanism that doesn\'t exist; the change already happened, full stop.',
+      system: 'You manage a shared household to-do list, weekly goals, dining plan (family_dinner=Wed, date_night=Fri, weekend_social=Sat by default — see the current dining routine below, since these can be rescheduled), one-off events via add_family_event (kind family=social/spend on Month Plan; kind schedule=appointments Google-Cal-only — classify from the title and pass kind; if ambiguous ask instead of guessing), can answer financial questions (budget pace, savings goals, open decisions), can report what\'s on Kevin\'s and Hanna\'s Google calendars via get_calendar_events (Hanna\'s calendar is shared into Kevin\'s Google account and is already wired for reading — when Hanna asks about her schedule / "my schedule," or Kevin asks about hers, call get_calendar_events; never say you lack access to Hanna\'s calendar; Kevin\'s work calendar is deliberately excluded), and can directly edit the real long-term financial plan (goals.json) over Telegram. The user\'s message is below, along with the current state, today\'s date, and (when available) the last few exchanges in the group — use that recent conversation to resolve references like "that," "it," or unstated context in a follow-up (e.g. if the prior exchange set a specific dining plan and this message says "actually make it 6pm," apply the time to that same plan). Decide which tool (if any) to call. If the message is a question you can answer from the current state without changing anything, call the relevant read-only tool (list_todos, get_dining_plan, get_budget_status, get_savings_goals, get_decisions, get_calendar_events, get_upcoming_shows, search_transactions, list_reminders) and answer conversationally in your final text — do not fabricate data not present in the provided state. If the message asks about upcoming shows, concerts, or comedy nights, call get_upcoming_shows — it checks the household\'s followed venues, not a general search. If asked whether a specific charge/merchant is included in a budget, or for a category\'s individual line items (not just its total), call search_transactions rather than guessing from the aggregate pace numbers alone — it only covers the current cycle, so say so if that is relevant to the answer. Dining plans have two distinct states: a live suggestion (nothing stored, recomputed every time) and a confirmed pick (stored, and eventually pushed to the shared Google Calendar). Only call set_dinner_plan when the user is explicitly confirming or booking a specific choice — never just because they asked what the plan or suggestion is, which is get_dining_plan\'s job. If they mention a time (e.g. "5pm", "7:30") or duration (e.g. "for an hour"), pass them as set_dinner_plan\'s time/durationHours arguments so the Calendar event lands on the right slot instead of a default all-day/2-hour one. For anything that is not one of the 3 dining occasions — an appointment, school event, trip note, dinner with friends, any other one-off — call add_family_event instead, resolving any relative day they gave ("tomorrow", "Thursday", "next Friday") into an explicit YYYY-MM-DD using today\'s date as the anchor; pass kind \"family\" for social/spend plans (shows on Month Plan) or kind \"schedule\" for appointments/logistics (Google Cal only); only pass its time argument if they gave an unambiguous one (explicit AM/PM or 24-hour), since a general event has no "always evening" assumption to fall back on; if they mention it repeats weekly, pass recurrenceWeeks. If they want to reschedule which weekday a routine occasion falls on (e.g. "let\'s move family dinner to Thursdays"), call set_routine_day — this only changes future scheduling, not any already-confirmed plan. Use delete_todo (not mark_done) when the user says a to-do is no longer relevant rather than finished. If the user says "remind me..." or otherwise asks for a reminder, call add_reminder — never add_todo. A to-do sits on the shared Planner list until done; a reminder proactively pings the group once, on its date, and never appears on the Planner list. Use list_reminders for "what reminders do we have" and cancel_reminder to cancel one before it fires (never guess which one if more than one plausibly matches — ask instead, same as remove_event). Use remove_event to cancel a dining plan (by occasion) or a family event (by date, plus a title if more than one event is on that date) — never guess which event they mean if it\'s ambiguous; ask instead. If the message clearly asks for more than one distinct thing (e.g. "add milk to the list and what\'s the budget status"), call more than one tool in this same turn rather than only handling the first. If the message describes a financial/family-planning change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase), call update_phase_expense directly — this REALLY changes the plan, immediately, not a note for later review; use the phases list in context to pick the right phaseId(s) and see current expense labels for renaming. There is no way to store a cost that changes on a future date as a schedule — just set today\'s real current rate, and expect to be asked again when it actually changes. If the ask is narrative rather than a dollar figure (an open question, a decision to track), call log_decision instead. Never just apologize that you can\'t do something financial — one of these two tools almost always applies, and a reasonable default (today\'s date as anchor, a default duration, an existing label) should be used rather than asked about. The one exception: if something you genuinely cannot proceed without is simply absent from the message — no dollar amount at all for a cost change, no way to tell which of several candidates is meant, no indication which phase a change applies to — don\'t guess at it. Reply with a short, specific question naming exactly what\'s missing, and don\'t call any tool yet; you\'ll get the answer as a follow-up message with this same context attached, so you can complete the action then. This is the exception, not the default — most messages have enough to act on immediately. When you reply after taking a real action, only state what you actually did — never invent or promise a review process, notification, or follow-up mechanism that doesn\'t exist; the change already happened, full stop.',
       messages: [
-        { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; expenses shows current monthly figures):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
+        { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nCurrent reminders:\n${JSON.stringify(reminders.items.filter((r) => !r.sent), null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; expenses shows current monthly figures):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
       ],
     }),
   });
@@ -386,6 +411,76 @@ async function getCalendarEventsReply({ days }, calendarReadContext) {
   }
 }
 
+const UPCOMING_SHOWS_SYSTEM_PROMPT = 'You are researching upcoming live shows for a household assistant Telegram bot. You will be given a list of specific venues (name and area) the household follows. Use web search to find real upcoming shows/events at these venues within the given day window from today. Prioritize venues tagged area "westside" first, since the household prefers closer options, but include any real find at any venue. For each finding, report: venue name, act/event name, date, and a source URL. If a venue has nothing found, do not mention it — only report what you actually find. If nothing at all turns up, say so plainly. Keep the reply concise — a short list, not prose paragraphs.';
+
+async function callAnthropicUpcomingShows({ apiKey, venues, days }) {
+  const venueList = venues.map((v) => `${v.name} (${v.area}) — ${v.address}`).join('\n');
+  const today = new Date().toISOString().slice(0, 10);
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
+      // comment on this same fix.
+      thinking: { type: 'disabled' },
+      system: UPCOMING_SHOWS_SYSTEM_PROMPT,
+      // allowed_callers: ['direct'] is required for Haiku 4.5 (2026-08-06) --
+      // it doesn't support "programmatic" tool calling, which web_search's
+      // hosted tool type defaults to requiring; Sonnet/Opus don't need this
+      // but it's harmless to always set.
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8, allowed_callers: ['direct'] }],
+      messages: [{ role: 'user', content: `Venues:\n${venueList}\n\nDay window: next ${days} days from today (${today}).` }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Anthropic API error: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+// get_upcoming_shows is a live external call (a second Anthropic request with
+// the hosted web_search tool, scoped to venues_to_follow.json's venue list) —
+// same category as get_calendar_events, special-cased in the dispatcher
+// rather than a TOOL_IMPL entry. On success, caches the raw findings to disk
+// so the dashboard's Dining + Shows tab can display them without making its
+// own live search; a failed call leaves any existing cache file untouched
+// (stale-but-present beats empty). Degrades to a clear, non-crashing reply on
+// failure so a shows-lookup hiccup never breaks the rest of the bot's
+// replies.
+async function getUpcomingShowsReply({ days }, { apiKey, venuesToFollowPath, upcomingShowsCachePath, showsClient }) {
+  let venuesData;
+  try {
+    venuesData = JSON.parse(fs.readFileSync(venuesToFollowPath, 'utf8'));
+  } catch {
+    return "Don't have a venue list to check yet — data/venues_to_follow.json is missing or unreadable.";
+  }
+  const venues = venuesData.venues || [];
+  if (!venues.length) return 'No venues on the follow list yet.';
+  const resolvedDays = days || 14;
+  try {
+    const client = showsClient || callAnthropicUpcomingShows;
+    const response = await client({ apiKey, venues, days: resolvedDays });
+    const text = (response.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
+    const urls = [];
+    for (const block of response.content || []) {
+      if (block.type !== 'web_search_tool_result' || !Array.isArray(block.content)) continue;
+      for (const result of block.content) {
+        if (result.url && !urls.includes(result.url)) urls.push(result.url);
+      }
+    }
+    writeJson(upcomingShowsCachePath, { fetchedAt: new Date().toISOString(), days: resolvedDays, findings: text ? [{ text, urls }] : [] });
+    if (!text) return "Didn't find anything for the next couple weeks at our followed venues — try again closer to the date.";
+    const sourcesLine = urls.length ? `\n\nSources:\n${urls.slice(0, 6).join('\n')}` : '';
+    return `${text}${sourcesLine}`;
+  } catch (err) {
+    return "Couldn't check upcoming shows right now — try again shortly.";
+  }
+}
+
 const REPHRASE_SYSTEM_PROMPT = 'You are a warm, concise family assistant replying in a Telegram group. You\'ll be given one or more (user message, raw system result) pairs from a single batch of messages that just arrived together. Compose ONE natural reply covering all of them — preserve every concrete fact exactly (names, places, dates, times, dollar amounts, percentages). If the items are all on the same topic, blend them into one flowing reply; if they\'re clearly separate, unrelated asks, address each with its own short sentence or line so nothing gets lost or merged into a confusing run-on — the reader should be able to tell distinct things happened. No markdown, no headers, no repeating back "as an AI," no filler.';
 
 async function callAnthropicRephrase({ apiKey, items }) {
@@ -398,8 +493,11 @@ async function callAnthropicRephrase({ apiKey, items }) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 400,
+      // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
+      // comment on this same fix.
+      thinking: { type: 'disabled' },
       system: REPHRASE_SYSTEM_PROMPT,
       messages: [{ role: 'user', content }],
     }),
@@ -438,7 +536,7 @@ async function naturalizeBatch({ apiKey, items, rephraseClient }) {
   }
 }
 
-async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, diningContext, financialContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient }) {
+async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient }) {
   const rawText = message.text || '';
   const text = stripMention(rawText, botUsername);
 
@@ -452,17 +550,17 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
 
   if (!livePending) {
     const detResult = tryDeterministicParse(text, todos, owner);
-    if (detResult) return { todos: detResult.todos, monthPlanEvents, routineOverrides, goals, reply: detResult.reply, pendingClarification: null };
+    if (detResult) return { todos: detResult.todos, monthPlanEvents, routineOverrides, goals, reminders, reply: detResult.reply, pendingClarification: null };
   }
 
   if (!apiKey && !anthropicClient) {
     appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: 'no_api_key' });
-    return { todos, monthPlanEvents, routineOverrides, goals, reply: helpText(rawText), pendingClarification: livePending };
+    return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: livePending };
   }
 
   try {
     const client = anthropicClient || callAnthropicFallback;
-    const llmResponse = await client({ apiKey, text, todos, monthPlanEvents, diningContext, financialContext, recentConversation, goals, pendingClarification: livePending });
+    const llmResponse = await client({ apiKey, text, todos, monthPlanEvents, reminders, diningContext, financialContext, recentConversation, goals, pendingClarification: livePending });
     // Every tool_use block Claude returned, not just the first — a single
     // message can ask for more than one distinct thing ("add milk to the
     // list and what's the budget status"), and Claude can already express
@@ -477,14 +575,14 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
       const textBlock = llmResponse.content.find((c) => c.type === 'text');
       if (!textBlock) {
         appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: 'no_tool_or_text' });
-        return { todos, monthPlanEvents, routineOverrides, goals, reply: helpText(rawText), pendingClarification: null };
+        return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: null };
       }
       // No tool called at all — Claude is asking a (further) clarifying
       // question rather than guessing. originalText anchors back to
       // whatever first triggered this exchange, not just this latest reply,
       // so a multi-round clarification doesn't lose the original ask.
       return {
-        todos, monthPlanEvents, routineOverrides, goals,
+        todos, monthPlanEvents, routineOverrides, goals, reminders,
         reply: textBlock.text,
         pendingClarification: { question: textBlock.text, originalText: livePending ? livePending.originalText : rawText, askedAt: now.toISOString() },
       };
@@ -494,12 +592,17 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     let newMonthPlanEvents = monthPlanEvents;
     let newRoutineOverrides = routineOverrides;
     let newGoals = goals;
+    let newReminders = reminders;
     const rawReplies = [];
     let stillNeedsClarification = null;
 
     for (const toolUse of toolUses) {
       if (toolUse.name === 'get_calendar_events') {
         rawReplies.push(await getCalendarEventsReply(toolUse.input, calendarReadContext));
+        continue;
+      }
+      if (toolUse.name === 'get_upcoming_shows') {
+        rawReplies.push(await getUpcomingShowsReply(toolUse.input, { apiKey, venuesToFollowPath, upcomingShowsCachePath, showsClient }));
         continue;
       }
       const impl = TOOL_IMPL[toolUse.name];
@@ -537,6 +640,11 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         // this just records what changed and when so it's never a mystery
         // looking back, same reasoning as every git commit message.
         appendGoalsChangelog(goalsChangelogPath, { at: new Date().toISOString(), sender: owner, tool: toolUse.name, input: toolUse.input, reply: result.reply });
+      } else if (REMINDER_TOOL_NAMES.has(toolUse.name)) {
+        const result = impl(newReminders, toolUse.input, owner);
+        newReminders = result.reminders;
+        rawReplies.push(result.reply);
+        if (result.needsClarification) stillNeedsClarification = result.reply;
       } else if (FINANCIAL_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(financialContext, toolUse.input);
         rawReplies.push(result.reply);
@@ -549,7 +657,7 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
 
     if (!rawReplies.length) {
       // every tool_use in this turn was unrecognized
-      return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reply: helpText(rawText), pendingClarification: null };
+      return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, reply: helpText(rawText), pendingClarification: null };
     }
 
     // A tool call itself hit an ambiguity it can't resolve (e.g.
@@ -558,16 +666,16 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     // all, so the next message resolves it instead of dead-ending.
     if (stillNeedsClarification) {
       return {
-        todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals,
+        todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders,
         reply: rawReplies.join('\n'),
         pendingClarification: { question: stillNeedsClarification, originalText: livePending ? livePending.originalText : rawText, askedAt: now.toISOString() },
       };
     }
 
-    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reply: rawReplies.join('\n'), pendingClarification: null };
+    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, reply: rawReplies.join('\n'), pendingClarification: null };
   } catch (err) {
     appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: `llm_error:${err.message}` });
-    return { todos, monthPlanEvents, routineOverrides, goals, reply: helpText(rawText), pendingClarification: livePending };
+    return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: livePending };
   }
 }
 
@@ -610,6 +718,8 @@ export async function runOnce(opts) {
   const goalsSnapshot = JSON.stringify(goals);
   let pendingClarifications = loadPendingClarifications(args.pendingClarificationsPath);
   const pendingClarificationsSnapshot = JSON.stringify(pendingClarifications);
+  let reminders = loadReminders(args.remindersPath);
+  const remindersSnapshot = JSON.stringify(reminders);
   const now = args.now || new Date();
   const calendarReadContext = loadCalendarReadContext(args);
   const calendarEventsForDining = await loadCalendarEventsForDining(calendarReadContext);
@@ -639,7 +749,7 @@ export async function runOnce(opts) {
 
     try {
       const result = await dispatchMessage({
-        message, owner, todos, monthPlanEvents, routineOverrides, goals, diningContext, financialContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient,
+        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient,
       });
       todos = result.todos;
       monthPlanEvents = result.monthPlanEvents;
@@ -649,6 +759,7 @@ export async function runOnce(opts) {
       // message in the very same batch, not just the next poll cycle.
       routineOverrides = result.routineOverrides;
       goals = result.goals;
+      reminders = result.reminders;
       // Same load-mutate-writeback pattern as everything else above — a
       // second message from the same sender later in this very same batch
       // already sees the first one's pending question (or its resolution),
@@ -754,11 +865,20 @@ export async function runOnce(opts) {
     writeJson(args.pendingClarificationsPath, pendingClarifications);
   }
 
+  // Bot-owned reminder store -- same atomic write as every other state file
+  // here. Delivery (scanning for due reminders and sending them) is a
+  // separate daily job (telegram-bot-reminders.mjs); this poller only ever
+  // creates/lists/cancels.
+  const remindersChanged = JSON.stringify(reminders) !== remindersSnapshot;
+  if (remindersChanged && !args.dryRun) {
+    writeJson(args.remindersPath, reminders);
+  }
+
   if (maxSafeUpdateId != null && !args.dryRun) {
     saveOffset(args.offsetPath, maxSafeUpdateId + 1);
   }
 
-  return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications };
+  return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, remindersChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications, reminders };
 }
 
 // Runs as the last step of the same scheduled task, right after the poll —

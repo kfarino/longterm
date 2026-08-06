@@ -82,12 +82,6 @@ function isoDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function daysAgo(dateStr, now) {
-  const today = new Date(now); today.setHours(0, 0, 0, 0);
-  const then = new Date(dateStr); then.setHours(0, 0, 0, 0);
-  return Math.floor((today - then) / 86400000);
-}
-
 // Sunday/Thursday are this recap's only real cadence (see the scheduled
 // task); any other day is an ad-hoc/manual/test run and still gets a slot
 // label, just not one that collides with a real cadence day's dedup entry.
@@ -139,15 +133,40 @@ function loadRecentPlanChanges(goalsChangelogPath) {
   }
 }
 
-// The single oldest still-open family to-do, if any — the recap's cue for
-// "this has been sitting a while," not a full list (list_todos/the dashboard
-// already cover that; the recap should only ever surface the one item worth
-// nudging about).
-function oldestStaleTodo(todos, now) {
-  const open = listOpenItems(todos);
-  if (!open.length) return null;
-  const oldest = open.reduce((a, b) => (daysAgo(a.dateAdded, now) >= daysAgo(b.dateAdded, now) ? a : b));
-  return { title: oldest.title, owner: oldest.owner, daysOld: daysAgo(oldest.dateAdded, now) };
+// Budget section (2026-08-05 recap redesign): every joint-tracker line item
+// over $100 this cycle, not just the aggregate pace number — reuses the same
+// financialContext.transactions the interactive bot's search_transactions
+// tool reads (see financial-context.mjs's loadTransactionDetail), so the
+// recap and an ad-hoc "was X charged" question always agree. Explicitly
+// excludes refund rows (type === 'refund') — those get their own
+// budgetRefunds field below, not double-counted as a spend line here.
+function budgetLineItemsOver100(financialContext) {
+  return (financialContext.transactions || [])
+    .filter((t) => t.tracker === 'joint' && t.amount > 100 && t.type !== 'refund')
+    .sort((a, b) => b.amount - a.amount);
+}
+
+// Refunds/credits this cycle (2026-08-05) — see budget-tracking-pull.mjs's
+// detectJointRefunds and financial-context.mjs's loadTransactionDetail for
+// where these come from. Kevin: "critical change in recap. I want a line
+// item for refunds."
+function budgetRefundsThisCycle(financialContext) {
+  return (financialContext.transactions || [])
+    .filter((t) => t.tracker === 'joint' && t.type === 'refund')
+    .sort((a, b) => b.amount - a.amount);
+}
+
+// Todos section (2026-08-05 recap redesign): every open item, grouped by
+// owner — replaces the single-oldest-item summary (oldestStaleTodo), since
+// each item already carries dateAdded and the LLM can note aging within the
+// full list rather than needing a separate flagged field.
+function todosByOwner(todos) {
+  const grouped = {};
+  for (const item of listOpenItems(todos)) {
+    if (!grouped[item.owner]) grouped[item.owner] = [];
+    grouped[item.owner].push({ title: item.title, dateAdded: item.dateAdded, deadline: item.deadline });
+  }
+  return grouped;
 }
 
 const EMPTY_ROUTINE_OVERRIDES = { family_dinner: null, date_night: null, weekend_social: null };
@@ -216,19 +235,33 @@ function diningSummary(monthPlanEvents, diningContext) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, now, unparsedMessages, calendarSummary, recentPlanChanges }) {
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges }) {
   return {
     budgetStatus: financialContext.budgetStatus,
+    budgetLineItems: budgetLineItemsOver100(financialContext),
+    budgetRefunds: budgetRefundsThisCycle(financialContext),
     decisions: financialContext.decisions,
     dining: diningSummary(monthPlanEvents, diningContext),
-    staleTodo: oldestStaleTodo(todos, now),
+    todosByOwner: todosByOwner(todos),
     unparsedMessages,
     calendarSummary,
     recentPlanChanges,
   };
 }
 
-const RECAP_SYSTEM_PROMPT = `Compose one natural, varied weekly recap message for a household Telegram group (Kevin & Hanna). This recap's main practical purpose is getting this week's dining plans confirmed: each entry in the dining field below (family dinner/date night/weekend social) has a date and reply text describing one of three states — an already-confirmed pick, a live suggestion that hasn't been booked yet, or a note that the slot already looks covered by something on a personal calendar (get_dining_plan checks this itself before generating any suggestion, so this is already decided, not something you need to work out). For a live suggestion, call it out clearly and prompt for a quick reply confirming it (or naming something else) — an unconfirmed dining slot is the single most actionable ask in a typical week, since only a confirmed pick gets pushed to the shared Google Calendar. A "looks already covered" note is a different state, not an unconfirmed suggestion — mention it briefly in passing, don't push for a booking reply on it the way you would a live suggestion. Also cover, when there's something worth saying: budget pace, any urgent decision needing attention, and the single oldest open family to-do if it's been sitting a while — supporting context, not the main ask. This recap is scoped to the current week only — never mention long-term savings goal progress or percentages (that's a different cadence of update, not part of this one). When you mention budget pace, always state the actual dollar figures — amount logged so far, the projected cycle total, and the target (e.g. "$1,270 logged, projected $5,442 vs a $5,500 target") — never a bare adjective like "tracking fine" with no numbers behind it. calendarSummary lists what's on Kevin's personal and Hanna's Google calendars for the coming week, each line tagged "(recurring)" if it's part of a recurring series and otherwise a one-off (null if calendar reading isn't configured yet). Always name any non-recurring event on either calendar this week, by whose calendar it's on and its date — a one-off is the kind of thing worth advance awareness of, unlike a recurring event which doesn't need repeating every week; skip this only if calendarSummary is null or genuinely nothing is on either calendar. If unparsedMessages is non-empty, someone sent the bot something it couldn't understand since the last recap — mention briefly that there are unprocessed messages worth resending or rephrasing (one line is enough; don't quote all of them verbatim). If recentPlanChanges.count is non-zero, the bot directly edited the real financial plan (a cost update, a new decision logged, etc.) since the last recap — mention briefly what changed (using recentPlanChanges.recent for a hint of what, not a full readout), since Kevin/Hanna may not have seen it happen live. Weight your attention to what's actually notable this week — a quiet week (everything already confirmed or covered, nothing overspent, nothing unparsed, nothing notable on the calendars, no recent plan changes) should read short and light; an unconfirmed dining slot, an overspend, an urgent decision, a to-do that's aged, unparsed messages, a non-recurring calendar event, or a recent plan change should get more attention. Do not use a rigid template, headers, or mechanically bullet every category — write like a person giving a quick, friendly update, and skip categories with nothing notable to report. Keep it under ~180 words. Plain text only, no markdown.`;
+const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
+
+Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
+
+Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
+
+Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick or a "looks already covered" note is just mentioned in passing, not pushed for a reply.
+
+After the three sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
+
+Then, only if there's something notable, add one or two short trailing lines for: an urgent open decision (decisions, only flag one with status "urgent" — don't list every open decision), a non-recurring event on either Google calendar this week (calendarSummary — name whose calendar and the date; skip if calendarSummary is null or nothing non-recurring is on either calendar), unprocessed messages since the last recap (unparsedMessages — one line, don't quote them all verbatim), or a recent direct edit to the real financial plan (recentPlanChanges — if count is non-zero, mention briefly what changed using recentPlanChanges.recent as a hint). Skip any of these four with nothing to report — don't force a line just to fill space.
+
+Never mention long-term savings goal progress or percentages — that's a different cadence of update, not part of this one. Do not use markdown formatting (no headers, no bullets, no bold) — plain text with the three section labels as the only structure. Keep the whole message focused; three clear sections plus at most a couple of trailing lines, not a wall of text.`;
 
 async function callAnthropicRecap({ apiKey, bundle }) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -239,8 +272,15 @@ async function callAnthropicRecap({ apiKey, bundle }) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
+      // Explicitly disabled (2026-08-06): claude-sonnet-5 defaults extended
+      // thinking on even when not requested, and this templated composition
+      // task doesn't need it -- left enabled, thinking consumed the entire
+      // 512-token budget with stop_reason "max_tokens" and produced NO text
+      // block at all, silently killing the Thu/Sun recap (confirmed live:
+      // the 9am scheduled run and a manual re-run both hit this).
+      thinking: { type: 'disabled' },
       system: RECAP_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: JSON.stringify(bundle, null, 2) }],
     }),
@@ -312,7 +352,7 @@ export async function runOnce(opts) {
 
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, now, unparsedMessages, calendarSummary, recentPlanChanges });
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });
