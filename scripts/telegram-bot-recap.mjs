@@ -274,6 +274,13 @@ async function callAnthropicRecap({ apiKey, bundle }) {
     body: JSON.stringify({
       model: 'claude-sonnet-5',
       max_tokens: 512,
+      // Explicitly disabled (2026-08-06): claude-sonnet-5 defaults extended
+      // thinking on even when not requested, and this templated composition
+      // task doesn't need it -- left enabled, thinking consumed the entire
+      // 512-token budget with stop_reason "max_tokens" and produced NO text
+      // block at all, silently killing the Thu/Sun recap (confirmed live:
+      // the 9am scheduled run and a manual re-run both hit this).
+      thinking: { type: 'disabled' },
       system: RECAP_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: JSON.stringify(bundle, null, 2) }],
     }),
