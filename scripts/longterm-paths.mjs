@@ -24,3 +24,16 @@ export function monarchMcpExePath() {
   const exe = process.platform === 'win32' ? 'monarch-mcp-jamiew.exe' : 'monarch-mcp-jamiew';
   return path.join(longtermHome(), 'monarch-mcp-venv', process.platform === 'win32' ? 'Scripts' : 'bin', exe);
 }
+
+export function spotifyAppEnvPath() {
+  return path.join(longtermHome(), 'spotify-app.env');
+}
+
+/** Per-owner Spotify OAuth tokens — ownerId matches goals.owners[].id */
+export function spotifyOwnerEnvPath(ownerId) {
+  if (!ownerId || /[^a-z0-9_-]/i.test(ownerId)) {
+    throw new Error(`Invalid Spotify owner id: ${ownerId}`);
+  }
+  return path.join(longtermHome(), `spotify-${ownerId}.env`);
+}
+

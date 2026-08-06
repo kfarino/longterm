@@ -7,6 +7,10 @@
     "dev": "node scripts/dashboard-server.mjs",
     "seed": "node scripts/seed-from-examples.mjs",
     "build": "node data/build-data.mjs && node data/build-goal-plan-md.mjs",
+    "spotify:auth": "node scripts/spotify-auth-setup.mjs",
+    "spotify:pull": "node scripts/spotify-pull.mjs",
+    "spotify:find-shows": "node scripts/spotify-find-shows.mjs",
+    "shows:pull": "node scripts/upcoming-shows-pull.mjs",
     "check:secrets": "node scripts/check-no-secrets.mjs"
   }
 }

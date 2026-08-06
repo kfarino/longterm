@@ -1236,10 +1236,14 @@ function eligibleFavorites(places, tag) {
 
 function showsFindingsHTML(cache) {
   if (!cache.findings.length) {
-    return `<div class="callout">Nothing cached yet — ask the bot about upcoming shows in Telegram to populate this.</div>`;
+    return `<div class="callout">Nothing cached yet — run <code>npm run spotify:find-shows</code> or ask the bot about upcoming shows.</div>`;
   }
   const fetchedLabel = cache.fetchedAt ? new Date(cache.fetchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-  const findingsHTML = cache.findings.map((f) => `<div class="drow"><div class="drow-name" style="white-space:pre-wrap">${f.text}</div></div>`).join('');
+  const findingsHTML = cache.findings.map((f) => {
+    const label = f.label === 'spotify' ? 'From your Spotify follows' : f.label === 'venues' ? 'At followed venues' : '';
+    const header = label ? `<div class="callout" style="margin-bottom:6px">${label}</div>` : '';
+    return `${header}<div class="drow"><div class="drow-name" style="white-space:pre-wrap">${f.text}</div></div>`;
+  }).join('');
   return `<div class="callout">Last checked ${fetchedLabel} (next ${cache.days} days)</div>${findingsHTML}`;
 }
 
