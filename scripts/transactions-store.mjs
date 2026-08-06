@@ -192,3 +192,50 @@ export function ledgerHasRows(ledgerPath = defaultLedgerPath()) {
   const ledger = loadLedger(ledgerPath);
   return Object.keys(ledger.byId || {}).length > 0;
 }
+
+/** Re-route matching ledger rows after a one-off reassignment is saved. */
+export function applyReassignmentToLedger(ledgerPath, { merchantMatch, date, reassignTo }) {
+  const ledger = loadLedger(ledgerPath);
+  if (!ledger.byId) return 0;
+  const needle = (merchantMatch || '').toLowerCase();
+  let n = 0;
+  for (const row of Object.values(ledger.byId)) {
+    if (row.date !== date) continue;
+    if (!(row.merchant || '').toLowerCase().includes(needle)) continue;
+    if (reassignTo === 'joint') {
+      row.tracker = 'joint';
+      row.ownerId = null;
+    } else if (reassignTo === 'travel') {
+      row.tracker = 'travel';
+      row.ownerId = null;
+    } else {
+      row.tracker = 'personal';
+      row.ownerId = reassignTo;
+    }
+    n += 1;
+  }
+  if (n) {
+    ledger.meta.transactionCount = Object.keys(ledger.byId).length;
+    writeJson(ledgerPath, ledger);
+  }
+  return n;
+}
+
+/** Re-label matching ledger rows after a standing category rule is saved. */
+export function applyCategoryRuleToLedger(ledgerPath, { merchantMatch, category }) {
+  const ledger = loadLedger(ledgerPath);
+  if (!ledger.byId) return 0;
+  const needle = (merchantMatch || '').toLowerCase();
+  let n = 0;
+  for (const row of Object.values(ledger.byId)) {
+    if (!(row.merchant || '').toLowerCase().includes(needle)) continue;
+    row.category = category;
+    row.group = category;
+    n += 1;
+  }
+  if (n) {
+    ledger.meta.transactionCount = Object.keys(ledger.byId).length;
+    writeJson(ledgerPath, ledger);
+  }
+  return n;
+}

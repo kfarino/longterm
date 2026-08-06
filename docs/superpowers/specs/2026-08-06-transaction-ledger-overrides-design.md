@@ -12,7 +12,7 @@
 
 - SQLite / FastAPI rewrite  
 - Changing how `budget_tracking.json` cycle *views* are built (still regenerated each pull)  
-- Bot UI to edit overrides (hand-edit JSON for now)
+- Bot UI to edit overrides — **done**: Telegram tools `list_spend_overrides`, `add_tracker_reassignment`, `add_category_rule` (patches ledger for immediate search; cycle totals on next pull)
 
 ## Files
 

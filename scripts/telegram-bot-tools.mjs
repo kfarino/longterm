@@ -490,6 +490,90 @@ export function log_decision(goals, { title, summary, status }) {
   return { goals, reply: `Added ✓ to the plan's open decisions: "${title.trim()}".` };
 }
 
+// --- Spend overrides (transaction_overrides.json) ---
+// Durable routing/category fixes that survive the daily Monarch rebuild.
+// budget_tracking.json / transactions_ledger.json must NOT be hand-edited;
+// these tools write the override file the pull reapplies every morning.
+// Caller persists overrides + patches the ledger so search_transactions
+// reflects the change immediately; cycle totals refresh on the next pull.
+
+export function list_spend_overrides(overrides) {
+  const rules = overrides.categoryRules || [];
+  const reassigns = overrides.reassignments || [];
+  if (!rules.length && !reassigns.length) {
+    return { overrides, reply: 'No spend overrides yet. Say e.g. "count that Sora lunch as joint" or "always categorize Anthropic as Subscriptions".' };
+  }
+  const lines = [];
+  if (reassigns.length) {
+    lines.push('One-off tracker reassignments (merchant + exact date):');
+    for (const r of reassigns) {
+      lines.push(`- "${r.merchantMatch}" on ${r.date} → ${r.reassignTo}${r.note ? ` (${r.note})` : ''}`);
+    }
+  }
+  if (rules.length) {
+    lines.push('Standing category rules (merchant substring):');
+    for (const r of rules) {
+      lines.push(`- "${r.merchantMatch}" → ${r.category}`);
+    }
+  }
+  return { overrides, reply: lines.join('\n') };
+}
+
+export function add_tracker_reassignment(overrides, { merchantMatch, date, reassignTo, note }) {
+  if (!merchantMatch || !String(merchantMatch).trim()) {
+    return { overrides, reply: "Couldn't add that — need a merchant name substring to match." };
+  }
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { overrides, reply: "Couldn't add that — need the charge's exact date (YYYY-MM-DD)." };
+  }
+  if (!reassignTo || !String(reassignTo).trim()) {
+    return { overrides, reply: 'Couldn\'t add that — need reassignTo: "joint", "travel", or a personal owner id (e.g. kevin, hanna).' };
+  }
+  const entry = {
+    merchantMatch: String(merchantMatch).trim().toLowerCase(),
+    date,
+    reassignTo: String(reassignTo).trim(),
+    ...(note && String(note).trim() ? { note: String(note).trim() } : {}),
+  };
+  if (!overrides.reassignments) overrides.reassignments = [];
+  const existing = overrides.reassignments.findIndex(
+    (r) => r.merchantMatch === entry.merchantMatch && r.date === entry.date,
+  );
+  if (existing >= 0) overrides.reassignments[existing] = { ...overrides.reassignments[existing], ...entry };
+  else overrides.reassignments.push(entry);
+  if (!overrides.meta) overrides.meta = {};
+  overrides.meta.lastUpdated = new Date().toISOString().slice(0, 10);
+  return {
+    overrides,
+    reply: `Saved ✓ "${entry.merchantMatch}" on ${entry.date} → ${entry.reassignTo}. Search reflects it now; joint/personal totals refresh on the next budget pull.`,
+    ledgerPatch: { type: 'reassignment', ...entry },
+  };
+}
+
+export function add_category_rule(overrides, { merchantMatch, category }) {
+  if (!merchantMatch || !String(merchantMatch).trim()) {
+    return { overrides, reply: "Couldn't add that — need a merchant name substring." };
+  }
+  if (!category || !String(category).trim()) {
+    return { overrides, reply: "Couldn't add that — need a category name (e.g. \"Subscriptions\", \"Restaurants & Bars\")." };
+  }
+  const entry = {
+    merchantMatch: String(merchantMatch).trim().toLowerCase(),
+    category: String(category).trim(),
+  };
+  if (!overrides.categoryRules) overrides.categoryRules = [];
+  const existing = overrides.categoryRules.findIndex((r) => r.merchantMatch === entry.merchantMatch);
+  if (existing >= 0) overrides.categoryRules[existing] = entry;
+  else overrides.categoryRules.push(entry);
+  if (!overrides.meta) overrides.meta = {};
+  overrides.meta.lastUpdated = new Date().toISOString().slice(0, 10);
+  return {
+    overrides,
+    reply: `Saved ✓ always categorize merchants matching "${entry.merchantMatch}" as "${entry.category}". Search reflects it now; category totals refresh on the next budget pull.`,
+    ledgerPatch: { type: 'category', ...entry },
+  };
+}
+
 // --- Reminders (2026-08-05) ---
 // A one-off timed nudge the bot proactively announces once, on its date --
 // NOT a persistent household chore (see todos.json's own family-only scope).
@@ -663,6 +747,13 @@ export const ROUTINE_OVERRIDE_TOOL_NAMES = new Set(['set_routine_day']);
 // doc, and appends to goals-changelog.jsonl.
 export const GOALS_TOOL_NAMES = new Set(['update_phase_expense', 'log_decision']);
 
+// Durable spend routing — data/transaction_overrides.json (not budget_tracking).
+export const SPEND_OVERRIDE_TOOL_NAMES = new Set([
+  'list_spend_overrides',
+  'add_tracker_reassignment',
+  'add_category_rule',
+]);
+
 // Tool definitions in Anthropic Messages API shape, for the LLM-fallback
 // path. Kept alongside the implementations so the two can't drift apart
 // (a new tool always needs both an entry here and a case in TOOL_IMPL).
@@ -811,7 +902,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_budget_status',
-    description: 'Report joint and Kevin-personal budget pace this cycle (logged/projected vs target, on or over pace), plus travel trip actuals vs budgeted.',
+    description: 'Report joint and personal (per-owner) budget pace this cycle (logged/projected vs target, on or over pace), plus travel trip actuals vs budgeted.',
     input_schema: { type: 'object', properties: {} },
   },
   {
@@ -826,7 +917,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'search_transactions',
-    description: 'Look up individual transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge" or "what\'s in joint dining". Uses the local accumulating ledger when available (default last ~90 days; pass startDate/endDate for a wider or older window). Falls back to the current budget cycle only if the ledger has not been built yet. Surfaces refunds/credits distinctly.',
+    description: 'Look up individual transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge" or "what\'s in joint dining". Uses the local accumulating ledger when available (default last ~90 days; pass startDate/endDate for a wider or older window). Falls back to the current budget cycle only if the ledger has not been built yet. Surfaces refunds/credits distinctly. Do NOT invent line items — only report what this tool returns.',
     input_schema: {
       type: 'object',
       properties: {
@@ -835,6 +926,37 @@ export const TOOL_DEFS = [
         startDate: { type: 'string', description: 'Optional YYYY-MM-DD inclusive start of search window (ledger only).' },
         endDate: { type: 'string', description: 'Optional YYYY-MM-DD inclusive end of search window (ledger only).' },
       },
+    },
+  },
+  {
+    name: 'list_spend_overrides',
+    description: 'List durable spend overrides (one-off tracker reassignments and standing merchant→category rules) that survive the daily Monarch pull.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'add_tracker_reassignment',
+    description: 'When a specific charge landed on the wrong tracker (e.g. family lunch on a personal card that should count as joint), save a durable one-off override: merchant substring + exact date + reassignTo. Survives daily pulls. Prefer this over apologizing that you cannot fix routing. Resolve the date from search_transactions or the user\'s message (YYYY-MM-DD).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        merchantMatch: { type: 'string', description: 'Case-insensitive substring of the merchant name (e.g. "sora").' },
+        date: { type: 'string', description: 'Exact transaction date YYYY-MM-DD.' },
+        reassignTo: { type: 'string', description: '"joint", "travel", or a personal owner id from goals.owners (e.g. "kevin", "hanna").' },
+        note: { type: 'string', description: 'Short reason for the audit trail.' },
+      },
+      required: ['merchantMatch', 'date', 'reassignTo'],
+    },
+  },
+  {
+    name: 'add_category_rule',
+    description: 'Standing rule: always categorize merchants matching a substring as a given category (e.g. Anthropic → Subscriptions). Survives daily pulls.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        merchantMatch: { type: 'string', description: 'Case-insensitive merchant substring.' },
+        category: { type: 'string', description: 'Category label to apply (e.g. "Subscriptions", "Restaurants & Bars").' },
+      },
+      required: ['merchantMatch', 'category'],
     },
   },
   {
@@ -923,6 +1045,17 @@ export const TOOL_IMPL = {
     tracker: args.tracker,
     startDate: args.startDate,
     endDate: args.endDate,
+  }),
+  list_spend_overrides: (overrides) => list_spend_overrides(overrides),
+  add_tracker_reassignment: (overrides, args) => add_tracker_reassignment(overrides, {
+    merchantMatch: args.merchantMatch,
+    date: args.date,
+    reassignTo: args.reassignTo,
+    note: args.note,
+  }),
+  add_category_rule: (overrides, args) => add_category_rule(overrides, {
+    merchantMatch: args.merchantMatch,
+    category: args.category,
   }),
   add_family_event: (monthPlanEvents, args) => add_family_event(monthPlanEvents, { date: args.date, title: args.title, time: args.time, recurrenceWeeks: args.recurrenceWeeks, durationHours: args.durationHours, kind: args.kind }),
   set_routine_day: (overrides, args) => set_routine_day(overrides, { occasion: args.occasion, dayOfWeek: args.dayOfWeek }),

@@ -122,6 +122,11 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   if (conversationLog) fs.writeFileSync(conversationLogPath, conversationLog.map((e) => JSON.stringify(e)).join('\n') + '\n');
   if (pendingClarifications) fs.writeFileSync(pendingClarificationsPath, JSON.stringify(pendingClarifications, null, 2));
   fs.writeFileSync(remindersPath, JSON.stringify({ meta: { description: 'test' }, items: reminders || [] }, null, 2));
+  fs.writeFileSync(path.join(dir, 'transaction_overrides.json'), JSON.stringify({
+    meta: { lastUpdated: null },
+    categoryRules: [],
+    reassignments: [],
+  }, null, 2));
   return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath, remindersPath };
 }
 
@@ -153,6 +158,7 @@ function baseOpts(paths, extra = {}) {
     // Nonexistent ledger in the fixture dir so tests exercise budget_tracking
     // fallback — not this machine's real accumulating ledger.
     ledgerPath: path.join(path.dirname(paths.todosPath), 'no-such-transactions_ledger.json'),
+    transactionOverridesPath: path.join(path.dirname(paths.todosPath), 'transaction_overrides.json'),
     routineOverridesPath: paths.routineOverridesPath,
     conversationLogPath: paths.conversationLogPath,
     goalsChangelogPath: paths.goalsChangelogPath,
@@ -1321,6 +1327,34 @@ await asyncTest('search_transactions: a refund-type row renders distinguishably 
   const reply = result.sentReplies[0];
   assert.ok(reply.includes('Amazon — +$40 (refund) on 2026-07-30'), 'a refund row should be prefixed with + and marked (refund)');
   assert.ok(reply.includes('Geico — $489 on 2026-07-26'), 'a spend row should render unchanged, with no refund marker');
+});
+
+await asyncTest('add_tracker_reassignment: persists a durable override and confirms', async () => {
+  const dir = path.join(tmpRoot, 'spend-override-reassignment');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot count that Sora lunch as joint' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_tracker_reassignment', input: { merchantMatch: 'sora', date: '2026-08-01', reassignTo: 'joint', note: 'family lunch' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, dryRun: false }));
+  assert.ok(result.sentReplies[0].includes('Saved ✓'), 'should confirm the override was saved');
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'transaction_overrides.json'), 'utf8'));
+  assert.equal(saved.reassignments.length, 1);
+  assert.equal(saved.reassignments[0].reassignTo, 'joint');
+  assert.equal(saved.reassignments[0].date, '2026-08-01');
+});
+
+await asyncTest('list_spend_overrides: reports empty state clearly', async () => {
+  const dir = path.join(tmpRoot, 'spend-override-list-empty');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot what spend overrides do we have?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'list_spend_overrides', input: {} }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.ok(result.sentReplies[0].includes('No spend overrides yet'));
 });
 
 // --- get_calendar_events (Kevin personal + Hanna's Google Calendars, read-only) ---
