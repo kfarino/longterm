@@ -15,6 +15,16 @@ import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { monarchEnvPath, monarchMcpExePath } from './longterm-paths.mjs';
+import {
+  LEDGER_OVERLAP_DAYS,
+  defaultLedgerPath,
+  defaultOverridesPath,
+  loadOrCreateOverrides,
+  resolveCategory,
+  resolveReassignment,
+  transactionId,
+  upsertLedgerRows,
+} from './transactions-store.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -22,6 +32,8 @@ function parseArgs(argv) {
   const args = {
     outputPath: path.join(repoRoot, 'data', 'budget_tracking.json'),
     goalsPath: path.join(repoRoot, 'data', 'goals.json'),
+    overridesPath: defaultOverridesPath(),
+    ledgerPath: defaultLedgerPath(),
     envFile: monarchEnvPath(),
     mcpServerExe: monarchMcpExePath(),
     limit: 1000,
@@ -46,6 +58,8 @@ function parseArgs(argv) {
       else if (key === 'mcp-server-exe') args.mcpServerExe = value;
       else if (key === 'limit') args.limit = Number.parseInt(value, 10);
       else if (key === 'history-backfill-days') args.historyBackfillDays = Number.parseInt(value, 10);
+      else if (key === 'overrides-path') args.overridesPath = value;
+      else if (key === 'ledger-path') args.ledgerPath = value;
       else throw new Error(`Unknown argument: ${arg}`);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -202,47 +216,16 @@ async function fetchTransactions(client, startDate, endDate, limit) {
   return all;
 }
 
-// Monarch/Plaid's own categorization is sometimes just wrong or too generic
-// for this household's budget tracking (e.g. a restaurant tagged as a bare
-// "Credit Card Payment", or an AI-subscription merchant Monarch doesn't
-// recognize at all). Matched case-insensitively as a substring against the
-// merchant name, checked before falling back to Monarch's given category.
-// Applied inside categoryName() itself (not at each call site) so every
-// caller — the main joint/Kevin-personal categorization loop and
-// refreshFavoritePlaces()'s separate dining-detection pass — benefits
-// automatically from one source of truth.
-const MERCHANT_CATEGORY_OVERRIDES = [
-  { match: 'r+d', category: 'Restaurants & Bars' },
-  { match: 'anthropic', category: 'Subscriptions' },
-  { match: 'eleven labs', category: 'Subscriptions' },
-  { match: 'elevenlabs', category: 'Subscriptions' },
-  { match: 'grok', category: 'Subscriptions' },
-  { match: 'xai', category: 'Subscriptions' },
-];
-
-function categoryName(transaction) {
-  const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
-  const override = MERCHANT_CATEGORY_OVERRIDES.find((o) => merchant.includes(o.match));
-  if (override) return override.category;
-  if (typeof transaction.category === 'string') return transaction.category;
-  return transaction.category?.name || '';
+// Category + one-off tracker overrides live in data/transaction_overrides.json
+// (seeded from examples/transaction_overrides.example.json). Applied via
+// transactions-store.mjs so edits survive daily Monarch rebuilds.
+function categoryName(transaction, overrides = null) {
+  const o = overrides || loadOrCreateOverrides();
+  return resolveCategory(transaction, o) || 'Uncategorized';
 }
 
-// One-off tracker reassignments (2026-08-02) — a specific charge that landed
-// on a card its normal per-card routing wouldn't reflect (e.g. a family
-// lunch Kevin covered on his own personal card, which should count against
-// the joint budget, not his personal allowance). Deliberately NOT a standing
-// merchant rule like MERCHANT_CATEGORY_OVERRIDES above — matched by
-// merchant substring + the exact transaction date, so a different charge
-// from the same merchant on a different day still routes normally. Add/
-// remove entries here by hand as one-offs come up; expected to stay short.
-const TRACKER_REASSIGNMENTS = [
-  { merchantMatch: 'sora', date: '2026-08-01', reassignTo: 'joint', note: 'Lunch Kevin covered — a joint/family expense, per Kevin 2026-08-02.' },
-];
-
-function trackerReassignment(transaction) {
-  const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
-  return TRACKER_REASSIGNMENTS.find((r) => merchant.includes(r.merchantMatch) && transaction.date === r.date) || null;
+function trackerReassignment(transaction, overrides = null) {
+  return resolveReassignment(transaction, overrides || loadOrCreateOverrides());
 }
 
 // get_transactions (compact shape) exposes only a display-name string for the
@@ -627,9 +610,16 @@ async function main() {
 
   const cycleStart = currentCycleStart(today); // joint cycle
   const personalCycleStart = currentMonthStart(today); // personal trackers (calendar month)
-  const fetchStart = cycleStart < personalCycleStart ? cycleStart : personalCycleStart;
+  const overlapStart = new Date(today);
+  overlapStart.setDate(overlapStart.getDate() - (LEDGER_OVERLAP_DAYS - 1));
+  // Fetch the earlier of cycle windows and the ledger overlap so we upsert
+  // ~120 days into the accumulating ledger while still covering both cycles.
+  let fetchStart = cycleStart < personalCycleStart ? cycleStart : personalCycleStart;
+  if (overlapStart < fetchStart) fetchStart = overlapStart;
   const startDate = isoDate(fetchStart);
   const endDate = isoDate(today);
+
+  const overrides = loadOrCreateOverrides(args.overridesPath);
 
   const client = new McpClient({ mcpServerExe: args.mcpServerExe, envFile: args.envFile });
   try {
@@ -698,29 +688,50 @@ async function main() {
       });
     const tripActuals = new Map(trips.map((t) => [t.id, { actual: 0, transactions: [] }]));
     const unmatched = [];
+    const ledgerRows = [];
 
     for (const txn of transactions) {
       const amount = spendAmount(txn);
       if (amount === 0) continue;
       const acct = accountLabel(txn);
-      const catDisplay = categoryName(txn) || 'Uncategorized';
+      const catDisplay = categoryName(txn, overrides);
       const cat = catDisplay.toLowerCase();
       const txnDate = new Date(txn.date);
       const summary = { date: txn.date, merchant: txn.merchant || txn.plaidName || '', amount: Math.round(amount * 100) / 100 };
+      const id = transactionId(txn);
 
       if (travelCategories.has(cat)) {
         // If more than one trip's window contains this charge, don't guess —
         // flag it for manual review instead of risking silent misattribution.
         const candidates = trips.filter((t) => txnDate >= t.bookingStart && txnDate <= t.end);
+        let tripId = null;
+        let travelTracker = 'travel';
+        let group = 'unmatched';
         if (candidates.length === 1) {
           const bucket = tripActuals.get(candidates[0].id);
           bucket.actual = Math.round((bucket.actual + amount) * 100) / 100;
           bucket.transactions.push(summary);
+          tripId = candidates[0].id;
+          group = candidates[0].label || candidates[0].id;
         } else if (candidates.length > 1) {
           unmatched.push({ ...summary, ambiguousBetween: candidates.map((t) => t.id) });
+          group = 'unmatched';
         } else {
           unmatched.push(summary);
         }
+        ledgerRows.push({
+          id,
+          date: txn.date,
+          merchant: summary.merchant,
+          amount: summary.amount,
+          accountLabel: acct,
+          category: catDisplay,
+          tracker: travelTracker,
+          ownerId: null,
+          tripId,
+          group,
+          type: 'spend',
+        });
         continue; // travel spend never counts toward joint/personal totals
       }
 
@@ -729,7 +740,7 @@ async function main() {
       // own start. Guarding on `b >= 0` makes week buckets and category
       // totals agree. A reassignment overrides which tracker a charge
       // counts toward (reassignTo: "joint" or an owner id for personal).
-      const reassignment = trackerReassignment(txn);
+      const reassignment = trackerReassignment(txn, overrides);
       let personalOwnerId = null;
       let routeToJoint = false;
       if (reassignment) {
@@ -741,7 +752,9 @@ async function main() {
         routeToJoint = true;
       }
 
+      let routedTracker = 'ignored';
       if (personalOwnerId && personalState[personalOwnerId]) {
+        routedTracker = 'personal';
         const state = personalState[personalOwnerId];
         const b = weekBucket(txnDate, personalCycleStart);
         if (b >= 0) {
@@ -751,6 +764,7 @@ async function main() {
           state.categoryTransactions.get(catDisplay).push(summary);
         }
       } else if (routeToJoint) {
+        routedTracker = 'joint';
         const b = weekBucket(txnDate, cycleStart);
         if (b >= 0) {
           jointBuckets.set(b, Math.round(((jointBuckets.get(b) || 0) + amount) * 100) / 100);
@@ -760,9 +774,46 @@ async function main() {
         }
       }
       // Anything else (Ally, Vanguard, Trinet, Ascensus, etc.) isn't a spend card — ignored here.
+      ledgerRows.push({
+        id,
+        date: txn.date,
+        merchant: summary.merchant,
+        amount: summary.amount,
+        accountLabel: acct,
+        category: catDisplay,
+        tracker: routedTracker,
+        ownerId: personalOwnerId,
+        tripId: null,
+        group: catDisplay,
+        type: 'spend',
+      });
     }
 
     const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
+    for (const refund of jointRefunds) {
+      // Refunds may lack Monarch id in the summary shape — prefer matching
+      // the source txn when possible; otherwise synthetic from summary fields.
+      const match = transactions.find((t) => (
+        t.date === refund.date
+        && Math.abs(Number(t.amount)) === refund.amount
+        && (t.merchant || t.plaidName || '') === refund.merchant
+      ));
+      ledgerRows.push({
+        id: match ? transactionId(match) : `refund_${refund.date}|${refund.merchant}|${refund.amount}`,
+        date: refund.date,
+        merchant: refund.merchant,
+        amount: refund.amount,
+        accountLabel: '',
+        category: refund.category || 'Refund',
+        tracker: 'joint',
+        ownerId: null,
+        tripId: null,
+        group: refund.category || 'Refund',
+        type: 'refund',
+      });
+    }
+
+    upsertLedgerRows(args.ledgerPath, ledgerRows, { asOf: endDate });
 
     function bucketsToWeeks(buckets, refCycleStart) {
       const maxBucket = Math.max(-1, ...buckets.keys());
@@ -837,6 +888,8 @@ async function main() {
     console.log(JSON.stringify({
       ok: true,
       transactionCount: transactions.length,
+      ledgerUpserted: ledgerRows.length,
+      ledgerPath: args.ledgerPath,
       personalOwners: Object.keys(tracking.personal || {}),
       travelUnmatchedCount: unmatched.length,
       jointUpdated: jointLabels.size > 0,

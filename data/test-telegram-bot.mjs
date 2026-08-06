@@ -150,6 +150,9 @@ function baseOpts(paths, extra = {}) {
     monthPlanEventsPath: paths.monthPlanEventsPath,
     budgetTrackingPath: paths.budgetTrackingPath,
     accountsPath: paths.accountsPath,
+    // Nonexistent ledger in the fixture dir so tests exercise budget_tracking
+    // fallback — not this machine's real accumulating ledger.
+    ledgerPath: path.join(path.dirname(paths.todosPath), 'no-such-transactions_ledger.json'),
     routineOverridesPath: paths.routineOverridesPath,
     conversationLogPath: paths.conversationLogPath,
     goalsChangelogPath: paths.goalsChangelogPath,
@@ -1283,7 +1286,7 @@ await asyncTest('search_transactions: an unmatched merchant replies with a clear
   const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
   assert.equal(result.todosChanged, false);
   assert.equal(result.monthPlanEventsChanged, false);
-  assert.ok(result.sentReplies[0].includes('No matching current-cycle transactions found.'));
+  assert.ok(result.sentReplies[0].includes('No matching transactions found.'));
 });
 
 await asyncTest('search_transactions: tracker filter restricts to that tracker only', async () => {

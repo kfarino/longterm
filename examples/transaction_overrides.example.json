@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "description": "Durable spend routing overrides — applied on every Monarch budget pull. categoryRules: standing merchant→category fixes. reassignments: one-off card→tracker moves (merchant substring + exact date). Edit this file (not budget-tracking-pull.mjs) when a charge should survive the next morning's refresh.",
+    "lastUpdated": "2026-08-06"
+  },
+  "categoryRules": [
+    { "merchantMatch": "r+d", "category": "Restaurants & Bars" },
+    { "merchantMatch": "anthropic", "category": "Subscriptions" },
+    { "merchantMatch": "eleven labs", "category": "Subscriptions" },
+    { "merchantMatch": "elevenlabs", "category": "Subscriptions" },
+    { "merchantMatch": "grok", "category": "Subscriptions" },
+    { "merchantMatch": "xai", "category": "Subscriptions" }
+  ],
+  "reassignments": [
+    {
+      "merchantMatch": "sora",
+      "date": "2026-08-01",
+      "reassignTo": "joint",
+      "note": "Lunch Kevin covered — a joint/family expense, per Kevin 2026-08-02."
+    }
+  ]
+}

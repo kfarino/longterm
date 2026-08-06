@@ -9,6 +9,12 @@
 // dashboard's script isn't loaded as a real ES module yet, so it can't
 // import this file, or vice versa).
 import fs from 'node:fs';
+import {
+  defaultLedgerPath,
+  ledgerHasRows,
+  queryLedger,
+  SEARCH_DEFAULT_LOOKBACK_DAYS,
+} from './transactions-store.mjs';
 
 // Mirrors dashboard_v5.html's computeTrackerPacing(): weights by
 // days-in-bucket, not entry count, so a trailing partial week doesn't skew
@@ -80,18 +86,34 @@ export function loadDecisions(goalsPath) {
   return goals.decisions;
 }
 
-// Flattens the per-category/per-trip transaction line items budget_tracking.json
-// already carries for the current cycle (loadBudgetStatus ignores these, reading
-// only the `weeks` array for pacing) into one array the bot can filter by
-// merchant/tracker. Current-cycle only — same window budget_tracking.json itself
-// covers, no older history.
-export function loadTransactionDetail(budgetTrackingPath) {
+// Flattens transaction line items for the bot. Prefers the accumulating
+// ledger (data/transactions_ledger.json) when present; otherwise falls back
+// to current-cycle detail inside budget_tracking.json.
+export function loadTransactionDetail(budgetTrackingPath, {
+  ledgerPath = defaultLedgerPath(),
+  merchant = null,
+  tracker = null,
+  startDate = null,
+  endDate = null,
+  defaultLookbackDays = SEARCH_DEFAULT_LOOKBACK_DAYS,
+} = {}) {
+  if (ledgerHasRows(ledgerPath)) {
+    const { rows, window, source } = queryLedger(ledgerPath, {
+      merchant,
+      tracker,
+      startDate,
+      endDate,
+      defaultLookbackDays,
+    });
+    return { rows, window, source };
+  }
+
   const bt = JSON.parse(fs.readFileSync(budgetTrackingPath, 'utf8'));
   const rows = [];
-  const addCategories = (tracker, categories) => {
+  const addCategories = (trackerName, categories) => {
     for (const cat of categories || []) {
       for (const txn of cat.transactions || []) {
-        rows.push({ tracker, group: cat.name, date: txn.date, merchant: txn.merchant, amount: txn.amount });
+        rows.push({ tracker: trackerName, group: cat.name, date: txn.date, merchant: txn.merchant, amount: txn.amount });
       }
     }
   };
@@ -99,8 +121,8 @@ export function loadTransactionDetail(budgetTrackingPath) {
   for (const txn of bt.joint?.refunds || []) {
     rows.push({ tracker: 'joint', group: txn.category || 'Refund', date: txn.date, merchant: txn.merchant, amount: txn.amount, type: 'refund' });
   }
-  for (const [ownerId, tracker] of Object.entries(bt.personal || {})) {
-    addCategories(`personal:${ownerId}`, tracker.categories);
+  for (const [ownerId, tr] of Object.entries(bt.personal || {})) {
+    addCategories(`personal:${ownerId}`, tr.categories);
   }
   for (const trip of bt.travel?.trips || []) {
     for (const txn of trip.transactions || []) {
@@ -111,7 +133,7 @@ export function loadTransactionDetail(budgetTrackingPath) {
     rows.push({ tracker: 'travel', group: 'unmatched', date: txn.date, merchant: txn.merchant, amount: txn.amount });
   }
   rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  return rows;
+  return { rows, window: { startDate: bt.joint?.cycleStart || null, endDate: null }, source: 'budget_tracking' };
 }
 
 // Bundles all three for the recap script (Part B) and for the poller's
@@ -119,7 +141,7 @@ export function loadTransactionDetail(budgetTrackingPath) {
 // files the same "degrade quietly" way dining-recommendation.mjs's context
 // loader does (a fresh checkout before these files exist shouldn't crash
 // the bot, just report emptier answers).
-export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath }) {
+export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath, ledgerPath = defaultLedgerPath() }) {
   let budgetStatus = { joint: null, personal: {}, travel: [] };
   try { budgetStatus = loadBudgetStatus(budgetTrackingPath, goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let savingsGoals = [];
@@ -127,6 +149,17 @@ export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPa
   let decisions = [];
   try { decisions = loadDecisions(goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let transactions = [];
-  try { transactions = loadTransactionDetail(budgetTrackingPath); } catch { /* missing/unparseable — degrade to empty */ }
-  return { budgetStatus, savingsGoals, decisions, transactions };
+  let transactionsMeta = { source: 'none', window: {} };
+  try {
+    // Full ledger into context (no default lookback) so search_transactions
+    // can filter by optional startDate/endDate; when those are omitted the
+    // tool applies SEARCH_DEFAULT_LOOKBACK_DAYS itself.
+    const detail = loadTransactionDetail(budgetTrackingPath, {
+      ledgerPath,
+      defaultLookbackDays: null,
+    });
+    transactions = detail.rows;
+    transactionsMeta = { source: detail.source, window: detail.window };
+  } catch { /* missing/unparseable — degrade to empty */ }
+  return { budgetStatus, savingsGoals, decisions, transactions, transactionsMeta };
 }

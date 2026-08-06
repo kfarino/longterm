@@ -40,6 +40,7 @@ function parseArgs(argv) {
     remindersPath: path.join(repoDataDir, 'reminders.json'),
     budgetTrackingPath: path.join(repoDataDir, 'budget_tracking.json'),
     accountsPath: path.join(repoDataDir, 'accounts.json'),
+    ledgerPath: path.join(repoDataDir, 'transactions_ledger.json'),
     routineOverridesPath: path.join(repoDataDir, 'dining-routine-overrides.json'),
     conversationLogPath: path.join(repoDataDir, 'telegram-conversation-log.jsonl'),
     goalsChangelogPath: path.join(repoDataDir, 'goals-changelog.jsonl'),
@@ -67,6 +68,7 @@ function parseArgs(argv) {
       else if (key === 'reminders-path') args.remindersPath = value;
       else if (key === 'budget-tracking-path') args.budgetTrackingPath = value;
       else if (key === 'accounts-path') args.accountsPath = value;
+      else if (key === 'ledger-path') args.ledgerPath = value;
       else if (key === 'routine-overrides-path') args.routineOverridesPath = value;
       else if (key === 'conversation-log-path') args.conversationLogPath = value;
       else if (key === 'goals-changelog-path') args.goalsChangelogPath = value;
