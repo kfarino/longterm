@@ -17,11 +17,17 @@ Checklist so the **code** can be open without publishing a household’s money.
    npm run check:secrets
    git status   # no real data/ files staged
    ```
-2. Search history once (optional but calming):
+2. History purge (done 2026-08-06 on `kfarino/longterm`):
+   Rewrote all branches with `git filter-repo` to drop:
+   - root household files (`budget_ledger.csv`, todos, month plan, Telegram state, favorites, …)
+   - the nested `Finances/` tree (old monorepo snapshot: statements, CSVs, live goals/accounts)
+   - `Nikola/` PDFs
+   Pre-purge mirror + working-copy snapshot: `~/.longterm/history-purge-2026-08-06/`.
+   Re-check anytime:
    ```bash
-   git log --all --full-history -- data/goals.json data/accounts.json budget_ledger.csv
+   git rev-list --objects --all | findstr /i "budget_ledger accounts.json goals.json CreditCard TRANSACTIONS Finances/ Nikola/"
    ```
-   If those paths ever appear in history with real content, rotate credentials and purge history before going public (this repo previously tracked `budget_ledger.csv` with real spend — it is now gitignored and removed from the index; purge history if you need a clean public cut).
+   Note: GitHub may keep unreachable blobs until their GC; if this repo was ever public or cloned by others, treat old SHAs as potentially still out there.
 3. Skim tracked docs for accidental pastes of account numbers, tokens, or live dollar tables. `claude.md` may name a household — that is identity context, **not** balances; still rewrite “Who we are” on a public fork if you want anonymity.
 4. Confirm `LICENSE` (MIT) and `SECURITY.md` are present.
 5. Set the GitHub repo to Public.
