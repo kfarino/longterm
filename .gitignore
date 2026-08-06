@@ -26,6 +26,7 @@ data/telegram-owners.json
 data/telegram-offset.json
 data/telegram-conversation-log.jsonl
 data/telegram-pending-clarifications.json
+data/reminders.json
 data/telegram-planning-notes.jsonl
 data/telegram-recap-log.jsonl
 data/telegram-unparsed.jsonl

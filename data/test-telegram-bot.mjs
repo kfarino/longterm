@@ -93,7 +93,7 @@ const seedAccounts = () => ({
   balances: { brokerage: { kevin: { amount: 100000 }, hanna: { amount: 50000 } } },
 });
 
-function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, routineOverrides, conversationLog, pendingClarifications }) {
+function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, routineOverrides, conversationLog, pendingClarifications, reminders }) {
   fs.mkdirSync(dir, { recursive: true });
   const todosPath = path.join(dir, 'todos.json');
   const updatesPath = path.join(dir, 'updates.json');
@@ -109,6 +109,7 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   const conversationLogPath = path.join(dir, 'conversation-log.jsonl');
   const goalsChangelogPath = path.join(dir, 'goals-changelog.jsonl');
   const pendingClarificationsPath = path.join(dir, 'pending-clarifications.json');
+  const remindersPath = path.join(dir, 'reminders.json');
   fs.writeFileSync(todosPath, JSON.stringify(todos ?? seedTodos(), null, 2));
   fs.writeFileSync(updatesPath, JSON.stringify(updates, null, 2));
   fs.writeFileSync(ownersPath, JSON.stringify(owners ?? { '111': 'hanna', '222': 'kevin' }, null, 2));
@@ -120,7 +121,8 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   if (routineOverrides) fs.writeFileSync(routineOverridesPath, JSON.stringify(routineOverrides, null, 2));
   if (conversationLog) fs.writeFileSync(conversationLogPath, conversationLog.map((e) => JSON.stringify(e)).join('\n') + '\n');
   if (pendingClarifications) fs.writeFileSync(pendingClarificationsPath, JSON.stringify(pendingClarifications, null, 2));
-  return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath };
+  fs.writeFileSync(remindersPath, JSON.stringify({ meta: { description: 'test' }, items: reminders || [] }, null, 2));
+  return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath, remindersPath };
 }
 
 function msg(updateId, { fromId = 111, text, replyToBot = false }) {
@@ -152,6 +154,7 @@ function baseOpts(paths, extra = {}) {
     conversationLogPath: paths.conversationLogPath,
     goalsChangelogPath: paths.goalsChangelogPath,
     pendingClarificationsPath: paths.pendingClarificationsPath,
+    remindersPath: paths.remindersPath,
     // Points at a guaranteed-nonexistent path by default, so a test isn't
     // accidentally reading this machine's real google-calendar.env (2026-08-02:
     // this file now genuinely exists once Calendar was actually set up, which
@@ -439,6 +442,92 @@ await asyncTest('remove_event: nothing set for that date/occasion replies clearl
   const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
   assert.equal(result.monthPlanEventsChanged, false);
   assert.ok(result.sentReplies[0].includes('Nothing set for'));
+});
+
+// --- Reminders (add_reminder/list_reminders/cancel_reminder) ---
+
+await asyncTest('add_reminder: creates a reminder with a sequential id and confirms the date', async () => {
+  const dir = path.join(tmpRoot, 'add-reminder');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot remind me tomorrow to call the doctor' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_reminder', input: { text: 'Call the doctor', date: '2026-08-06' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.remindersChanged, true);
+  assert.equal(result.reminders.items.length, 1);
+  assert.equal(result.reminders.items[0].id, 'r1');
+  assert.equal(result.reminders.items[0].owner, 'kevin');
+  assert.equal(result.reminders.items[0].sent, false);
+  assert.ok(result.sentReplies[0].includes('2026-08-06'));
+});
+
+await asyncTest('add_reminder: a second reminder gets the next sequential id', async () => {
+  const dir = path.join(tmpRoot, 'add-reminder-sequential-id');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot remind me Friday to pay rent' })] },
+    reminders: [{ id: 'r1', text: 'Existing reminder', date: '2026-08-06', owner: 'hanna', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null }],
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_reminder', input: { text: 'Pay rent', date: '2026-08-08' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.reminders.items[1].id, 'r2');
+});
+
+await asyncTest('list_reminders: reports upcoming reminders sorted by date, excludes sent ones', async () => {
+  const dir = path.join(tmpRoot, 'list-reminders');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot what reminders do we have' })] },
+    reminders: [
+      { id: 'r1', text: 'Later reminder', date: '2026-08-10', owner: 'kevin', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null },
+      { id: 'r2', text: 'Sooner reminder', date: '2026-08-06', owner: 'hanna', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null },
+      { id: 'r3', text: 'Already sent one', date: '2026-08-02', owner: null, createdAt: '2026-08-01T00:00:00.000Z', sent: true, sentAt: '2026-08-02T08:00:00.000Z' },
+    ],
+  });
+  const mockClient = async () => ({ content: [{ type: 'tool_use', name: 'list_reminders', input: {} }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.indexOf('Sooner reminder') < reply.indexOf('Later reminder'), 'should be sorted by date ascending');
+  assert.ok(!reply.includes('Already sent one'), 'a sent reminder should not be listed as upcoming');
+});
+
+await asyncTest('cancel_reminder: cancels a uniquely-matched reminder', async () => {
+  const dir = path.join(tmpRoot, 'cancel-reminder-unique');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot cancel the doctor reminder' })] },
+    reminders: [{ id: 'r1', text: 'Call the doctor', date: '2026-08-06', owner: 'kevin', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null }],
+  });
+  const mockClient = async () => ({ content: [{ type: 'tool_use', name: 'cancel_reminder', input: { text: 'doctor' } }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.reminders.items.length, 0);
+  assert.ok(result.sentReplies[0].includes('Cancelled'));
+});
+
+await asyncTest('cancel_reminder: an ambiguous match asks instead of guessing, and cancels nothing', async () => {
+  const dir = path.join(tmpRoot, 'cancel-reminder-ambiguous');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot cancel the reminder about the appointment' })] },
+    reminders: [
+      { id: 'r1', text: 'Dentist appointment', date: '2026-08-06', owner: 'kevin', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null },
+      { id: 'r2', text: 'Vet appointment', date: '2026-08-07', owner: 'hanna', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null },
+    ],
+  });
+  const mockClient = async () => ({ content: [{ type: 'tool_use', name: 'cancel_reminder', input: { text: 'appointment' } }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.remindersChanged, false, 'nothing should be cancelled when the target is ambiguous');
+  assert.ok(result.sentReplies[0].includes('Say which one'));
+});
+
+await asyncTest('cancel_reminder: no match replies clearly rather than throwing', async () => {
+  const dir = path.join(tmpRoot, 'cancel-reminder-no-match');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot cancel the nonexistent reminder' })] },
+  });
+  const mockClient = async () => ({ content: [{ type: 'tool_use', name: 'cancel_reminder', input: { text: 'nonexistent' } }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.ok(result.sentReplies[0].includes("Couldn't find"));
 });
 
 // --- add_family_event recurrence ---
