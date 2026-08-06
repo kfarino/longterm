@@ -68,9 +68,9 @@ Exact field names come from the live response — the point of this sketch is to
 
 ## Success criteria
 
-- [ ] Kevin authorizes; pull writes a non-empty sample JSON  
+- [x] Kevin authorizes; pull writes a non-empty sample JSON (2026-08-06 — `personal_info`/`daily_sleep`/`daily_readiness`/`daily_spo2` returned real records; `daily_activity`/`sleep`/`workout` were empty for the 14-day window, presumably no recent logged activity rather than an error)
 - [ ] Hanna authorizes; separate sample JSON  
-- [ ] Console inventory makes payload shape obvious for a follow-up brainstorm  
+- [x] Console inventory makes payload shape obvious for a follow-up brainstorm (confirmed via Kevin's pull output)
 - [ ] No secrets or `data/oura/*` committed  
 
 ## Follow-up (later brainstorm)
