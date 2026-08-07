@@ -174,10 +174,20 @@ function writeMinimalFixture(dir) {
   const offsetPath = path.join(dir, 'offset.json');
   const unparsedPath = path.join(dir, 'unparsed.jsonl');
   const goalsPath = path.join(dir, 'goals.json');
+  // readLocalEnv(envPath) is only skipped when updatesFixture is set — this
+  // suite deliberately omits updatesFixture (to exercise getUpdatesClient
+  // across iterations), so envPath must point at a REAL, parseable file, not
+  // just a "guaranteed nonexistent" one — readLocalEnv throws if the file
+  // doesn't exist at all (verified live: "nonexistent-telegram.env" fails
+  // with "Missing env file", not a graceful degrade). Its values are
+  // irrelevant: the explicit token/groupChatId/etc passed into baseLoopOpts
+  // win over whatever readLocalEnv returns.
+  const envPath = path.join(dir, 'fake-telegram.env');
   fs.writeFileSync(todosPath, JSON.stringify({ items: [], weeklyGoals: [] }, null, 2));
   fs.writeFileSync(ownersPath, JSON.stringify({}, null, 2));
   fs.writeFileSync(goalsPath, JSON.stringify({ owners: [], diningRoutine: [], lowKeyHangIdeas: [] }, null, 2));
-  return { todosPath, ownersPath, offsetPath, unparsedPath, goalsPath };
+  fs.writeFileSync(envPath, 'TELEGRAM_BOT_TOKEN=unused\n');
+  return { todosPath, ownersPath, offsetPath, unparsedPath, goalsPath, envPath };
 }
 
 function baseLoopOpts(dir, extra = {}) {
@@ -185,16 +195,12 @@ function baseLoopOpts(dir, extra = {}) {
   return {
     getUpdatesClient: emptyGetUpdatesClient(),
     telegramClient: async () => ({ ok: true }),
-    // Deliberately no updatesFixture here — the point of this file is to
-    // exercise getUpdatesClient across multiple iterations. That means
-    // runOnce falls through to readLocalEnv(envPath) unless envPath is
-    // overridden, so it must point somewhere guaranteed not to exist —
-    // otherwise this test would depend on this machine's real
-    // ~/.longterm/telegram.env, violating AGENTS.md's "tests must pass
-    // without real .env files" rule. Same reasoning for ouraStoreDir/
+    // envPath points at writeMinimalFixture's fake local file, never this
+    // machine's real ~/.longterm/telegram.env (AGENTS.md: tests must pass
+    // without real .env files). Same reasoning for ouraStoreDir/
     // healthOverridesPath, which would otherwise default to this worktree's
     // real data/oura/ and data/health_overrides.json.
-    envPath: path.join(dir, 'nonexistent-telegram.env'),
+    envPath: p.envPath,
     ouraStoreDir: path.join(dir, 'oura-store'),
     healthOverridesPath: path.join(dir, 'health_overrides.json'),
     token: 'test-token', groupChatId: '-1', botUsername: 'test_bot', apiKey: 'test-key',

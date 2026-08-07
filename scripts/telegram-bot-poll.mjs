@@ -20,7 +20,7 @@ import { loadHealthContext, defaultHealthOverridesPath } from './health-context.
 import { defaultOuraStoreDir } from './oura-store.mjs';
 import { runSync as runCalendarSync } from './calendar-sync.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
-import { googleCalendarEnvPath, telegramEnvPath } from './longterm-paths.mjs';
+import { googleCalendarEnvPath, telegramEnvPath, telegramPollLogPath } from './longterm-paths.mjs';
 
 const CALENDAR_ENV_PATH = googleCalendarEnvPath();
 
@@ -900,6 +900,69 @@ export async function runOnce(opts) {
   }
 
   return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, remindersChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications, reminders };
+}
+
+function appendPollLog(logPath, message) {
+  const line = `${new Date().toISOString().replace('T', ' ').slice(0, 19)} ${message}${os.EOL}`;
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.appendFileSync(logPath, line, 'utf8');
+}
+
+// Wraps runOnce() in a long-poll loop instead of the old "one short getUpdates
+// call, then exit" cadence. Each iteration passes getUpdatesTimeoutSeconds
+// into getUpdates, so Telegram holds the connection open and returns the
+// instant a message arrives rather than after a fixed short interval — this
+// is the entire mechanism behind "near-instant" pickup.
+//
+// Exits after maxDurationMs (15 min in production) rather than running
+// forever: this project is edited often, and a truly-forever process would
+// keep running stale code until someone remembered to restart it by hand.
+// Task Scheduler's -MultipleInstances IgnoreNew setting (see
+// install-telegram-scheduled-task.ps1) relaunches it within a minute either
+// way — clean self-refresh or an unhandled crash look the same to the
+// scheduler, and both self-heal without any code here needing to know which
+// one happened.
+//
+// A thrown error in EITHER the message-dispatch step or the calendar-sync
+// step is caught, logged, and the loop continues to the next iteration —
+// unlike the old short-lived process (where a thrown error just killed that
+// invocation and the next 2-minute tick tried again fresh), a persistent
+// process cannot let one transient failure cost the whole 15-minute window.
+export async function runPollLoop(opts = {}) {
+  const {
+    maxDurationMs = 15 * 60 * 1000,
+    maxIterations = Infinity,
+    getUpdatesTimeoutSeconds = 25,
+    calendarSyncFn = runCalendarSyncStep,
+    logPath = telegramPollLogPath(),
+    now = () => Date.now(),
+    ...runOnceOpts
+  } = opts;
+
+  const startedAt = now();
+  let iteration = 0;
+  appendPollLog(logPath, `loop start (max ${Math.round(maxDurationMs / 60000)} min)`);
+
+  while (iteration < maxIterations && (now() - startedAt) < maxDurationMs) {
+    iteration += 1;
+    try {
+      const result = await runOnce({ ...runOnceOpts, getUpdatesTimeoutSeconds });
+      appendPollLog(logPath, `iteration ${iteration}: ${result.sentReplies.length} repl(y/ies) sent`);
+    } catch (err) {
+      appendPollLog(logPath, `iteration ${iteration} ERROR: ${err.message || err}`);
+    }
+    try {
+      const calResult = await calendarSyncFn();
+      if (!calResult.skipped) {
+        appendPollLog(logPath, `iteration ${iteration} calendar sync: +${calResult.created} ~${calResult.updated} -${calResult.deleted}`);
+      }
+    } catch (err) {
+      appendPollLog(logPath, `iteration ${iteration} calendar sync ERROR: ${err.message || err}`);
+    }
+  }
+
+  appendPollLog(logPath, `loop exiting after ${iteration} iteration${iteration === 1 ? '' : 's'}`);
+  return { iterations: iteration };
 }
 
 // Runs as the last step of the same scheduled task, right after the poll —

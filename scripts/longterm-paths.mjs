@@ -20,6 +20,10 @@ export function monarchEnvPath() {
   return path.join(longtermHome(), 'monarch.env');
 }
 
+export function telegramPollLogPath() {
+  return path.join(longtermHome(), 'logs', 'telegram-poll.log');
+}
+
 export function monarchMcpExePath() {
   const exe = process.platform === 'win32' ? 'monarch-mcp-jamiew.exe' : 'monarch-mcp-jamiew';
   return path.join(longtermHome(), 'monarch-mcp-venv', process.platform === 'win32' ? 'Scripts' : 'bin', exe);
