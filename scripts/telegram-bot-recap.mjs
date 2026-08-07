@@ -220,11 +220,11 @@ function loadMonthPlanEvents(monthPlanEventsPath) {
 // favorite (observed live: all 3 slots suggested "Terra Eataly" in one
 // recap). Each occasion's own `date` is included too, not just its reply
 // text, so the recap can cross-reference dining days against calendarSummary.
-function diningSummary(monthPlanEvents, diningContext) {
+function diningSummary(monthPlanEvents, diningContext, now = null) {
   const summary = {};
   const alreadySuggested = new Set();
   for (const occasion of OCCASIONS) {
-    const result = get_dining_plan(monthPlanEvents, { occasion }, diningContext, alreadySuggested);
+    const result = get_dining_plan(monthPlanEvents, { occasion, now }, diningContext, alreadySuggested);
     summary[occasion] = { date: result.date, reply: result.reply };
     if (result.suggestedName) alreadySuggested.add(result.suggestedName);
   }
@@ -235,13 +235,13 @@ function diningSummary(monthPlanEvents, diningContext) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges }) {
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now }) {
   return {
     budgetStatus: financialContext.budgetStatus,
     budgetLineItems: budgetLineItemsOver100(financialContext),
     budgetRefunds: budgetRefundsThisCycle(financialContext),
     decisions: financialContext.decisions,
-    dining: diningSummary(monthPlanEvents, diningContext),
+    dining: diningSummary(monthPlanEvents, diningContext, now),
     todosByOwner: todosByOwner(todos),
     unparsedMessages,
     calendarSummary,
@@ -352,7 +352,7 @@ export async function runOnce(opts) {
 
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges });
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });

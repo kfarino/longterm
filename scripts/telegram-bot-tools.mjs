@@ -241,11 +241,14 @@ function findEveningCalendarCoverage(date, calendarEvents) {
 // different occasion moments ago, so all 3 occasions don't independently
 // converge on the same top-scored favorite. Purely additive: any existing
 // caller that omits it behaves exactly as before.
-export function get_dining_plan(monthPlanEvents, { occasion }, diningContext, extraExcludeNames = new Set()) {
+export function get_dining_plan(monthPlanEvents, { occasion, now = null }, diningContext, extraExcludeNames = new Set()) {
   const slot = slotForOccasion(occasion, diningContext.diningRoutine, diningContext.routineOverrides);
   if (!slot) return { monthPlanEvents, reply: `I don't recognize "${occasion}" as a dining occasion.` };
   const label = OCCASION_LABEL[occasion] || occasion;
-  const date = nextDateForDayOfWeek(slot.dayOfWeek);
+  // `now` defaults to the real clock, but a caller that pins a date (the recap,
+  // and any test injecting a fixed `now`) needs it to reach the date math, not
+  // just the surrounding bundle.
+  const date = nextDateForDayOfWeek(slot.dayOfWeek, now || new Date());
   const existing = monthPlanEvents.events[date];
   if (existing && existing.length) {
     const names = existing.map((e) => `${e.name || e.favoriteName}${e.time ? ` at ${formatHHMMForDisplay(e.time)}` : ''}`).join(', ');
@@ -260,7 +263,19 @@ export function get_dining_plan(monthPlanEvents, { occasion }, diningContext, ex
     ...Object.values(monthPlanEvents.events).flat().map((e) => e.favoriteName || e.name).filter(Boolean),
     ...extraExcludeNames,
   ]);
-  const rec = recommendForSlot(slot, diningContext.favorites, diningContext.recentDiningActivity, diningContext.lowKeyHangIdeas, alreadyUsedNames);
+  // Sleep depletion sends the weekend low-key. Deliberately limited to
+  // date_night (+1 day from a Thursday) and weekend_social (+2) —
+  // family_dinner resolves six days out, which would be forecasting next week
+  // from this week's sleep. Only the recap ever sets depletion; the
+  // interactive bot and the dashboard pass nothing and are unaffected.
+  const { depletion } = diningContext;
+  const swappable = occasion === 'date_night' || occasion === 'weekend_social';
+  const depleted = Boolean(depletion?.depleted) && swappable;
+  const effectiveSlot = depleted ? { ...slot, tier: 'low-key' } : slot;
+  const lowKeyReason = depleted
+    ? `${depletion.ownerId} is depleted — ${depletion.reason}. A low-key hang instead of a paid outing.`
+    : null;
+  const rec = recommendForSlot(effectiveSlot, diningContext.favorites, diningContext.recentDiningActivity, diningContext.lowKeyHangIdeas, alreadyUsedNames, lowKeyReason);
   const pick = rec.picks[0];
   const reply = pick
     ? `${label} (${date}) isn't set yet — suggestion: ${pick}. (${rec.reasoning})`
