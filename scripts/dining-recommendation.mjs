@@ -101,10 +101,16 @@ function familiarityScore(f) {
 // plain filter today. Deliberately synchronous/cheap: the dashboard calls
 // this once per eligible day across a whole month's render, so a real
 // per-call LLM request here would be slow and costly.
-export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames) {
+export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames, lowKeyReason = null) {
   if (slot.tier === 'low-key') {
     const idea = lowKeyHangIdeas[Math.floor(Math.random() * lowKeyHangIdeas.length)];
-    return { picks: [idea], reasoning: 'Budget is tight for this occurrence — a free/low-key hang instead of a paid outing.' };
+    // The cause is the caller's to state: budget tightness (the dashboard's
+    // planRemainingMonth) and sleep depletion (the Thursday recap) both land
+    // here, and reporting the wrong one would be actively misleading.
+    return {
+      picks: [idea],
+      reasoning: lowKeyReason || 'Budget is tight for this occurrence — a free/low-key hang instead of a paid outing.',
+    };
   }
 
   const ceilingRank = TIER_RANK[slot.tier];

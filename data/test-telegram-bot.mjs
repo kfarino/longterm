@@ -1787,4 +1787,65 @@ await asyncTest('a pending clarification for one sender does not affect a differ
   assert.equal(onDisk.kevin.question, 'Which phase?', 'kevin\'s pending question should be untouched — no message from kevin in this batch');
 });
 
+// Oura health signal (2026-08-06): depletion sends the weekend low-key.
+// Deliberately limited to date_night (+1 day from a Thursday) and
+// weekend_social (+2) — family_dinner resolves six days out, which would be
+// forecasting next week from this week's sleep.
+const depletedContext = (extra = {}) => ({
+  diningRoutine: [
+    { dayOfWeek: 3, tier: 'mid', requiresTag: 'familyFriendly' },
+    { dayOfWeek: 5, tier: 'high', requiresTag: 'dinnerSpot' },
+    { dayOfWeek: 6, tier: 'mid', requiresTag: 'socialSpot' },
+  ],
+  lowKeyHangIdeas: ['Walk to the overlook'],
+  favorites: [
+    { name: 'Fancy Place', list: 'go-to', dinnerSpot: true, socialSpot: true, observed: { tier: 'high' } },
+    { name: 'Family Spot', list: 'go-to', familyFriendly: true, observed: { tier: 'mid' } },
+  ],
+  recentDiningActivity: [],
+  routineOverrides: { family_dinner: null, date_night: null, weekend_social: null },
+  calendarEvents: [],
+  depletion: { ownerId: 'sam', depleted: true, reason: 'week averaged 80 against a 90 baseline' },
+  ...extra,
+});
+
+test('depletion swaps date_night to a low-key hang with the real cause', () => {
+  const result = get_dining_plan({ events: {} }, { occasion: 'date_night' }, depletedContext());
+  assert.match(result.reply, /Walk to the overlook/);
+  assert.match(result.reply, /90 baseline/);
+  assert.doesNotMatch(result.reply, /Budget is tight/);
+});
+
+test('depletion swaps weekend_social too', () => {
+  const result = get_dining_plan({ events: {} }, { occasion: 'weekend_social' }, depletedContext());
+  assert.match(result.reply, /Walk to the overlook/);
+});
+
+test('depletion never swaps family_dinner — it resolves too far out to be honest', () => {
+  const result = get_dining_plan({ events: {} }, { occasion: 'family_dinner' }, depletedContext());
+  assert.doesNotMatch(result.reply, /Walk to the overlook/);
+  assert.match(result.reply, /Family Spot/);
+});
+
+test('no depletion leaves suggestions untouched', () => {
+  const result = get_dining_plan({ events: {} }, { occasion: 'date_night' }, depletedContext({ depletion: null }));
+  assert.match(result.reply, /Fancy Place/);
+});
+
+test('an owner who is not depleted does not trigger a swap', () => {
+  const ctx = depletedContext({ depletion: { ownerId: 'sam', depleted: false, reason: 'within normal range' } });
+  const result = get_dining_plan({ events: {} }, { occasion: 'date_night' }, ctx);
+  assert.match(result.reply, /Fancy Place/);
+});
+
+test('an injected now reaches the date math instead of the real system clock', () => {
+  // get_dining_plan used to call nextDateForDayOfWeek() with no `from`, so a
+  // caller pinning a date (the recap, or any test) still got today's real
+  // clock — which silently broke test-telegram-recap.mjs's calendar-coverage
+  // case once the real date passed the one it had baked in.
+  const sunday = new Date(2026, 7, 2, 9, 0, 0); // 2026-08-02
+  const result = get_dining_plan({ events: {} }, { occasion: 'family_dinner', now: sunday }, depletedContext({ depletion: null }));
+  assert.equal(result.date, '2026-08-05', 'next Wednesday from Sunday 2026-08-02');
+});
+
 console.log('All tests passed.');

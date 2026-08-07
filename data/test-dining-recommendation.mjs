@@ -136,4 +136,24 @@ test('a 3-star rating is neutral — ties with an unrated place, both remain eli
   assert.equal(rec.picks.length, 2);
 });
 
+// The low-key branch was unreachable from the bot/recap path until the Oura
+// health signal (2026-08-06): get_dining_plan builds its slot from a
+// goals.json diningRoutine entry, and none carries tier 'low-key'. The
+// budget-driven path lives only in dashboard_v5.html's own inline copy. These
+// two cases cover the branch directly.
+test('a low-key slot states the caller-supplied reason, not the budget default', () => {
+  const rec = recommendForSlot(
+    { tier: 'low-key', dynamic: false }, [], [], ['Walk to the overlook'], new Set(),
+    'Sam is depleted — week averaged 80 against a 90 baseline',
+  );
+  assert.equal(rec.picks[0], 'Walk to the overlook');
+  assert.match(rec.reasoning, /depleted/);
+  assert.doesNotMatch(rec.reasoning, /Budget is tight/);
+});
+
+test('a low-key slot with no reason supplied keeps the budget default', () => {
+  const rec = recommendForSlot({ tier: 'low-key', dynamic: false }, [], [], ['Walk to the overlook'], new Set());
+  assert.match(rec.reasoning, /Budget is tight/);
+});
+
 console.log('All tests passed.');
