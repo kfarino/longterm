@@ -23,6 +23,7 @@ const COPIES = [
   ['favorite_places.example.json', 'favorite_places.json'],
   ['favorite_places_raw.example.json', 'favorite_places_raw.json'],
   ['calendar-sync-state.example.json', 'calendar-sync-state.json'],
+  ['health_overrides.example.json', 'health_overrides.json'],
 ];
 
 const EMPTY_JSONL = [

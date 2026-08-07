@@ -5,8 +5,14 @@
     "reconciliationNotes": "Filled during first-time setup."
   },
   "owners": [
-    { "id": "teddy", "displayName": "Teddy" },
-    { "id": "lilly", "displayName": "Lilly" }
+    {
+      "id": "teddy",
+      "displayName": "Teddy"
+    },
+    {
+      "id": "lilly",
+      "displayName": "Lilly"
+    }
   ],
   "family": {
     "name": "Teddy & Lilly Example",
@@ -29,7 +35,10 @@
       "name": "Current — dual income",
       "period": "Now → 2028",
       "note": "Baseline phase. Income/expense keys are display labels; keep at least one expense named exactly like budget_tracking.joint.targetExpenseKey (default \"Family budget\").",
-      "income": { "Teddy": 9000, "Lilly": 7000 },
+      "income": {
+        "Teddy": 9000,
+        "Lilly": 7000
+      },
       "expenses": {
         "Housing": 3200,
         "Family budget": 4500,
@@ -37,9 +46,21 @@
         "Lilly personal": 600
       },
       "allocation": [
-        { "label": "Brokerage", "amount": 2000, "bucket": "brokerage" },
-        { "label": "Emergency HYSA", "amount": 500, "bucket": "liquid" },
-        { "label": "Flex", "amount": 1400, "bucket": "liquid" }
+        {
+          "label": "Brokerage",
+          "amount": 2000,
+          "bucket": "brokerage"
+        },
+        {
+          "label": "Emergency HYSA",
+          "amount": 500,
+          "bucket": "liquid"
+        },
+        {
+          "label": "Flex",
+          "amount": 1400,
+          "bucket": "liquid"
+        }
       ]
     },
     {
@@ -49,7 +70,10 @@
       "name": "Higher earnings",
       "period": "2028 → 2035",
       "note": "Example next phase — adjust years and numbers to the household.",
-      "income": { "Teddy": 12000, "Lilly": 9000 },
+      "income": {
+        "Teddy": 12000,
+        "Lilly": 9000
+      },
       "expenses": {
         "Housing": 3200,
         "Family budget": 5000,
@@ -57,9 +81,21 @@
         "Lilly personal": 800
       },
       "allocation": [
-        { "label": "Brokerage", "amount": 3500, "bucket": "brokerage" },
-        { "label": "Travel fund", "amount": 500, "bucket": "liquid" },
-        { "label": "Flex", "amount": 2000, "bucket": "liquid" }
+        {
+          "label": "Brokerage",
+          "amount": 3500,
+          "bucket": "brokerage"
+        },
+        {
+          "label": "Travel fund",
+          "amount": 500,
+          "bucket": "liquid"
+        },
+        {
+          "label": "Flex",
+          "amount": 2000,
+          "bucket": "liquid"
+        }
       ]
     },
     {
@@ -69,7 +105,11 @@
       "name": "Semi-retirement",
       "period": "2035+",
       "note": "Work optional. Expenses can be empty if using the P6-style slider later.",
-      "income": { "Teddy (optional work)": 3000, "Lilly (optional work)": 2000, "Portfolio (4% SWR)": 6000 },
+      "income": {
+        "Teddy (optional work)": 3000,
+        "Lilly (optional work)": 2000,
+        "Portfolio (4% SWR)": 6000
+      },
       "expenses": {},
       "allocation": []
     }
@@ -95,9 +135,26 @@
     }
   ],
   "timeline": [
-    { "year": "Now", "short": "Phase 1", "title": "Phase 1 live", "detail": "Baseline dual-income phase." },
-    { "year": "2028", "short": "Phase 2", "title": "Higher earnings phase begins", "detail": "", "dotColor": "#2d6a3f" },
-    { "year": "2035", "short": "Coast", "title": "Semi-retirement optionality", "detail": "", "dotColor": "#5a5230" }
+    {
+      "year": "Now",
+      "short": "Phase 1",
+      "title": "Phase 1 live",
+      "detail": "Baseline dual-income phase."
+    },
+    {
+      "year": "2028",
+      "short": "Phase 2",
+      "title": "Higher earnings phase begins",
+      "detail": "",
+      "dotColor": "#2d6a3f"
+    },
+    {
+      "year": "2035",
+      "short": "Coast",
+      "title": "Semi-retirement optionality",
+      "detail": "",
+      "dotColor": "#5a5230"
+    }
   ],
   "decisions": [
     {
@@ -117,7 +174,10 @@
     "Build a consulting side path"
   ],
   "openDecisions": [
-    { "decision": "Example: job stay vs leave", "status": "Thinking" }
+    {
+      "decision": "Example: job stay vs leave",
+      "status": "Thinking"
+    }
   ],
   "chart": {
     "growthRate": 0.07,
@@ -133,14 +193,39 @@
     "annualRetirementContribution": 46000
   },
   "diningRoutine": [
-    { "dayOfWeek": 3, "tier": "mid", "dynamic": false, "requiresTag": "familyFriendly" },
-    { "dayOfWeek": 5, "tier": "mid", "dynamic": true, "requiresTag": "dinnerSpot" },
-    { "dayOfWeek": 6, "tier": "mid", "dynamic": true, "requiresTag": "socialSpot" }
+    {
+      "dayOfWeek": 3,
+      "tier": "mid",
+      "dynamic": false,
+      "requiresTag": "familyFriendly"
+    },
+    {
+      "dayOfWeek": 5,
+      "tier": "mid",
+      "dynamic": true,
+      "requiresTag": "dinnerSpot"
+    },
+    {
+      "dayOfWeek": 6,
+      "tier": "mid",
+      "dynamic": true,
+      "requiresTag": "socialSpot"
+    }
   ],
   "lowKeyHangIdeas": [
     "Cook at home",
     "Walk + coffee",
     "Movie night in",
     "Game night"
-  ]
+  ],
+  "healthThresholds": {
+    "rule": "baselineStress",
+    "combine": "either",
+    "baselineDays": 30,
+    "weekDays": 7,
+    "minNightsForBaseline": 14,
+    "minNightsInWeek": 3,
+    "sleepScoreDropPoints": 5,
+    "stressfulDaysInWeek": 3
+  }
 }
