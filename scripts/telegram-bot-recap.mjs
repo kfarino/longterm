@@ -13,8 +13,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { get_dining_plan, listOpenItems } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
+import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { telegramEnvPath } from './longterm-paths.mjs';
+import { defaultOuraStoreDir } from './oura-store.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
@@ -34,6 +36,8 @@ function parseArgs(argv) {
     unparsedPath: path.join(repoDataDir, 'telegram-unparsed.jsonl'),
     routineOverridesPath: path.join(repoDataDir, 'dining-routine-overrides.json'),
     goalsChangelogPath: path.join(repoDataDir, 'goals-changelog.jsonl'),
+    ouraStoreDir: defaultOuraStoreDir(),
+    healthOverridesPath: defaultHealthOverridesPath(),
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -54,6 +58,8 @@ function parseArgs(argv) {
       else if (key === 'unparsed-path') args.unparsedPath = value;
       else if (key === 'routine-overrides-path') args.routineOverridesPath = value;
       else if (key === 'goals-changelog-path') args.goalsChangelogPath = value;
+      else if (key === 'oura-store-dir') args.ouraStoreDir = value;
+      else if (key === 'health-overrides-path') args.healthOverridesPath = value;
       else throw new Error(`Unknown argument: ${arg}`);
     }
   }
@@ -235,7 +241,7 @@ function diningSummary(monthPlanEvents, diningContext, now = null) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now }) {
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now, healthContext, healthAffectsPlans }) {
   return {
     budgetStatus: financialContext.budgetStatus,
     budgetLineItems: budgetLineItemsOver100(financialContext),
@@ -246,10 +252,12 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
     unparsedMessages,
     calendarSummary,
     recentPlanChanges,
+    health: healthContext,
+    healthAffectsPlans,
   };
 }
 
-const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
+const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly four labeled sections in this order: "Budget:", "Todos:", "Planning:", "Health:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
 
 Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
 
@@ -257,11 +265,13 @@ Todos: list every open to-do from todosByOwner, grouped by the owner it's under 
 
 Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick or a "looks already covered" note is just mentioned in passing, not pushed for a reply.
 
-After the three sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
+Health: one short line per person from health.perOwner — how this week compared to that person's own baseline, using the real figures in their reason string. Never a bare adjective like "poor" or "fine" on its own; the numbers are the point, exactly as with budget pace. If someone's reason is "insufficient_data", say plainly that their baseline is still building and give the night count, rather than implying anything at all about how they slept. If health is null or health.configured is false, skip this section entirely. If healthAffectsPlans is false, report only — do not suggest changing any plan on the basis of health, and do not imply the weekend should be different.
+
+After the four sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
 
 Then, only if there's something notable, add one or two short trailing lines for: an urgent open decision (decisions, only flag one with status "urgent" — don't list every open decision), a non-recurring event on either Google calendar this week (calendarSummary — name whose calendar and the date; skip if calendarSummary is null or nothing non-recurring is on either calendar), unprocessed messages since the last recap (unparsedMessages — one line, don't quote them all verbatim), or a recent direct edit to the real financial plan (recentPlanChanges — if count is non-zero, mention briefly what changed using recentPlanChanges.recent as a hint). Skip any of these four with nothing to report — don't force a line just to fill space.
 
-Never mention long-term savings goal progress or percentages — that's a different cadence of update, not part of this one. Do not use markdown formatting (no headers, no bullets, no bold) — plain text with the three section labels as the only structure. Keep the whole message focused; three clear sections plus at most a couple of trailing lines, not a wall of text.`;
+Never mention long-term savings goal progress or percentages — that's a different cadence of update, not part of this one. Do not use markdown formatting (no headers, no bullets, no bold) — plain text with the section labels as the only structure. Keep the whole message focused; the labeled sections plus at most a couple of trailing lines, not a wall of text.`;
 
 async function callAnthropicRecap({ apiKey, bundle }) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -350,9 +360,17 @@ export async function runOnce(opts) {
   }
   const diningContext = loadDiningContext(args, calendarItems);
 
+  // Health is reported on both cadence days, but only Thursday lets it change
+  // the weekend's dining suggestions — Sunday is a summary, not a planner.
+  const healthContext = loadHealthContext({
+    now, storeDir: args.ouraStoreDir, overridesPath: args.healthOverridesPath, goalsPath: args.goalsPath,
+  });
+  const healthAffectsPlans = slot === 'thursday-morning';
+  diningContext.depletion = healthAffectsPlans ? healthContext.worst : null;
+
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now });
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now, healthContext, healthAffectsPlans });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });

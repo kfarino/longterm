@@ -34,6 +34,8 @@ These are gitignored. **Do not add exceptions. Do not `git add -f` them.**
 | `data/favorite_places*.json`, `venues_to_follow.json` | Dining/venue habits |
 | `data/telegram-*.json(l)`, `goals-changelog.jsonl` | Chat + bot audit trails |
 | `budget_ledger.csv` / any bank CSV/XLSX/PDF | Raw statements |
+| `data/oura/*.json` | Accumulating Oura health records — sleep, readiness, stress, heart rate |
+| `data/health_overrides.json` | Excluded nights + baseline rules (says *why* a night was bad) |
 | `~/.longterm/monarch.env`, `telegram.env`, `google-calendar.env`, `oura-*.env`, `spotify-*.env` | **Bearer credentials** — never print, never paste into logs/commits/issues even "just for debugging" |
 
 If you need example data: invent merchants, amounts, and names. Use

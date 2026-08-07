@@ -452,4 +452,43 @@ await asyncTest('recentPlanChanges reports the total count and the 2 most recent
   assert.ok(!capturedBundle.recentPlanChanges.recent.some((r) => r.includes('Oldest decision')), 'only the 2 most recent should be included, not every change verbatim');
 });
 
+// Oura health signal (2026-08-06): health is reported on both cadence days,
+// but only Thursday lets it change the weekend's dining suggestions.
+// An empty store dir means health degrades to "not configured" without ever
+// reading this machine's real data/oura/ — same guard as calendarEnvPath.
+function emptyHealthPaths(dir) {
+  const storeDir = path.join(dir, 'oura-store');
+  fs.mkdirSync(storeDir, { recursive: true });
+  return { ouraStoreDir: storeDir, healthOverridesPath: path.join(dir, 'health_overrides.json') };
+}
+
+await asyncTest('Thursday puts health in the bundle and lets it shape plans', async () => {
+  const dir = path.join(tmpRoot, 'health-thursday');
+  const paths = writeFixture(dir, {});
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, {
+    now: THURSDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }),
+    ...emptyHealthPaths(dir),
+  }));
+
+  assert.ok(capturedBundle.health, 'health should be present on Thursday');
+  assert.ok('perOwner' in capturedBundle.health);
+  assert.equal(capturedBundle.healthAffectsPlans, true);
+});
+
+await asyncTest('Sunday reports health but never lets it change suggestions', async () => {
+  const dir = path.join(tmpRoot, 'health-sunday');
+  const paths = writeFixture(dir, {});
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, {
+    now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }),
+    ...emptyHealthPaths(dir),
+  }));
+
+  assert.ok(capturedBundle.health, 'health should be present on Sunday too');
+  assert.equal(capturedBundle.healthAffectsPlans, false, 'Sunday must never shape plans');
+});
+
 console.log('All tests passed.');
