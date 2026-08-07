@@ -9,6 +9,7 @@ CreditCard_*.csv
 data/accounts.json
 data/budget_tracking.json
 data/goals.json
+data/*.bak*
 data/data.js
 kevin_hanna_goal_plan.md
 *-goal_plan.md

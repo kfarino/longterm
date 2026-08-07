@@ -224,7 +224,7 @@ await test('GET /api/upcoming-shows-cache returns the empty default shape when t
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/upcoming-shows-cache`);
     assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { fetchedAt: null, days: null, findings: [] });
+    assert.deepEqual(await res.json(), { fetchedAt: null, days: null, findings: [], shows: [] });
   } finally {
     server.close();
   }
