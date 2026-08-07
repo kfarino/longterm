@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-bot-test-'));
@@ -1836,6 +1836,29 @@ test('an owner who is not depleted does not trigger a swap', () => {
   const ctx = depletedContext({ depletion: { ownerId: 'sam', depleted: false, reason: 'within normal range' } });
   const result = get_dining_plan({ events: {} }, { occasion: 'date_night' }, ctx);
   assert.match(result.reply, /Fancy Place/);
+});
+
+test('get_health_status reports each owner, naming who is still building a baseline', () => {
+  const healthContext = {
+    configured: true,
+    perOwner: {
+      alex: { ownerId: 'alex', nights: 1, depleted: false, reason: 'insufficient_data' },
+      sam: { ownerId: 'sam', nights: 28, depleted: true, reason: 'week averaged 80 against a 90 baseline' },
+    },
+    worst: { ownerId: 'sam', depleted: true, reason: 'week averaged 80 against a 90 baseline' },
+  };
+  const result = get_health_status(healthContext);
+  assert.match(result.reply, /alex/);
+  assert.match(result.reply, /still building/i);
+  assert.match(result.reply, /1 night\b/, 'singular night, not "1 nights"');
+  assert.match(result.reply, /sam/);
+  assert.match(result.reply, /90 baseline/);
+  assert.match(result.reply, /depleted/);
+});
+
+test('get_health_status degrades honestly when nothing has been pulled', () => {
+  const result = get_health_status({ configured: false, perOwner: {}, worst: null });
+  assert.match(result.reply, /No Oura data/i);
 });
 
 test('an injected now reaches the date math instead of the real system clock', () => {

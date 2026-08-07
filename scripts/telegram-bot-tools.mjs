@@ -645,6 +645,28 @@ export function search_transactions(financialContext, { merchant, tracker } = {}
 // already does for DINING_TOOL_NAMES.
 export const FINANCIAL_TOOL_NAMES = new Set(['get_budget_status', 'get_savings_goals', 'get_decisions', 'search_transactions']);
 
+// Read-only over a healthContext bundle (see scripts/health-context.mjs) — a
+// fourth distinct call shape alongside todos, dining and financial, for the
+// same reason as the others: genuinely different inputs, no value in forcing
+// one uniform signature. Reports both owners; this is a shared group chat that
+// already surfaces budget and todos the same way.
+export function get_health_status(healthContext) {
+  if (!healthContext || !healthContext.configured) {
+    return { reply: 'No Oura data yet — nothing has been pulled into the store.' };
+  }
+  const lines = Object.values(healthContext.perOwner).map((o) => {
+    if (o.reason === 'insufficient_data') {
+      return `${o.ownerId}: still building a baseline (${o.nights} night${o.nights === 1 ? '' : 's'} recorded).`;
+    }
+    return `${o.ownerId}: ${o.depleted ? 'running depleted' : 'in normal range'} — ${o.reason}.`;
+  });
+  return { reply: lines.join('\n') };
+}
+
+// telegram-bot-poll.mjs's dispatch branches on this set the same way it
+// already does for FINANCIAL_TOOL_NAMES.
+export const HEALTH_TOOL_NAMES = new Set(['get_health_status']);
+
 // Tool names whose implementation writes to monthPlanEvents directly by an
 // explicit date, with no diningContext/occasion involved — a third distinct
 // call shape from DINING_TOOL_NAMES's (monthPlanEvents, args, diningContext).
@@ -815,6 +837,11 @@ export const TOOL_DEFS = [
     input_schema: { type: 'object', properties: {} },
   },
   {
+    name: 'get_health_status',
+    description: 'Report how each person slept this week measured against their own personal baseline, including whose baseline is still building. Use this for any question about sleep, rest, readiness, recovery, or how the week has felt physically.',
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'get_savings_goals',
     description: 'Report progress on every savings goal (current amount vs target, percentage).',
     input_schema: { type: 'object', properties: {} },
@@ -914,6 +941,7 @@ export const TOOL_IMPL = {
   set_dinner_plan: (monthPlanEvents, args, diningContext) => set_dinner_plan(monthPlanEvents, { occasion: args.occasion, date: args.date, pick: args.pick, time: args.time, durationHours: args.durationHours }, diningContext),
   remove_event: (monthPlanEvents, args, diningContext) => remove_event(monthPlanEvents, { occasion: args.occasion, date: args.date, title: args.title }, diningContext),
   get_budget_status: (financialContext) => get_budget_status(financialContext),
+  get_health_status: (healthContext) => get_health_status(healthContext),
   get_savings_goals: (financialContext) => get_savings_goals(financialContext),
   get_decisions: (financialContext) => get_decisions(financialContext),
   search_transactions: (financialContext, args) => search_transactions(financialContext, { merchant: args.merchant, tracker: args.tracker }),

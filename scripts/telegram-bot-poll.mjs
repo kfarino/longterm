@@ -14,8 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
+import { loadHealthContext } from './health-context.mjs';
 import { runSync as runCalendarSync } from './calendar-sync.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { googleCalendarEnvPath, telegramEnvPath } from './longterm-paths.mjs';
@@ -536,7 +537,7 @@ async function naturalizeBatch({ apiKey, items, rephraseClient }) {
   }
 }
 
-async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient }) {
+async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient }) {
   const rawText = message.text || '';
   const text = stripMention(rawText, botUsername);
 
@@ -648,6 +649,12 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
       } else if (FINANCIAL_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(financialContext, toolUse.input);
         rawReplies.push(result.reply);
+      } else if (HEALTH_TOOL_NAMES.has(toolUse.name)) {
+        // Read-only: answering a question about sleep, never shaping a plan.
+        // Deliberately does NOT set diningContext.depletion — only the
+        // Thursday recap lets health change a suggestion.
+        const result = impl(healthContext);
+        rawReplies.push(result.reply);
       } else {
         const result = impl(newTodos, toolUse.input, owner);
         newTodos = result.todos;
@@ -725,6 +732,7 @@ export async function runOnce(opts) {
   const calendarEventsForDining = await loadCalendarEventsForDining(calendarReadContext);
   const diningContext = loadDiningContext(args, routineOverrides, calendarEventsForDining);
   const financialContext = loadFinancialContext(args);
+  const healthContext = loadHealthContext({ now });
   let recentConversation = loadRecentConversation(args.conversationLogPath);
   let maxSafeUpdateId = offset != null ? offset - 1 : null;
   const sentReplies = [];
@@ -749,7 +757,7 @@ export async function runOnce(opts) {
 
     try {
       const result = await dispatchMessage({
-        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient,
+        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient,
       });
       todos = result.todos;
       monthPlanEvents = result.monthPlanEvents;
