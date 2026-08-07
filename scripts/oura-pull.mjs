@@ -24,8 +24,12 @@ const repoRoot = path.resolve(here, '..');
 
 function ymd(d) { return d.toISOString().slice(0, 10); }
 
-function loadOwnerIdsFromGoals() {
-  const goalsPath = path.join(repoRoot, 'data', 'goals.json');
+// Defaults to this repo's own data/goals.json (the CLI's usage: run
+// oura-pull.mjs from within the repo you want to pull for), but accepts an
+// explicit path so a caller elsewhere in the codebase — e.g. the recap,
+// which already has its own --goals-path — doesn't silently discover owners
+// from a different goals.json than the one it was actually configured with.
+export function loadOwnerIdsFromGoals(goalsPath = path.join(repoRoot, 'data', 'goals.json')) {
   if (!fs.existsSync(goalsPath)) return [];
   try {
     return (JSON.parse(fs.readFileSync(goalsPath, 'utf8')).owners || []).map((o) => o.id).filter(Boolean);
@@ -109,9 +113,9 @@ export async function pullOwner(ownerId, {
 }
 
 export async function runPull({
-  ownerIds = null, days = OURA_OVERLAP_DAYS, storeDir = defaultOuraStoreDir(), dryRun = false, now = new Date(),
+  ownerIds = null, goalsPath, days = OURA_OVERLAP_DAYS, storeDir = defaultOuraStoreDir(), dryRun = false, now = new Date(),
 } = {}) {
-  const ids = ownerIds || loadOwnerIdsFromGoals().filter((id) => fs.existsSync(ouraOwnerEnvPath(id)));
+  const ids = ownerIds || loadOwnerIdsFromGoals(goalsPath).filter((id) => fs.existsSync(ouraOwnerEnvPath(id)));
   const results = [];
   for (const id of ids) {
     results.push(await pullOwner(id, { days, storeDir, dryRun, now }));

@@ -104,6 +104,11 @@ function baseOpts(paths, extra = {}) {
     // exists). Tests wanting configured-calendar behavior already override
     // via calendarReadClient/calendarReadCalendarIds.
     calendarEnvPath: path.join(path.dirname(paths.todosPath), 'no-such-google-calendar.env'),
+    // Defaults to a no-op so a test isn't accidentally making a real Oura API
+    // call on a machine that happens to have real oura-*.env tokens (this one
+    // does) — tests wanting to verify the live-pull-before-recap behavior
+    // itself override this explicitly with a spy.
+    pullOuraFn: async () => [],
     token: 'test-token',
     groupChatId: '-999',
     apiKey: 'test-key',
@@ -552,6 +557,48 @@ await asyncTest('the same depleted week on a Sunday changes no suggestion', asyn
   assert.equal(capturedBundle.healthAffectsPlans, false);
   assert.doesNotMatch(capturedBundle.dining.date_night.reply, /Movie night at home/,
     'Sunday reports health but must never send the weekend low-key');
+});
+
+// Live Oura pull before composing (2026-08-07): the shared daily pull runs at
+// 09:30, 30 minutes AFTER this recap's own 09:00 Sun/Thu schedule, so Health
+// was always reporting whatever the PREVIOUS morning's pull had captured —
+// last night's sleep was never in the store yet at recap time, independent
+// of whenever the owner's ring actually finished syncing. Pulling fresh right
+// before composing removes the coordination problem entirely.
+await asyncTest('a live Oura pull runs before health context is loaded, for both Sunday and Thursday', async () => {
+  const dir = path.join(tmpRoot, 'live-oura-pull-thursday');
+  const paths = writeFixture(dir, {});
+  let pullCalls = 0;
+  const pullOuraFn = async () => { pullCalls += 1; return []; };
+  await runOnce(baseOpts(paths, {
+    now: THURSDAY, anthropicClient: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    telegramClient: async () => ({ ok: true }), pullOuraFn, ...emptyHealthPaths(dir),
+  }));
+  assert.equal(pullCalls, 1, 'Thursday should pull once before composing');
+
+  const dir2 = path.join(tmpRoot, 'live-oura-pull-sunday');
+  const paths2 = writeFixture(dir2, {});
+  let pullCalls2 = 0;
+  const pullOuraFn2 = async () => { pullCalls2 += 1; return []; };
+  await runOnce(baseOpts(paths2, {
+    now: SUNDAY, anthropicClient: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    telegramClient: async () => ({ ok: true }), pullOuraFn: pullOuraFn2, ...emptyHealthPaths(dir2),
+  }));
+  assert.equal(pullCalls2, 1, 'Sunday should pull once before composing too — its Health numbers deserve to be fresh as well');
+});
+
+await asyncTest('a live Oura pull failure never blocks the recap from sending', async () => {
+  const dir = path.join(tmpRoot, 'live-oura-pull-failure');
+  const paths = writeFixture(dir, {});
+  const pullOuraFn = async () => { throw new Error('simulated Oura API failure'); };
+  let sent = false;
+  const result = await runOnce(baseOpts(paths, {
+    now: THURSDAY, anthropicClient: async () => ({ content: [{ type: 'text', text: 'Recap.' }] }),
+    telegramClient: async () => { sent = true; return { ok: true }; },
+    pullOuraFn, ...emptyHealthPaths(dir),
+  }));
+  assert.equal(result.sent, true, 'the recap must still send despite the pull failure');
+  assert.ok(sent);
 });
 
 console.log('All tests passed.');

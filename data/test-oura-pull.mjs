@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { windowQuery, windowChunks, recordsFrom, pullOwner } from '../scripts/oura-pull.mjs';
+import { windowQuery, windowChunks, recordsFrom, pullOwner, loadOwnerIdsFromGoals } from '../scripts/oura-pull.mjs';
 import { loadStore, OURA_ENDPOINTS } from '../scripts/oura-store.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
@@ -172,6 +172,24 @@ await asyncTest('two owners accumulate side by side in the same endpoint file', 
   assert.equal(store.meta.recordCount, 2, 'owner id is part of the key, so they cannot collide');
   assert.ok(store.byId['alex:daily_sleep:shared-day']);
   assert.ok(store.byId['sam:daily_sleep:shared-day']);
+});
+
+// loadOwnerIdsFromGoals's goalsPath parameter (2026-08-07): a caller with its
+// own --goals-path (the recap, doing a live pull right before composing)
+// must discover owners from THAT file, not silently fall back to this
+// script's own repo-relative default — otherwise a caller elsewhere in the
+// codebase pointed at a different goals.json would pull for the wrong
+// household entirely.
+test('loadOwnerIdsFromGoals reads the explicitly given path, not the repo default', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oura-goals-path-test-'));
+  const goalsPath = path.join(dir, 'goals.json');
+  fs.writeFileSync(goalsPath, JSON.stringify({ owners: [{ id: 'alex' }, { id: 'sam' }] }));
+  assert.deepEqual(loadOwnerIdsFromGoals(goalsPath), ['alex', 'sam']);
+});
+
+test('loadOwnerIdsFromGoals degrades to empty for a missing explicit path, rather than falling back', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oura-goals-path-missing-'));
+  assert.deepEqual(loadOwnerIdsFromGoals(path.join(dir, 'nonexistent-goals.json')), []);
 });
 
 console.log('All oura-pull tests passed.');

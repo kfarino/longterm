@@ -17,6 +17,7 @@ import { loadHealthContext, defaultHealthOverridesPath } from './health-context.
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { telegramEnvPath } from './longterm-paths.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
+import { runPull as runOuraPull } from './oura-pull.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
@@ -359,6 +360,23 @@ export async function runOnce(opts) {
     }
   }
   const diningContext = loadDiningContext(args, calendarItems);
+
+  // Live pull right before composing (2026-08-07): the shared daily pull runs
+  // at 09:30, 30 minutes AFTER this recap's own 09:00 Sun/Thu schedule, so
+  // Health was always reporting whatever the PREVIOUS morning's pull had
+  // captured — last night's sleep was never in the store yet at recap time,
+  // regardless of when the owner's ring actually finished syncing. Pulling
+  // fresh here removes the coordination problem entirely: whatever is
+  // genuinely available from Oura right now is what gets used. Must never
+  // fail the recap itself, same containment rule the daily pull's own Oura
+  // step follows — a bad night for Oura's API is not a reason Kevin/Hanna
+  // don't get their budget/todos/planning recap.
+  const pullOura = args.pullOuraFn || (() => runOuraPull({ storeDir: args.ouraStoreDir, goalsPath: args.goalsPath, now }));
+  try {
+    await pullOura();
+  } catch (err) {
+    console.error('live Oura pull before recap failed (recap itself still proceeds):', err.message);
+  }
 
   // Health is reported on both cadence days, but only Thursday lets it change
   // the weekend's dining suggestions — Sunday is a summary, not a planner.
