@@ -50,10 +50,12 @@ function parseArgs(argv) {
     pendingClarificationsPath: path.join(repoDataDir, 'telegram-pending-clarifications.json'),
     updatesFixture: null,
     dryRun: false,
+    once: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--dry-run') { args.dryRun = true; continue; }
+    if (arg === '--once') { args.once = true; continue; }
     if (arg.startsWith('--')) {
       const key = arg.slice(2);
       const value = argv[i + 1];
@@ -78,6 +80,8 @@ function parseArgs(argv) {
       else if (key === 'goals-changelog-path') args.goalsChangelogPath = value;
       else if (key === 'pending-clarifications-path') args.pendingClarificationsPath = value;
       else if (key === 'updates-fixture') args.updatesFixture = value;
+      else if (key === 'max-duration-ms') args.maxDurationMs = Number(value);
+      else if (key === 'max-iterations') args.maxIterations = Number(value);
       else throw new Error(`Unknown argument: ${arg}`);
     }
   }
@@ -983,12 +987,17 @@ async function runCalendarSyncStep() {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const result = await runOnce(args);
-  console.log(JSON.stringify({ ok: true, todosChanged: result.todosChanged, repliesSent: result.sentReplies.length }));
-  const calendarResult = await runCalendarSyncStep();
-  if (!calendarResult.skipped) {
-    console.log(JSON.stringify({ ok: true, calendarCreated: calendarResult.created, calendarUpdated: calendarResult.updated, calendarDeleted: calendarResult.deleted }));
+  if (args.once) {
+    const result = await runOnce(args);
+    console.log(JSON.stringify({ ok: true, todosChanged: result.todosChanged, repliesSent: result.sentReplies.length }));
+    const calendarResult = await runCalendarSyncStep();
+    if (!calendarResult.skipped) {
+      console.log(JSON.stringify({ ok: true, calendarCreated: calendarResult.created, calendarUpdated: calendarResult.updated, calendarDeleted: calendarResult.deleted }));
+    }
+    return;
   }
+  const loopResult = await runPollLoop(args);
+  console.log(JSON.stringify({ ok: true, iterations: loopResult.iterations }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
