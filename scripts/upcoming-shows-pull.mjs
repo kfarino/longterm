@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { telegramEnvPath } from './longterm-paths.mjs';
+import { parseShowsFromText, dedupeShows } from './show-parse.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -21,7 +22,14 @@ function parseEnvFile(envFilePath) {
 }
 
 const SYSTEM =
-  'You are researching upcoming live shows for a household assistant. You will be given venues (name and area). Use web search to find real upcoming shows/events at these venues within the given day window from today. Prioritize venues tagged area "westside" first. For each finding, report: venue name, act/event name, date (YYYY-MM-DD), and a source URL. If a venue has nothing found, do not mention it. Keep the reply a short list — no preamble.';
+  'You are researching upcoming live MUSIC and COMEDY shows for a household assistant. ' +
+  'You will be given venues with area, type, and household star rating (1–5 if rated). ' +
+  'Use web search to find real upcoming shows/events within the day window. ' +
+  'MUST cover both music rooms AND comedy rooms (Westside Comedy Theater, Fanatic Salon, Largo, Dynasty Typewriter, etc.) — ' +
+  'do not return a music-only list. Prefer higher-rated venues when choosing which shows to report. ' +
+  'At most 2–3 notable acts per venue; prioritize westside, then 5-star venues, then others. ' +
+  'For each finding, report exactly one line: act — venue — YYYY-MM-DD — source URL. ' +
+  'If a venue has nothing found, skip it. Short list only — no preamble.';
 
 async function main() {
   const days = Number(process.argv.includes('--days') ? process.argv[process.argv.indexOf('--days') + 1] : 21) || 21;
@@ -32,8 +40,18 @@ async function main() {
   if (!venues.length) throw new Error('No venues in venues_to_follow.json');
 
   const today = new Date().toISOString().slice(0, 10);
-  const venueList = venues.map((v) => `${v.name} (${v.area}) — ${v.address}`).join('\n');
-  console.log(`Searching ${venues.length} venues for next ${days} days from ${today}…`);
+  const venueList = venues
+    .map((v) => {
+      const bits = [
+        v.name,
+        v.area ? `area:${v.area}` : null,
+        v.type || v.category || null,
+        v.rating != null ? `householdStars:${v.rating}/5` : 'householdStars:unrated',
+      ].filter(Boolean);
+      return bits.join(' · ');
+    })
+    .join('\n');
+  console.log(`Searching ${venues.length} venues (music + comedy) for next ${days} days from ${today}…`);
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -48,7 +66,14 @@ async function main() {
       thinking: { type: 'disabled' },
       system: SYSTEM,
       tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 10, allowed_callers: ['direct'] }],
-      messages: [{ role: 'user', content: `TODAY is ${today}. Only dates on/after today.\n\nVenues:\n${venueList}\n\nDay window: next ${days} days.` }],
+      messages: [{
+        role: 'user',
+        content:
+          `TODAY is ${today}. Only dates on/after today.\n\n` +
+          `Venues (include comedy AND music; favor higher householdStars):\n${venueList}\n\n` +
+          `Day window: next ${days} days.\n` +
+          `Return a mix — if comedy calendars have dates in-window, include them.`,
+      }],
     }),
   });
   if (!res.ok) throw new Error(`Anthropic API error: ${res.status} ${await res.text()}`);
@@ -72,7 +97,6 @@ async function main() {
   }
 
   const venueFinding = { text: text || 'No shows found at followed venues in this window.', urls, label: 'venues' };
-  const prior = (existing.findings || []).filter((f) => f.label === 'spotify' || f.source === 'spotify' || (existing.source === 'spotify-find-shows' && !f.label));
   // Keep prior Spotify block if present, then venue block.
   const spotifyBlocks = (existing.findings || []).filter((f) => f.label === 'spotify' || existing.source === 'spotify-find-shows');
   const findings = [];
@@ -83,14 +107,21 @@ async function main() {
   }
   findings.push(venueFinding);
 
+  const shows = dedupeShows(
+    findings.flatMap((f) =>
+      parseShowsFromText(f.text, f.urls).map((s) => ({ ...s, label: f.label || null })),
+    ),
+  );
+
   const cache = {
     fetchedAt: new Date().toISOString(),
     days,
     source: 'venues-and-spotify',
     findings,
+    shows,
   };
   fs.writeFileSync(cachePath, `${JSON.stringify(cache, null, 2)}\n`, 'utf8');
-  console.log(`Wrote ${cachePath}`);
+  console.log(`Wrote ${cachePath} (${shows.length} structured shows)`);
   console.log(text || '(empty)');
 }
 
