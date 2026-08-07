@@ -52,3 +52,7 @@ data/health_overrides.json
 
 # Claude Code local session/tool state (native worktree management, etc.)
 .claude/
+
+# Spotify taste pulls + match output (secrets stay in ~/.longterm/)
+data/spotify/*
+!data/spotify/sample-shows.json

@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "note": "Tiny committed fixture so matching works before upcoming_shows_cache.json exists. Fictional / illustrative acts only."
+  },
+  "shows": [
+    {
+      "act": "Jimmy Eat World",
+      "venue": "The Wiltern",
+      "date": "2026-09-12",
+      "sourceUrl": "https://example.com/jimmy-eat-world-wiltern"
+    },
+    {
+      "act": "Phoebe Bridgers",
+      "venue": "Hollywood Bowl",
+      "date": "2026-10-03",
+      "sourceUrl": "https://example.com/phoebe-bowl"
+    },
+    {
+      "act": "Local Opener Band",
+      "venue": "The Echo",
+      "date": "2026-08-20",
+      "sourceUrl": null
+    }
+  ]
+}

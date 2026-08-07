@@ -17,6 +17,9 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { scoreShowsLikeness } from './spotify-likeness.mjs';
+import { parseShowsFromText, dedupeShows, takeTopShows } from './show-parse.mjs';
+import { readActRatings, setActRating } from './spotify-act-ratings.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..');
@@ -26,6 +29,8 @@ const defaultFavoriteRawPath = path.join(repoRoot, 'data', 'favorite_places_raw.
 const defaultFavoritePlacesPath = path.join(repoRoot, 'data', 'favorite_places.json');
 const defaultVenuesToFollowPath = path.join(repoRoot, 'data', 'venues_to_follow.json');
 const defaultUpcomingShowsCachePath = path.join(repoRoot, 'data', 'upcoming_shows_cache.json');
+const defaultSpotifyTasteDir = path.join(repoRoot, 'data', 'spotify');
+const defaultGoalsPath = path.join(repoRoot, 'data', 'goals.json');
 const PORT = Number(process.env.PORT) || 4200;
 const EMPTY_ROUTINE_OVERRIDES = { family_dinner: null, date_night: null, weekend_social: null };
 
@@ -63,13 +68,70 @@ export function readRoutineOverrides(routineOverridesPath) {
 }
 
 export function readUpcomingShowsCache(cachePath) {
-  if (!fs.existsSync(cachePath)) return { fetchedAt: null, days: null, findings: [] };
+  if (!fs.existsSync(cachePath)) return { fetchedAt: null, days: null, findings: [], shows: [] };
   try {
     return JSON.parse(fs.readFileSync(cachePath, 'utf8'));
   } catch {
-    return { fetchedAt: null, days: null, findings: [] };
+    return { fetchedAt: null, days: null, findings: [], shows: [] };
   }
 }
+
+function ownerIdsFromGoals(goalsPath) {
+  if (!fs.existsSync(goalsPath)) return ['kevin', 'hanna'];
+  try {
+    const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
+    const ids = (goals.owners || []).map((o) => o.id).filter(Boolean);
+    return ids.length ? ids : ['kevin', 'hanna'];
+  } catch {
+    return ['kevin', 'hanna'];
+  }
+}
+
+function showsFromCache(cache) {
+  if (Array.isArray(cache.shows) && cache.shows.length) return cache.shows;
+  const out = [];
+  for (const f of cache.findings || []) {
+    if (Array.isArray(f.shows)) {
+      for (const s of f.shows) out.push({ ...s, label: f.label || s.label });
+    } else if (f.text) {
+      for (const s of parseShowsFromText(f.text, f.urls)) {
+        out.push({ ...s, label: f.label || null });
+      }
+    }
+  }
+  return dedupeShows(out);
+}
+
+/** Live likeness % for Dining + Shows — hybrid floors + Claude; Hanna may be unlinked. */
+export async function readShowTasteMatches({
+  upcomingShowsCachePath = defaultUpcomingShowsCachePath,
+  tasteDir = defaultSpotifyTasteDir,
+  goalsPath = defaultGoalsPath,
+  skipClaude = false,
+  limit = 15,
+} = {}) {
+  const cache = readUpcomingShowsCache(upcomingShowsCachePath);
+  const shows = showsFromCache(cache);
+  const ownerIds = ownerIdsFromGoals(goalsPath);
+  const result = await scoreShowsLikeness({
+    shows,
+    ownerIds,
+    tasteDir,
+    skipClaude,
+  });
+  // Top N per kind so comedy isn't crowded out by music (and vice versa).
+  const lim = limit === 0 || limit === 'all' ? 0 : (Number(limit) || 15);
+  if (lim === 0) return { ...result, limit: null };
+  const music = takeTopShows(result.shows.filter((s) => s.kind !== 'comedy'), lim, ownerIds);
+  const comedy = takeTopShows(result.shows.filter((s) => s.kind === 'comedy'), lim, ownerIds);
+  return {
+    ...result,
+    limit: lim,
+    shows: [...music, ...comedy],
+    byKind: { music, comedy },
+  };
+}
+
 
 export function readVenuesToFollow(venuesPath) {
   if (!fs.existsSync(venuesPath)) return { venues: [], weekendSocialSpots: {} };
@@ -215,6 +277,44 @@ export function createServer(
 
     if (urlPath === '/api/upcoming-shows-cache' && req.method === 'GET') {
       sendJson(res, 200, readUpcomingShowsCache(upcomingShowsCachePath));
+      return;
+    }
+
+    if (urlPath === '/api/show-taste-matches' && req.method === 'GET') {
+      try {
+        const params = new URL(req.url, 'http://127.0.0.1').searchParams;
+        const skipClaude = params.get('skipClaude') === '1';
+        const limitParam = params.get('limit');
+        const limit = limitParam === 'all' ? 0 : (limitParam != null ? Number(limitParam) : 15);
+        sendJson(res, 200, await readShowTasteMatches({ upcomingShowsCachePath, skipClaude, limit }));
+      } catch (err) {
+        sendJson(res, 500, { error: String(err?.message || err) });
+      }
+      return;
+    }
+
+    if (urlPath === '/api/act-ratings' && req.method === 'GET') {
+      const owner = new URL(req.url, 'http://127.0.0.1').searchParams.get('owner') || 'kevin';
+      sendJson(res, 200, readActRatings(owner, defaultSpotifyTasteDir));
+      return;
+    }
+
+    if (urlPath === '/api/act-ratings' && req.method === 'PUT') {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        res.writeHead(400); res.end('Invalid JSON body'); return;
+      }
+      const owner = body.owner || 'kevin';
+      const act = body.act;
+      const stars = body.stars;
+      const result = setActRating(owner, act, stars, { note: body.note || null, tasteDir: defaultSpotifyTasteDir });
+      if (!result.ok) {
+        sendJson(res, 400, { error: result.error });
+        return;
+      }
+      sendJson(res, 200, { ok: true, entry: result.entry, ratings: result.ratings });
       return;
     }
 

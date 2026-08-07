@@ -60,9 +60,57 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .drow{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--rule)}
 .drow:last-child{border-bottom:none}
 .drow-name{font-size:13px;color:var(--mid)}
-.dstars{white-space:nowrap}
+.drow-main{min-width:0;flex:1;padding-right:12px}
+.drow-title{font-size:13px;font-weight:600;color:var(--navy);line-height:1.35}
+.drow-meta{font-size:11px;color:var(--sub);margin-top:2px;line-height:1.35}
+.dstars{white-space:nowrap;flex-shrink:0}
 .dstar{cursor:pointer;font-size:16px;color:var(--rule);user-select:none}
 .dstar.filled{color:#d4a017}
+.dining-count{font-size:11px;font-weight:600;color:var(--sub);margin-left:6px;letter-spacing:0;text-transform:none}
+.dining-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;align-items:start}
+.dining-grid .panel{padding:14px 16px}
+.dining-grid .ptitle{font-size:12px;margin-bottom:10px;padding-bottom:8px}
+.dining-grid .drow{padding:6px 0}
+.dining-grid .drow-title{font-size:12px}
+.venue-cats{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}
+.venue-cat .slabel{margin-top:0;margin-bottom:10px;font-size:10px;padding-bottom:6px}
+.venue-cat .panel{padding:12px 14px}
+.show-block{margin-bottom:18px}
+.show-block:last-child{margin-bottom:0}
+.show-block-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:10px}
+.show-row{display:grid;grid-template-columns:56px minmax(0,1fr) 112px 64px;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--rule2)}
+.show-row:last-child{border-bottom:none}
+.show-date{text-align:center;line-height:1.15}
+.show-date-mon{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
+.show-date-day{display:block;font-size:22px;font-weight:700;color:var(--navy)}
+.show-act{font-size:14px;font-weight:600;color:var(--navy);line-height:1.3}
+.show-venue{font-size:12px;color:var(--sub);margin-top:2px}
+.show-pitch{font-size:12px;color:var(--mid);margin-top:4px;line-height:1.4;max-width:42em}
+.show-scores{display:grid;grid-template-columns:repeat(2,1fr);gap:4px;text-align:center}
+.show-score{line-height:1.15}
+.show-score-who{display:block;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--sub)}
+.show-score-num{display:block;font-size:16px;font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums}
+.show-score-num.muted{color:var(--sub);font-weight:600}
+.show-score-basis{display:block;font-size:9px;color:var(--sub);margin-top:1px}
+.show-score-who.owner-kevin,.show-score-num.owner-kevin{color:var(--blue)}
+.show-score-who.owner-hanna,.show-score-num.owner-hanna{color:var(--p5)}
+.todo-owner.owner-kevin{background:var(--blue)}
+.todo-owner.owner-hanna{background:var(--p5)}
+.show-suggest-stars{margin-top:6px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.show-star-row{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--sub)}
+.show-star-row .star-btn{border:none;background:transparent;cursor:pointer;padding:0 1px;font-size:14px;line-height:1;color:var(--rule);opacity:.85}
+.show-star-row .star-btn.on{color:var(--gold)}
+.show-star-row .star-btn:hover{color:var(--gold)}
+.show-star-label{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-right:2px}
+.show-link{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--blue);text-decoration:none;white-space:nowrap;text-align:right}
+.show-link:hover{text-decoration:underline}
+.show-empty{font-size:13px;color:var(--mid);padding:8px 0}
+@media(max-width:700px){
+  .show-row{grid-template-columns:48px 1fr;grid-template-rows:auto auto}
+  .show-scores{grid-column:1 / -1;grid-template-columns:repeat(2,1fr);justify-self:stretch;margin-top:4px}
+  .show-link{grid-column:2;justify-self:end}
+}
+
 .goal{padding:14px 0;border-bottom:1px solid var(--rule2)}
 .goal:last-child{border-bottom:none;padding-bottom:0}
 .goal-head{display:flex;justify-content:space-between;margin-bottom:7px}
@@ -161,7 +209,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 
 @media(max-width:900px){
   .content{padding:20px}
-  .g2,.g3{grid-template-columns:1fr}
+  .g2,.g3,.dining-grid,.venue-cats{grid-template-columns:1fr}
   .m4,.m3{grid-template-columns:1fr 1fr}
   .chart-controls{grid-template-columns:1fr 1fr}
   .stat-strip{grid-template-columns:1fr 1fr}
@@ -1033,8 +1081,7 @@ function renderTodosSection() {
   const daysAgo = (dateStr) => Math.floor((today - new Date(dateStr)) / 86400000);
   const ownerPill = (owner) => {
     const idx = ownerIds().indexOf(owner);
-    const alt = idx >= 0 && idx % 2 === 1 ? ' todo-owner-alt' : '';
-    return `<span class="todo-owner${alt}">${ownerDisplayName(owner)}</span>`;
+    return `<span class="todo-owner ${ownerColorClass(owner)}">${ownerDisplayName(owner)}</span>`;
   };
 
   // Done items stay in data/todos.json for history; dashboard only shows open ones.
@@ -1131,12 +1178,23 @@ async function loadVenuesToFollow() {
 async function loadUpcomingShowsCache() {
   try {
     const res = await fetch('/api/upcoming-shows-cache');
-    if (!res.ok) return { fetchedAt: null, days: null, findings: [] };
+    if (!res.ok) return { fetchedAt: null, days: null, findings: [], shows: [] };
     return await res.json();
   } catch (err) {
-    return { fetchedAt: null, days: null, findings: [] };
+    return { fetchedAt: null, days: null, findings: [], shows: [] };
   }
 }
+
+async function loadShowTasteMatches() {
+  try {
+    const res = await fetch('/api/show-taste-matches');
+    if (!res.ok) return { owners: {}, shows: [] };
+    return await res.json();
+  } catch (err) {
+    return { owners: {}, shows: [] };
+  }
+}
+
 
 // Live read of favorite_places.json (2026-08-05), following the exact same
 // pattern as loadVenuesToFollow/loadUpcomingShowsCache above — the tab used
@@ -1206,7 +1264,7 @@ async function onRateClick(name, kind, rating, el) {
   }
   console.error(`Failed to save rating for "${name}" (${kind}, ${rating} stars) — stars left unchanged.`);
   const row = container.closest('.drow');
-  const nameEl = row && row.querySelector('.drow-name');
+  const nameEl = row && (row.querySelector('.drow-title') || row.querySelector('.drow-name'));
   if (nameEl && !nameEl.textContent.includes('(save failed)')) {
     const original = nameEl.textContent;
     nameEl.textContent = `${original} (save failed)`;
@@ -1214,18 +1272,22 @@ async function onRateClick(name, kind, rating, el) {
   }
 }
 
-// kind: 'restaurant' rows come from favorite_places.json (cuisine/location);
-// kind: 'venue' rows come from venues_to_follow.json's venues array
-// (vibe/area instead) — falls back across both field-name pairs so one
-// row renderer covers both shapes with the same star-control pattern.
+// kind: 'restaurant' rows — cuisine/location. Venues — name + type/area only
+// (long vibe essays made the Venues tab unreadable).
 function placeRowHTML(place, kind) {
-  const detail = place.cuisine || place.vibe || '';
-  const location = place.location || place.area || '';
-  const detailText = detail ? ` — ${detail}` : '';
-  const locationText = location ? ` (${location})` : '';
+  const title = place.name || '';
+  let meta = '';
+  if (kind === 'venue') {
+    meta = [place.type, place.area].filter(Boolean).join(' · ');
+  } else {
+    meta = [place.cuisine, place.location].filter(Boolean).join(' · ');
+  }
   return `
     <div class="drow">
-      <div class="drow-name">${place.name}${detailText}${locationText}</div>
+      <div class="drow-main">
+        <div class="drow-title">${title}</div>
+        ${meta ? `<div class="drow-meta">${meta}</div>` : ''}
+      </div>
       ${starsHTML(place.name, kind, place.rating)}
     </div>`;
 }
@@ -1234,25 +1296,275 @@ function eligibleFavorites(places, tag) {
   return (places || []).filter((p) => p[tag]);
 }
 
-function showsFindingsHTML(cache) {
-  if (!cache.findings.length) {
-    return `<div class="callout">Nothing cached yet — ask the bot about upcoming shows in Telegram to populate this.</div>`;
-  }
-  const fetchedLabel = cache.fetchedAt ? new Date(cache.fetchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
-  const findingsHTML = cache.findings.map((f) => `<div class="drow"><div class="drow-name" style="white-space:pre-wrap">${f.text}</div></div>`).join('');
-  return `<div class="callout">Last checked ${fetchedLabel} (next ${cache.days} days)</div>${findingsHTML}`;
+
+function sortByRating(places) {
+  return [...(places || [])].sort((a, b) => (b.rating || 0) - (a.rating || 0) || a.name.localeCompare(b.name));
 }
 
-// The real show/comedy/music venues to follow (Largo, Westside Comedy
-// Theater, Hollywood Bowl, etc.) from venues_to_follow.json's top-level
-// `venues` array — replaces the old weekendSpotsHTML(weekendSocialSpots)
-// section (2026-08-05), which rendered venuesData's OTHER field and turned
-// out to be entirely duplicate restaurant/bar data: every one of its 17
-// names already exists in favorite_places_raw.json as a want-to-go entry
-// (merged earlier this session — see claude.md's dining section), so a place
-// like Gjelina was rendering twice with two separate, disagreeing star
-// controls. Grouped by category so comedy/music/outdoor venues aren't one
-// flat undifferentiated list.
+function humanizeCategory(cat) {
+  return String(cat || 'other').replace(/-/g, ' ');
+}
+
+function escapeHtml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatShowDateParts(iso) {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return {
+    mon: d.toLocaleDateString('en-US', { month: 'short' }),
+    day: String(d.getDate()),
+  };
+}
+
+/** Pull structured shows out of LLM prose / dash-separated lines. */
+function parseShowsFromText(text, fallbackUrls) {
+  if (!text) return [];
+  const today = isoDate(new Date());
+  const urlRe = /https?:\/\/\S+/gi;
+  const dateRe = /\b(20\d{2}-\d{2}-\d{2})\b/;
+  const junk = /^(i('ll| will) search|based on |here are the|most venue|note:|no current|for other artists|confirmed la)/i;
+  const shows = [];
+  const lines = text.replace(/\r/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
+
+  let pendingVenue = null;
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    if (junk.test(line)) continue;
+
+    const venueOnly = line.match(/^\*\*(.+?)\*\*\s*[—–\-:]?\s*$/);
+    if (venueOnly) {
+      pendingVenue = venueOnly[1].trim();
+      continue;
+    }
+
+    line = line
+      .replace(/^[-*•]\s+/, '')
+      .replace(/\*\*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!line || junk.test(line)) continue;
+
+    // Join short continuation lines that carry date/url after a venue header
+    let combined = line;
+    if (pendingVenue && !dateRe.test(combined) && i + 1 < lines.length) {
+      const next = lines[i + 1].replace(/^[-*•]\s+/, '').replace(/\*\*/g, '').trim();
+      if (dateRe.test(next) || urlRe.test(next)) {
+        combined = `${line} ${next}`;
+        i += 1;
+      }
+    }
+
+    const dateMatch = combined.match(dateRe);
+    if (!dateMatch) {
+      pendingVenue = null;
+      continue;
+    }
+    const date = dateMatch[1];
+    if (date < today) {
+      pendingVenue = null;
+      continue;
+    }
+
+    const urls = combined.match(urlRe) || [];
+    let rest = combined.replace(urlRe, '').replace(dateRe, '');
+    rest = rest.replace(/[—–]/g, '|').replace(/,/g, '|');
+    const parts = rest.split('|').map((p) => p.replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '').trim()).filter(Boolean);
+
+    let act = '';
+    let venue = pendingVenue || '';
+    pendingVenue = null;
+
+    if (parts.length >= 2) {
+      if (venue) act = parts[0];
+      else { act = parts[0]; venue = parts[1]; }
+    } else if (parts.length === 1) {
+      act = parts[0];
+    }
+
+    if (!act && !venue) continue;
+    shows.push({
+      act: act || 'Show',
+      venue: venue || '',
+      date,
+      sourceUrl: urls[0] || (fallbackUrls && fallbackUrls[0]) || null,
+    });
+  }
+  return shows;
+}
+
+function normalizeShowList(cache) {
+  const out = [];
+  const seen = new Set();
+  const push = (s, label) => {
+    if (!s || !s.date) return;
+    const key = `${s.date}|${(s.act || '').toLowerCase()}|${(s.venue || '').toLowerCase()}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ ...s, label: label || s.label || null });
+  };
+
+  if (Array.isArray(cache.shows)) {
+    for (const s of cache.shows) push(s, s.label);
+  }
+  for (const f of cache.findings || []) {
+    if (Array.isArray(f.shows)) {
+      for (const s of f.shows) push(s, f.label);
+    } else if (f.text) {
+      for (const s of parseShowsFromText(f.text, f.urls)) push(s, f.label);
+    }
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date) || (a.act || '').localeCompare(b.act || ''));
+  return out;
+}
+
+function ownerColorClass(ownerId) {
+  if (ownerId === 'kevin') return 'owner-kevin';
+  if (ownerId === 'hanna') return 'owner-hanna';
+  return '';
+}
+
+function scoreNumClass(score) {
+  if (score == null) return 'muted';
+  return '';
+}
+
+function ownerScoreCellHTML(owner, scoreObj) {
+  const who = (owner.displayName || owner.id).slice(0, 1);
+  const colorCls = ownerColorClass(owner.id);
+  if (!scoreObj || !scoreObj.linked) {
+    return `<div class="show-score" title="${escapeHtml(owner.displayName)} Spotify not linked">
+      <span class="show-score-who ${colorCls}">${escapeHtml(who)}</span>
+      <span class="show-score-num muted">—</span>
+      <span class="show-score-basis">off</span>
+    </div>`;
+  }
+  if (scoreObj.score == null) {
+    return `<div class="show-score" title="Score unavailable">
+      <span class="show-score-who ${colorCls}">${escapeHtml(who)}</span>
+      <span class="show-score-num muted">?</span>
+      <span class="show-score-basis">${escapeHtml(scoreObj.label || '?')}</span>
+    </div>`;
+  }
+  const basis = scoreObj.basis === 'claude' ? 'est.'
+    : scoreObj.basis === 'comedy' ? 'comedy'
+      : scoreObj.basis === 'comedy-venue' ? 'venue'
+        : scoreObj.basis === 'follow' ? 'follow'
+          : scoreObj.basis === 'like' ? 'like'
+            : scoreObj.basis === 'playlist' ? 'list'
+              : (scoreObj.label || '');
+  const tip = [
+    owner.displayName,
+    `${scoreObj.score}%`,
+    scoreObj.label || scoreObj.basis,
+    scoreObj.artistName,
+    scoreObj.reason,
+  ].filter(Boolean).join(' · ');
+  return `<div class="show-score" title="${escapeHtml(tip)}">
+    <span class="show-score-who ${colorCls}">${escapeHtml(who)}</span>
+    <span class="show-score-num ${colorCls}">${scoreObj.score}</span>
+    <span class="show-score-basis">${escapeHtml(basis)}</span>
+  </div>`;
+}
+
+function showScoresHTML(show) {
+  const owners = ownersList();
+  const scores = show.scores || {};
+  const cells = owners.map((o) => ownerScoreCellHTML(o, scores[o.id])).join('');
+  return `<div class="show-scores">${cells}</div>`;
+}
+
+function showPitchHTML(show) {
+  if (!show.pitch) return '';
+  return `<div class="show-pitch">${escapeHtml(show.pitch)}</div>`;
+}
+
+function suggestionStarsHTML(show) {
+  const owners = ownersList().filter((o) => show.scores?.[o.id]?.linked);
+  if (!owners.length) return '';
+  const rows = owners.map((o) => {
+    const stars = show.suggestionStars?.[o.id] ?? show.scores?.[o.id]?.suggestionStars ?? null;
+    const btns = [1, 2, 3, 4, 5].map((n) =>
+      `<button type="button" class="star-btn${stars >= n ? ' on' : ''}" data-act-star="${n}" data-owner="${escapeHtml(o.id)}" data-act="${escapeHtml(show.act || '')}" title="Suggestion quality ${n}/5">★</button>`
+    ).join('');
+    return `<span class="show-star-row" title="How good was this suggestion for ${escapeHtml(o.displayName)}?">
+      <span class="show-star-label ${ownerColorClass(o.id)}">${escapeHtml((o.displayName || o.id).slice(0, 1))}</span>${btns}
+    </span>`;
+  }).join('');
+  return `<div class="show-suggest-stars"><span style="font-size:10px;color:var(--sub)">Suggestion</span>${rows}</div>`;
+}
+
+function showRowHTML(show) {
+  const parts = formatShowDateParts(show.date);
+  const dateHtml = parts
+    ? `<div class="show-date"><span class="show-date-mon">${parts.mon}</span><span class="show-date-day">${parts.day}</span></div>`
+    : `<div class="show-date"><span class="show-date-mon">—</span><span class="show-date-day">?</span></div>`;
+  const link = show.sourceUrl
+    ? `<a class="show-link" href="${escapeHtml(show.sourceUrl)}" target="_blank" rel="noopener">Tickets</a>`
+    : `<span class="show-link"></span>`;
+  return `<div class="show-row">
+    ${dateHtml}
+    <div>
+      <div class="show-act">${escapeHtml(show.act || 'Show')}</div>
+      ${show.venue ? `<div class="show-venue">${escapeHtml(show.venue)}</div>` : ''}
+      ${showPitchHTML(show)}
+      ${suggestionStarsHTML(show)}
+    </div>
+    ${showScoresHTML(show)}
+    ${link}
+  </div>`;
+}
+
+function showsFindingsHTML(cache, tasteMatches, kind = 'music') {
+  if (!cache) {
+    return `<div class="callout" style="margin-top:0">Nothing cached yet — run <code>npm run shows:pull</code>.</div>`;
+  }
+  const label = kind === 'comedy' ? 'Comedy' : 'Music';
+  let shows = Array.isArray(tasteMatches?.byKind?.[kind]) && tasteMatches.byKind[kind].length
+    ? tasteMatches.byKind[kind]
+    : (Array.isArray(tasteMatches?.shows) ? tasteMatches.shows : normalizeShowList(cache))
+      .filter((s) => (s.kind || 'music') === kind);
+
+  if (!shows.length) {
+    return `<div class="callout" style="margin-top:0">No ${label.toLowerCase()} shows in the current window — refresh with <code>npm run shows:pull</code>.</div>`;
+  }
+
+  const fetchedLabel = cache.fetchedAt
+    ? new Date(cache.fetchedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    : '';
+  const ownerNote = ownersList().map((o) => {
+    const st = tasteMatches?.owners?.[o.id];
+    if (!st?.connected) return `${o.displayName}: not linked`;
+    return `${o.displayName}: ${st.hasProfile ? 'profile' : 'linked'}`;
+  }).join(' · ');
+
+  const block = `
+    <div class="show-block">
+      <div class="show-block-label">Best ${label.toLowerCase()} · ${shows.length}</div>
+      ${shows.map(showRowHTML).join('')}
+    </div>`;
+
+  return `<div class="callout" style="margin-top:0;margin-bottom:16px">Last checked ${fetchedLabel}${cache.days ? ` · next ${cache.days} days` : ''} · ${shows.length} ${label.toLowerCase()}<br><span style="font-size:12px;color:var(--sub)">${kind === 'comedy'
+    ? `Comedy taste: likes clean / improv / silly / deadpan / story · dislikes crude · venue stars matter · ${escapeHtml(ownerNote)}`
+    : `Ticket fit · venue stars boost/penalize · suggestion ★ = feedback only · ${escapeHtml(ownerNote)}`}</span></div>${block}`;
+}
+
+
+
+function restaurantColumnHTML(title, places) {
+  const sorted = sortByRating(places);
+  const body = sorted.length
+    ? sorted.map((p) => placeRowHTML(p, 'restaurant')).join('')
+    : '<div class="callout" style="margin-top:0">None tagged yet.</div>';
+  return `<div class="panel"><div class="ptitle">${title} <span class="dining-count">${sorted.length}</span></div>${body}</div>`;
+}
+
 function venuesHTML(venues) {
   if (!venues || !venues.length) return '<div class="callout">No venues tracked yet.</div>';
   const byCategory = new Map();
@@ -1261,47 +1573,114 @@ function venuesHTML(venues) {
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     byCategory.get(cat).push(v);
   }
-  return [...byCategory.entries()].map(([category, vs]) => `
-    <div class="slabel" style="margin-top:18px;font-size:10px">${category}</div>
-    ${vs.map((v) => placeRowHTML(v, 'venue')).join('')}
-  `).join('');
+  return `<div class="venue-cats">${[...byCategory.entries()].map(([category, vs]) => `
+    <div class="venue-cat">
+      <div class="slabel">${humanizeCategory(category)} <span class="dining-count">${vs.length}</span></div>
+      <div class="panel">${sortByRating(vs).map((v) => placeRowHTML(v, 'venue')).join('')}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+function showDining(sub, el) {
+  document.querySelectorAll('#pg-dining .subpage').forEach((p) => p.classList.remove('active'));
+  document.querySelectorAll('#pg-dining .subtab').forEach((t) => t.classList.remove('active'));
+  const page = $('sub-dining-' + sub);
+  if (page) page.classList.add('active');
+  if (el) el.classList.add('active');
 }
 
 async function renderDiningShowsTab() {
-  const [favoritePlacesData, venuesData, showsCache] = await Promise.all([loadFavoritePlaces(), loadVenuesToFollow(), loadUpcomingShowsCache()]);
+  const [favoritePlacesData, venuesData, showsCache, tasteMatches] = await Promise.all([
+    loadFavoritePlaces(),
+    loadVenuesToFollow(),
+    loadUpcomingShowsCache(),
+    loadShowTasteMatches(),
+  ]);
   const places = favoritePlacesData.places || [];
   const familyDinner = eligibleFavorites(places, 'familyFriendly');
   const dateNight = eligibleFavorites(places, 'dinnerSpot');
   const weekendSocial = eligibleFavorites(places, 'socialSpot');
+  const venues = venuesData.venues || [];
+  const musicShows = tasteMatches.byKind?.music
+    || (tasteMatches.shows || []).filter((s) => (s.kind || 'music') === 'music');
+  const comedyShows = tasteMatches.byKind?.comedy
+    || (tasteMatches.shows || []).filter((s) => s.kind === 'comedy');
+  const musicCount = musicShows.length;
+  const comedyCount = comedyShows.length;
 
   $('pg-dining').innerHTML = `
     <div class="content">
-      <div class="slabel">Family Dinner</div>
-      <div class="panel">
-        ${familyDinner.length ? familyDinner.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No family-friendly favorites tagged yet.</div>'}
+      <div class="subnav">
+        <div class="subtab active" id="subtab-dining-music" onclick="showDining('music', this)">
+          Music${musicCount ? `<span class="dining-count">${musicCount}</span>` : ''}
+        </div>
+        <div class="subtab" id="subtab-dining-comedy" onclick="showDining('comedy', this)">
+          Comedy${comedyCount ? `<span class="dining-count">${comedyCount}</span>` : ''}
+        </div>
+        <div class="subtab" id="subtab-dining-restaurants" onclick="showDining('restaurants', this)">
+          Restaurants<span class="dining-count">${places.length || ''}</span>
+        </div>
+        <div class="subtab" id="subtab-dining-venues" onclick="showDining('venues', this)">
+          Venues<span class="dining-count">${venues.length || ''}</span>
+        </div>
       </div>
 
-      <div class="slabel">Date Night — Restaurants</div>
-      <div class="panel">
-        ${dateNight.length ? dateNight.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No date-night favorites tagged yet.</div>'}
+      <div class="subpage active" id="sub-dining-music">
+        <div class="panel" style="padding:18px 20px">
+          ${showsFindingsHTML(showsCache, tasteMatches, 'music')}
+        </div>
       </div>
 
-      <div class="slabel">Date Night &amp; Weekend Social — Upcoming Shows</div>
-      <div class="panel">
-        ${showsFindingsHTML(showsCache)}
+      <div class="subpage" id="sub-dining-comedy">
+        <div class="panel" style="padding:18px 20px">
+          ${showsFindingsHTML(showsCache, tasteMatches, 'comedy')}
+        </div>
       </div>
 
-      <div class="slabel">Weekend Social — Restaurants</div>
-      <div class="panel">
-        ${weekendSocial.length ? weekendSocial.map((p) => placeRowHTML(p, 'restaurant')).join('') : '<div class="callout">No weekend-social favorites tagged yet.</div>'}
+      <div class="subpage" id="sub-dining-restaurants">
+        <div class="dining-grid">
+          ${restaurantColumnHTML('Family dinner', familyDinner)}
+          ${restaurantColumnHTML('Date night', dateNight)}
+          ${restaurantColumnHTML('Weekend social', weekendSocial)}
+        </div>
       </div>
 
-      <div class="slabel">Venues to Follow — Comedy, Music &amp; Outdoor Shows</div>
-      <div class="panel">
-        ${venuesHTML(venuesData.venues)}
+      <div class="subpage" id="sub-dining-venues">
+        ${venuesHTML(venues)}
       </div>
     </div>`;
+
+  const diningRoot = $('pg-dining');
+  if (diningRoot && !diningRoot.dataset.starBound) {
+    diningRoot.dataset.starBound = '1';
+    diningRoot.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('[data-act-star]');
+      if (!btn) return;
+      const stars = Number(btn.getAttribute('data-act-star'));
+      const owner = btn.getAttribute('data-owner');
+      const act = btn.getAttribute('data-act');
+      if (!act || !owner || !stars) return;
+      try {
+        const res = await fetch('/api/act-ratings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ owner, act, stars }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const row = btn.closest('.show-star-row');
+        if (row) {
+          row.querySelectorAll('.star-btn').forEach((b) => {
+            const n = Number(b.getAttribute('data-act-star'));
+            b.classList.toggle('on', n <= stars);
+          });
+        }
+      } catch (err) {
+        console.warn('act rating failed', err);
+      }
+    });
+  }
 }
+
 
 /* ═══════════════════════════════
    RENDER: DECISIONS (next steps)

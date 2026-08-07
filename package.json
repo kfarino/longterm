@@ -9,6 +9,14 @@
     "build": "node data/build-data.mjs && node data/build-goal-plan-md.mjs",
     "oura:auth": "node scripts/oura-auth-setup.mjs",
     "oura:pull": "node scripts/oura-pull.mjs",
+    "spotify:auth": "node scripts/spotify-auth-setup.mjs",
+    "spotify:pull": "node scripts/spotify-pull.mjs",
+    "spotify:find-shows": "node scripts/spotify-find-shows.mjs",
+    "spotify:match": "node scripts/spotify-match-shows.mjs",
+    "spotify:profile": "node scripts/spotify-taste-profile.mjs",
+    "shows:pull": "node scripts/upcoming-shows-pull.mjs",
+    "shows:weekly": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-weekly-shows-pull.ps1",
+    "spotify:monthly-profile": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monthly-spotify-profile.ps1",
     "check:secrets": "node scripts/check-no-secrets.mjs"
   }
 }
