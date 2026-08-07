@@ -34,7 +34,7 @@
 - Consumes: nothing from earlier tasks.
 - Produces: `defaultOuraStoreDir()`, `storePathForEndpoint(endpoint, storeDir?)`, `emptyStore()`, `loadStore(endpoint, storeDir?)`, `ouraRowId(ownerId, endpoint, record)`, `normalizeRow(ownerId, endpoint, record)`, `upsertOuraRows(endpoint, rows, { storeDir, asOf })`, `queryOura(endpoint, { storeDir, ownerId, startDate, endDate })`, and the constants `OURA_OVERLAP_DAYS = 30`, `OURA_ENDPOINTS` (array of 15 endpoint descriptors), `SINGLETON_ENDPOINTS` (Set).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `data/test-oura-store.mjs`:
 
@@ -158,12 +158,12 @@ test('a corrupt store file degrades to empty rather than throwing', () => {
 console.log('All oura-store tests passed.');
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `node data/test-oura-store.mjs`
 Expected: FAIL — `Cannot find module '../scripts/oura-store.mjs'`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Create `scripts/oura-store.mjs`:
 
@@ -313,12 +313,12 @@ export function queryOura(endpoint, {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `node data/test-oura-store.mjs`
 Expected: PASS — all cases print `ok - ...`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 npm run check:secrets
@@ -339,7 +339,7 @@ git commit -m "Add accumulating per-endpoint Oura store with upsert-by-id."
 - Consumes: Task 1's `OURA_ENDPOINTS`, `SINGLETON_ENDPOINTS`, `OURA_OVERLAP_DAYS`, `normalizeRow`, `upsertOuraRows`, `defaultOuraStoreDir`; and the existing unchanged `getValidAccessToken(ownerId)` / `ouraGet(accessToken, pathSuffix, query)` from `scripts/oura-client.mjs`.
 - Produces: `pullOwner(ownerId, { days, storeDir, ouraGetFn, now })` and `runPull({ ownerIds, days, storeDir, dryRun })`, returning `{ ownerId, endpoints: { [key]: { count, upserted, error } } }` per owner.
 
-- [ ] **Step 1: Replace the sketch's body**
+- [x] **Step 1: Replace the sketch's body**
 
 Replace the entire contents of `scripts/oura-pull.mjs`. The existing file is a connect-sketch (7 endpoints, snapshot-overwrite to `data/oura/<owner>-latest.json`, prints an inventory and stops). It is being deliberately replaced, not extended.
 
@@ -477,18 +477,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 }
 ```
 
-- [ ] **Step 2: Verify the dry run works against the real API**
+- [x] **Step 2: Verify the dry run works against the real API**
 
 Run: `node scripts/oura-pull.mjs --all --dry-run`
 Expected: one line per owner reporting records found, `0 record(s) upserted`, and no files written under `data/oura/`. Endpoints with no data report no error.
 
-- [ ] **Step 3: Do a real pull and confirm accumulation**
+- [x] **Step 3: Do a real pull and confirm accumulation**
 
 Run: `node scripts/oura-pull.mjs --all`
 Then: `node -e "const {loadStore}=await import('./scripts/oura-store.mjs'); console.log(loadStore('daily_sleep').meta)"`
 Expected: `recordCount` > 0, `lastUpdated` is today. Run the pull a second time and confirm `recordCount` does not double.
 
-- [ ] **Step 4: Create the PowerShell wrapper**
+- [x] **Step 4: Create the PowerShell wrapper**
 
 Create `scripts/oura-pull.ps1`, modeled on the existing `budget-tracking-pull.ps1`:
 
@@ -513,7 +513,7 @@ try {
 }
 ```
 
-- [ ] **Step 5: Add the third step to the daily pull, contained**
+- [x] **Step 5: Add the third step to the daily pull, contained**
 
 In `scripts/run-daily-pull.ps1`, add alongside the existing script path variables:
 
@@ -533,12 +533,12 @@ Then, inside the `try` block, after the budget tracking step and before the succ
     }
 ```
 
-- [ ] **Step 6: Verify containment**
+- [x] **Step 6: Verify containment**
 
 Run: `powershell -File scripts/run-daily-pull.ps1 -DryRun`
 Expected: all three steps log; the run reports success. Then temporarily rename `scripts/oura-pull.ps1`, re-run, and confirm the log shows `WARN oura pull failed (continuing)` and the overall run still succeeds. Restore the filename.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 npm run check:secrets
@@ -562,7 +562,7 @@ git commit -m "Rewrite oura-pull as a durable all-endpoint pull; add to daily jo
 - Consumes: Task 1's `queryOura`, `defaultOuraStoreDir`.
 - Produces: `loadHealthOverrides(overridesPath)`, `computeOwnerHealth(ownerId, { sleepRows, stressRows, thresholds, overrides, now })`, `loadHealthContext({ storeDir, goalsPath, overridesPath, now })` returning `{ configured, thresholds, perOwner: { [ownerId]: {...} }, worst }`. Each `perOwner` entry is `{ ownerId, nights, weekNights, baselineNights, weekMean, baseline, drop, stressfulDays, depleted, reason }`. `worst` is `null` or `{ ownerId, depleted: true, reason }`.
 
-- [ ] **Step 1: Add the thresholds block**
+- [x] **Step 1: Add the thresholds block**
 
 In `data/goals.json` **and** `examples/goals.example.json`, add a top-level key:
 
@@ -581,7 +581,7 @@ In `data/goals.json` **and** `examples/goals.example.json`, add a top-level key:
 
 Then run `npm run build` (required after any `goals.json` edit, per `AGENTS.md` §1).
 
-- [ ] **Step 2: Create the committed example overrides file**
+- [x] **Step 2: Create the committed example overrides file**
 
 Create `examples/health_overrides.example.json` with invented entries only:
 
@@ -605,7 +605,7 @@ In `scripts/seed-from-examples.mjs`, add to the `COPIES` array:
   ['health_overrides.example.json', 'health_overrides.json'],
 ```
 
-- [ ] **Step 3: Write the failing test**
+- [x] **Step 3: Write the failing test**
 
 Create `data/test-health-context.mjs`:
 
@@ -795,12 +795,12 @@ test('pickWorst returns null when nobody is depleted', () => {
 console.log('All health-context tests passed.');
 ```
 
-- [ ] **Step 4: Run test to verify it fails**
+- [x] **Step 4: Run test to verify it fails**
 
 Run: `node data/test-health-context.mjs`
 Expected: FAIL — `Cannot find module '../scripts/health-context.mjs'`
 
-- [ ] **Step 5: Write the implementation**
+- [x] **Step 5: Write the implementation**
 
 Create `scripts/health-context.mjs`:
 
@@ -965,17 +965,17 @@ export function loadHealthContext({
 }
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `node data/test-health-context.mjs`
 Expected: PASS — all cases print `ok - ...`
 
-- [ ] **Step 7: Sanity-check against the real store**
+- [x] **Step 7: Sanity-check against the real store**
 
 Run: `node -e "const {loadHealthContext}=await import('./scripts/health-context.mjs'); const c=loadHealthContext(); console.log(JSON.stringify({configured:c.configured, worst:c.worst, perOwner:Object.fromEntries(Object.entries(c.perOwner).map(([k,v])=>[k,{nights:v.nights,depleted:v.depleted,reason:v.reason}]))},null,2))"`
 Expected: an owner with a newly set-up ring reports `insufficient_data`; an owner with a month of history reports a real week/baseline pair. **Do not paste this output into a commit message or doc.**
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 npm run check:secrets
@@ -1001,7 +1001,7 @@ git commit -m "Add health-context depletion rule with durable overrides."
 
 **Important context:** `recommendForSlot`'s `slot.tier === 'low-key'` branch has **never executed** in the bot or recap path. `get_dining_plan` builds its slot from `slotForOccasion()` → a `goals.json` `diningRoutine` entry, and no entry carries that tier. The budget-driven low-key path exists only in `dashboard_v5.html`'s `planRemainingMonth` feeding its own inline duplicate of this function. This task is the first caller ever to reach that branch here, so the tests own it explicitly.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `data/test-dining-recommendation.mjs`, before its final summary log:
 
@@ -1078,12 +1078,12 @@ test('no depletion leaves suggestions untouched', () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node data/test-dining-recommendation.mjs` then `node data/test-telegram-bot.mjs`
 Expected: FAIL — the reasoning still reads "Budget is tight", and `get_dining_plan` suggests the restaurant regardless of depletion.
 
-- [ ] **Step 3: Add `lowKeyReason` to `recommendForSlot`**
+- [x] **Step 3: Add `lowKeyReason` to `recommendForSlot`**
 
 In `scripts/dining-recommendation.mjs`, change the signature and the low-key branch:
 
@@ -1101,7 +1101,7 @@ export function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHa
   }
 ```
 
-- [ ] **Step 3b: Thread `now` into `get_dining_plan` so an injected clock reaches the date math**
+- [x] **Step 3b: Thread `now` into `get_dining_plan` so an injected clock reaches the date math**
 
 In `scripts/telegram-bot-tools.mjs`, give `get_dining_plan` an optional `now` and pass it down:
 
@@ -1136,7 +1136,7 @@ Update `gatherBundle` to accept and forward `now` to its `diningSummary(monthPla
 Run: `node data/test-telegram-recap.mjs`
 Expected: the previously-red "already covered by an evening calendar event" case now PASSES, along with everything else in the file.
 
-- [ ] **Step 4: Add the depletion gate to `get_dining_plan`**
+- [x] **Step 4: Add the depletion gate to `get_dining_plan`**
 
 In `scripts/telegram-bot-tools.mjs`, inside `get_dining_plan`, replace the `recommendForSlot` call site:
 
@@ -1155,12 +1155,12 @@ In `scripts/telegram-bot-tools.mjs`, inside `get_dining_plan`, replace the `reco
   const rec = recommendForSlot(effectiveSlot, diningContext.favorites, diningContext.recentDiningActivity, diningContext.lowKeyHangIdeas, alreadyUsedNames, lowKeyReason);
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `node data/test-dining-recommendation.mjs` then `node data/test-telegram-bot.mjs`
 Expected: PASS, including every pre-existing case (the sixth parameter is optional, so all existing callers behave exactly as before).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 npm run check:secrets
@@ -1182,7 +1182,7 @@ git commit -m "Let a caller state the low-key cause; gate weekend suggestions on
 - Consumes: Task 3's `loadHealthContext`, Task 4's `diningContext.depletion`.
 - Produces: `get_health_status(healthContext)` (exported), `HEALTH_TOOL_NAMES` (exported `Set`), one `TOOL_DEFS` entry, one `TOOL_IMPL` entry, and `health` in the recap bundle.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `data/test-telegram-recap.mjs`, before its final `console.log('All tests passed.')`. Use the file's existing helpers — `asyncTest`, `writeFixture(dir, {...}) → paths`, `baseOpts(paths, extra)`, and the `SUNDAY` / `THURSDAY` date constants — rather than inventing new ones:
 
@@ -1255,12 +1255,12 @@ test('get_health_status degrades honestly when nothing has been pulled', () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `node data/test-telegram-recap.mjs` then `node data/test-telegram-bot.mjs`
 Expected: FAIL — `get_health_status is not defined`, and `result.bundle.health` is `undefined`.
 
-- [ ] **Step 3: Add the bot tool**
+- [x] **Step 3: Add the bot tool**
 
 In `scripts/telegram-bot-tools.mjs`, add near the other read-only `get_*` implementations:
 
@@ -1304,7 +1304,7 @@ Add to `TOOL_IMPL`:
   get_health_status: (healthContext) => get_health_status(healthContext),
 ```
 
-- [ ] **Step 4: Wire the dispatcher**
+- [x] **Step 4: Wire the dispatcher**
 
 In `scripts/telegram-bot-poll.mjs`, add `HEALTH_TOOL_NAMES` to the existing import from `./telegram-bot-tools.mjs`, add `import { loadHealthContext } from './health-context.mjs';`, build `const healthContext = loadHealthContext();` alongside the existing `financialContext`, and add a dispatch branch immediately after the `FINANCIAL_TOOL_NAMES` branch:
 
@@ -1316,7 +1316,7 @@ In `scripts/telegram-bot-poll.mjs`, add `HEALTH_TOOL_NAMES` to the existing impo
 
 **Do not** pass `depletion` into the interactive bot's `diningContext` — the interactive path must stay unaffected.
 
-- [ ] **Step 5: Wire the recap**
+- [x] **Step 5: Wire the recap**
 
 In `scripts/telegram-bot-recap.mjs`:
 
@@ -1350,28 +1350,28 @@ Add to `RECAP_SYSTEM_PROMPT`, after the Planning paragraph:
 Health: one short line per person from health.perOwner — how this week compared to that person's own baseline, using the real figures in their reason string, never a bare adjective like "poor" or "fine" on its own. If someone's reason is "insufficient_data", say plainly that their baseline is still building and give the night count rather than implying anything about how they slept. If healthAffectsPlans is false, report only — do not suggest changing any plan on the basis of health.
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `node data/test-telegram-recap.mjs` then `node data/test-telegram-bot.mjs`
 Expected: PASS, including all pre-existing cases.
 
-- [ ] **Step 7: Verify a real dry-run recap end to end**
+- [x] **Step 7: Verify a real dry-run recap end to end**
 
 Run: `node scripts/telegram-bot-recap.mjs --dry-run`
 Expected: a composed recap with a Health section carrying real figures and naming whoever is still building a baseline. **Nothing is sent** (`--dry-run`), and the output must not be pasted into a commit message.
 
-- [ ] **Step 8: Run the whole suite**
+- [x] **Step 8: Run the whole suite**
 
 Run each of: `node data/test-oura-store.mjs`, `node data/test-health-context.mjs`, `node data/test-dining-recommendation.mjs`, `node data/test-telegram-bot.mjs`, `node data/test-telegram-recap.mjs`, `node data/test-calendar-sync.mjs`, `node data/test-dashboard-contract.mjs`
 Expected: all pass.
 
-- [ ] **Step 9: Update the architecture docs**
+- [x] **Step 9: Update the architecture docs**
 
 In `claude.md`, add `data/oura/`, `data/health_overrides.json`, `scripts/oura-store.mjs`, and `scripts/health-context.mjs` to the Project files list, and note the Thursday-swap/Sunday-report split. In `AGENTS.md` §0, add `data/oura/*` and `data/health_overrides.json` to the never-commit table.
 
 While in `claude.md`, correct the stale claim that `dashboard_v5.html` is opened over `file://` — `dashboard-server.mjs` replaced that with `http://localhost` and several panels now fetch live `/api/` routes.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 npm run check:secrets
