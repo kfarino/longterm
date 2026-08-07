@@ -116,7 +116,7 @@ test('rule:stress ignores the baseline entirely', () => {
 });
 
 test('a brand-new ring reports insufficient_data, never depleted', () => {
-  const rows = sleepRows({ 1: 67 });
+  const rows = sleepRows({ 1: 74 });
   const r = computeOwnerHealth('alex', { sleepRows: rows, stressRows: [], thresholds: THRESHOLDS, overrides: null, now: NOW });
   assert.equal(r.depleted, false);
   assert.equal(r.reason, 'insufficient_data');
