@@ -68,6 +68,37 @@ await test("show('position', ...) populates Status but leaves Trajectory empty; 
   assert.equal(chartCalls, 0, 'Chart must not be constructed before Trajectory is ever opened');
 });
 
+await test('every tab switch resets scroll to the top of the page', () => {
+  // Regression (2026-08-06): the tabs differ a lot in height — Planner runs
+  // ~2000px with the month calendar and travel, Current Position ~1300px — and
+  // the browser only *clamps* the previous scroll offset to the shorter page
+  // rather than resetting it. Switching from a scrolled-down Planner therefore
+  // landed you partway down the new tab, looking at whitespace. Reported as
+  // "the dashboard isn't showing anything"; the content was always rendered,
+  // just scrolled past. Verified live in Chrome before and after the fix.
+  const d = loadDashboard();
+  const before = global.window.scrollCalls.length;
+
+  d.show('position', fakeTab());
+  d.show('goals', fakeTab());
+  d.show('decisions', fakeTab());
+
+  const calls = global.window.scrollCalls.slice(before);
+  assert.equal(calls.length, 3, 'each show() should reset scroll exactly once');
+  for (const c of calls) assert.deepEqual(c, [0, 0], 'scroll should reset to the very top');
+});
+
+await test('switching Position sub-tabs also resets scroll', () => {
+  const d = loadDashboard();
+  d.show('position', fakeTab());
+  const before = global.window.scrollCalls.length;
+
+  d.showPosition('trajectory', fakeTab());
+
+  assert.deepEqual(global.window.scrollCalls.slice(before), [[0, 0]],
+    'Status and Trajectory are different heights — the same clamp-not-reset problem applies');
+});
+
 await test("Status no longer includes phase cards (moved to the Goals tab)", () => {
   const d = loadDashboard();
   d.show('position', fakeTab());

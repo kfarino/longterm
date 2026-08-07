@@ -121,7 +121,15 @@ export function loadDashboard(dataOverride, monthPlanEventsSeed, routineOverride
     throw new Error(`Failed to parse data.js's window.DATA — check the extraction regex against the file's current format (${err.message})`);
   }
   const monthPlanApi = new FakeMonthPlanApi(monthPlanEventsSeed, routineOverridesSeed);
-  global.window = { DATA: dataOverride ? { ...bundled, ...dataOverride } : bundled };
+  // scrollTo is a no-op recorder rather than absent: show()/showPosition()
+  // reset scroll on every tab switch (see dashboard_v5.html), so a window stub
+  // without it turns every tab switch into a TypeError.
+  const scrollCalls = [];
+  global.window = {
+    DATA: dataOverride ? { ...bundled, ...dataOverride } : bundled,
+    scrollTo: (x, y) => { scrollCalls.push([x, y]); },
+    scrollCalls,
+  };
   global.fetch = (url, opts) => monthPlanApi.fetch(url, opts);
   global.Chart = function (ctx, cfg) { this.data = cfg.data; this.update = () => {}; };
 

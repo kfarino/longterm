@@ -498,6 +498,10 @@ function showPosition(id, el) {
     renderTrajectory(); // reveal container first, then inject+initChart — order matters, see initChart()
     renderedSections.add('trajectory');
   }
+  // Same clamp-not-reset problem as show() — Status and Trajectory are very
+  // different heights, so switching between them from a scrolled position
+  // leaves you mid-page.
+  window.scrollTo(0, 0);
 }
 
 function jumpToTrajectory() {
@@ -1959,6 +1963,14 @@ function show(id, el) {
     renderPositionTab();
     rendered.add('position');
   }
+  // Reset scroll on every tab switch. The tabs differ a lot in height (Planner
+  // runs ~2000px with the month calendar and travel; Current Position is
+  // ~1300px), and the browser only *clamps* the old scroll offset to the new
+  // page instead of resetting it — so switching from a scrolled-down Planner
+  // landed you partway down the shorter tab, showing whitespace where the top
+  // of the page should be. Reported as "the dashboard isn't showing anything";
+  // the content was always rendered, just scrolled past.
+  window.scrollTo(0, 0);
 }
 
 /* ═══════════════════════════════
