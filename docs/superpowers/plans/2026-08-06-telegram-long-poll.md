@@ -185,6 +185,18 @@ function baseLoopOpts(dir, extra = {}) {
   return {
     getUpdatesClient: emptyGetUpdatesClient(),
     telegramClient: async () => ({ ok: true }),
+    // Deliberately no updatesFixture here — the point of this file is to
+    // exercise getUpdatesClient across multiple iterations. That means
+    // runOnce falls through to readLocalEnv(envPath) unless envPath is
+    // overridden, so it must point somewhere guaranteed not to exist —
+    // otherwise this test would depend on this machine's real
+    // ~/.longterm/telegram.env, violating AGENTS.md's "tests must pass
+    // without real .env files" rule. Same reasoning for ouraStoreDir/
+    // healthOverridesPath, which would otherwise default to this worktree's
+    // real data/oura/ and data/health_overrides.json.
+    envPath: path.join(dir, 'nonexistent-telegram.env'),
+    ouraStoreDir: path.join(dir, 'oura-store'),
+    healthOverridesPath: path.join(dir, 'health_overrides.json'),
     token: 'test-token', groupChatId: '-1', botUsername: 'test_bot', apiKey: 'test-key',
     todosPath: p.todosPath, ownersPath: p.ownersPath, offsetPath: p.offsetPath,
     unparsedPath: p.unparsedPath, goalsPath: p.goalsPath,
