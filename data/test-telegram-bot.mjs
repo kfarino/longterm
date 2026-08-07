@@ -1872,4 +1872,35 @@ test('an injected now reaches the date math instead of the real system clock', (
   assert.equal(result.date, '2026-08-05', 'next Wednesday from Sunday 2026-08-02');
 });
 
+// Telegram long-poll (2026-08-06): getUpdates itself becomes injectable and
+// its timeout configurable, so runPollLoop (test-telegram-poll-loop.mjs) can
+// drive multiple distinct iterations without a real network call.
+await asyncTest('getUpdatesClient, when supplied, is used instead of the real Telegram API', async () => {
+  const dir = path.join(tmpRoot, 'get-updates-client-injection');
+  const paths = writeFixture(dir, { updates: { ok: true, result: [] } });
+  const calls = [];
+  const getUpdatesClient = async (token, method, body) => {
+    calls.push({ token, method, body });
+    return { ok: true, result: [] };
+  };
+  // updatesFixture takes priority over getUpdatesClient when both are set, so
+  // this test must omit updatesFixture to actually exercise the new client —
+  // point it at a nonexistent path explicitly rather than relying on baseOpts'
+  // default (which does set updatesFixture).
+  await runOnce({ ...baseOpts(paths, {}), updatesFixture: null, getUpdatesClient, getUpdatesTimeoutSeconds: 25 });
+
+  assert.equal(calls.length, 1, 'getUpdatesClient should be called exactly once');
+  assert.equal(calls[0].method, 'getUpdates');
+  assert.equal(calls[0].body.timeout, 25, 'the configured timeout should reach the request body');
+});
+
+await asyncTest('omitting getUpdatesClient/getUpdatesTimeoutSeconds preserves the exact updatesFixture path (no behavior change)', async () => {
+  // This is the regression guard: every other test in this file relies on
+  // updatesFixture continuing to short-circuit before any client is touched.
+  const dir = path.join(tmpRoot, 'get-updates-client-omitted');
+  const paths = writeFixture(dir, { updates: { ok: true, result: [] } });
+  const result = await runOnce(baseOpts(paths, {}));
+  assert.ok(result, 'runOnce should complete normally with no new options supplied');
+});
+
 console.log('All tests passed.');

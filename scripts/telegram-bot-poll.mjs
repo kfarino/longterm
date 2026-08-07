@@ -715,9 +715,12 @@ export async function runOnce(opts) {
   if (args.updatesFixture) {
     updatesResponse = JSON.parse(fs.readFileSync(args.updatesFixture, 'utf8'));
   } else {
-    const body = { timeout: 0 };
+    // timeout defaults to 0 (today's exact short-poll behavior) unless a
+    // caller configures a longer one — runPollLoop passes 25.
+    const body = { timeout: args.getUpdatesTimeoutSeconds || 0 };
     if (offset != null) body.offset = offset;
-    updatesResponse = await callTelegram(token, 'getUpdates', body);
+    const getUpdatesClient = args.getUpdatesClient || callTelegram;
+    updatesResponse = await getUpdatesClient(token, 'getUpdates', body);
   }
 
   let todos = JSON.parse(fs.readFileSync(args.todosPath, 'utf8'));
