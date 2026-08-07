@@ -491,4 +491,67 @@ await asyncTest('Sunday reports health but never lets it change suggestions', as
   assert.equal(capturedBundle.healthAffectsPlans, false, 'Sunday must never shape plans');
 });
 
+// Builds a store a depletion verdict can actually be computed from: a long
+// steady baseline for `owner`, then a markedly worse current week.
+function writeDepletedStore(dir, ownerId, { baselineScore = 90, weekScore = 78 } = {}) {
+  const storeDir = path.join(dir, 'oura-store');
+  fs.mkdirSync(storeDir, { recursive: true });
+  const byId = {};
+  const dayBefore = (n) => {
+    const d = new Date(THURSDAY);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().slice(0, 10);
+  };
+  for (let ago = 1; ago <= 30; ago += 1) {
+    const day = dayBefore(ago);
+    const score = ago <= 7 ? weekScore : baselineScore;
+    byId[`${ownerId}:daily_sleep:${day}`] = {
+      id: `${ownerId}:daily_sleep:${day}`, ownerId, endpoint: 'daily_sleep', day, data: { score },
+    };
+  }
+  fs.writeFileSync(path.join(storeDir, 'daily_sleep.json'),
+    JSON.stringify({ meta: { lastUpdated: dayBefore(1), recordCount: Object.keys(byId).length }, byId }, null, 2), 'utf8');
+  return { ouraStoreDir: storeDir, healthOverridesPath: path.join(dir, 'health_overrides.json') };
+}
+
+await asyncTest('a genuinely depleted week reaches get_dining_plan and swaps the weekend low-key', async () => {
+  // The integration the separate unit tests can't prove: health.worst actually
+  // arriving in diningContext.depletion on a real Thursday run. This is also
+  // the first thing ever to reach recommendForSlot's low-key branch from the
+  // recap path — it was unreachable here before this feature.
+  const dir = path.join(tmpRoot, 'health-depleted-swap');
+  const paths = writeFixture(dir, {});
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, {
+    now: THURSDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }),
+    ...writeDepletedStore(dir, 'kevin'),
+  }));
+
+  assert.ok(capturedBundle.health.worst, 'someone should read as depleted');
+  assert.equal(capturedBundle.health.worst.ownerId, 'kevin');
+  assert.match(capturedBundle.dining.date_night.reply, /Movie night at home/,
+    'date night should fall back to the fixture\'s lowKeyHangIdeas entry');
+  assert.match(capturedBundle.dining.date_night.reply, /depleted/);
+  assert.doesNotMatch(capturedBundle.dining.date_night.reply, /Budget is tight/,
+    'the stated cause must be sleep, not a budget the recap never consulted');
+  assert.doesNotMatch(capturedBundle.dining.family_dinner.reply, /Movie night at home/,
+    'family dinner resolves six days out and must never swap');
+});
+
+await asyncTest('the same depleted week on a Sunday changes no suggestion', async () => {
+  const dir = path.join(tmpRoot, 'health-depleted-sunday');
+  const paths = writeFixture(dir, {});
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, {
+    now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }),
+    ...writeDepletedStore(dir, 'kevin'),
+  }));
+
+  assert.equal(capturedBundle.healthAffectsPlans, false);
+  assert.doesNotMatch(capturedBundle.dining.date_night.reply, /Movie night at home/,
+    'Sunday reports health but must never send the weekend low-key');
+});
+
 console.log('All tests passed.');
