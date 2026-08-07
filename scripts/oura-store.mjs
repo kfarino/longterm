@@ -37,7 +37,12 @@ export const OURA_ENDPOINTS = [
   { key: 'session', window: 'date' },
   { key: 'enhanced_tag', window: 'date' },
   { key: 'rest_mode_period', window: 'date' },
-  { key: 'heartrate', window: 'datetime' },
+  // Oura rejects a heartrate range longer than 30 days outright ("Timerange
+  // between start and endtime has to be less than or equal to 30 days", HTTP
+  // 400), so a long backfill must be split into chunks. Without this a
+  // --backfill-days 730 run silently returns no heart-rate data at all while
+  // every other endpoint succeeds.
+  { key: 'heartrate', window: 'datetime', maxWindowDays: 30 },
   { key: 'personal_info', window: 'none' },
   { key: 'ring_configuration', window: 'none' },
 ];
