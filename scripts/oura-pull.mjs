@@ -1,152 +1,134 @@
 #!/usr/bin/env node
-// Fetch a sample window of Oura v2 data for one or all owners who have tokens.
-// Writes data/oura/<ownerId>-latest.json (gitignored) and prints an inventory.
+// Durable daily Oura pull. Replaces the original connect-sketch (which wrote a
+// snapshot to data/oura/<owner>-latest.json and existed only to inventory what
+// the API returns). Fetches all 15 v2 endpoints over a rolling window and
+// upserts into the per-endpoint accumulating store, so a day Oura later
+// re-scores is corrected in place rather than duplicated or silently replaced.
+//
+// Usage:
+//   node scripts/oura-pull.mjs --all
+//   node scripts/oura-pull.mjs --owner <id> --backfill-days 730
+//   node scripts/oura-pull.mjs --all --dry-run
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getValidAccessToken, ouraGet } from './oura-client.mjs';
 import { ouraOwnerEnvPath } from './longterm-paths.mjs';
+import {
+  OURA_ENDPOINTS, OURA_OVERLAP_DAYS, defaultOuraStoreDir, normalizeRow, upsertOuraRows,
+} from './oura-store.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..');
-const outDir = path.join(repoRoot, 'data', 'oura');
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, '..');
 
-/** Endpoints to sample — failures are recorded, not fatal (scope / membership gaps). */
-const ENDPOINTS = [
-  { key: 'personal_info', path: 'personal_info', dated: false },
-  { key: 'daily_sleep', path: 'daily_sleep', dated: true },
-  { key: 'daily_readiness', path: 'daily_readiness', dated: true },
-  { key: 'daily_activity', path: 'daily_activity', dated: true },
-  { key: 'daily_spo2', path: 'daily_spo2', dated: true },
-  { key: 'sleep', path: 'sleep', dated: true },
-  { key: 'workout', path: 'workout', dated: true },
-];
-
-function parseArgs(argv) {
-  let ownerId = null;
-  let all = false;
-  let days = 14;
-  for (let i = 2; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--owner' && argv[i + 1]) ownerId = argv[++i];
-    else if (a === '--all') all = true;
-    else if (a === '--days' && argv[i + 1]) days = Math.max(1, Number(argv[++i]) || 14);
-  }
-  return { ownerId, all, days };
-}
-
-function ymd(d) {
-  return d.toISOString().slice(0, 10);
-}
-
-function dateWindow(days) {
-  const end = new Date();
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - (days - 1));
-  return { start_date: ymd(start), end_date: ymd(end) };
-}
-
-function inventoryEntry(body) {
-  if (body == null) return { ok: false };
-  if (Array.isArray(body.data)) {
-    const first = body.data[0];
-    return {
-      ok: true,
-      count: body.data.length,
-      sampleKeys: first && typeof first === 'object' ? Object.keys(first) : [],
-    };
-  }
-  if (typeof body === 'object') {
-    return { ok: true, count: 1, sampleKeys: Object.keys(body) };
-  }
-  return { ok: true, count: 0, sampleKeys: [] };
-}
+function ymd(d) { return d.toISOString().slice(0, 10); }
 
 function loadOwnerIdsFromGoals() {
   const goalsPath = path.join(repoRoot, 'data', 'goals.json');
   if (!fs.existsSync(goalsPath)) return [];
-  const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
-  return (goals.owners || []).map((o) => o.id).filter(Boolean);
+  try {
+    return (JSON.parse(fs.readFileSync(goalsPath, 'utf8')).owners || []).map((o) => o.id).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
-async function pullOwner(ownerId, days) {
-  const window = dateWindow(days);
-  console.log(`\n=== Oura pull: ${ownerId} (${window.start_date} → ${window.end_date}) ===`);
+function windowQuery(endpoint, days, now) {
+  const end = new Date(now);
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  if (endpoint.window === 'none') return {};
+  if (endpoint.window === 'datetime') {
+    return { start_datetime: `${ymd(start)}T00:00:00+00:00`, end_datetime: `${ymd(end)}T23:59:59+00:00` };
+  }
+  return { start_date: ymd(start), end_date: ymd(end) };
+}
 
-  const accessToken = await getValidAccessToken(ownerId);
-  const payload = {
-    ownerId,
-    pulledAt: new Date().toISOString(),
-    window,
-    endpoints: {},
-    inventory: {},
-  };
+/** A singleton returns a bare object; a dated collection returns { data: [...] }. */
+function recordsFrom(body) {
+  if (body == null) return [];
+  if (Array.isArray(body.data)) return body.data;
+  if (typeof body === 'object') return [body];
+  return [];
+}
 
-  for (const ep of ENDPOINTS) {
+export async function pullOwner(ownerId, {
+  days = OURA_OVERLAP_DAYS,
+  storeDir = defaultOuraStoreDir(),
+  ouraGetFn = null,
+  accessToken = null,
+  now = new Date(),
+  dryRun = false,
+} = {}) {
+  const token = accessToken || (ouraGetFn ? null : await getValidAccessToken(ownerId));
+  const get = ouraGetFn || ((suffix, query) => ouraGet(token, suffix, query));
+  const asOf = ymd(new Date(now));
+  const result = { ownerId, endpoints: {} };
+
+  for (const endpoint of OURA_ENDPOINTS) {
     try {
-      const query = ep.dated ? window : {};
-      const body = await ouraGet(accessToken, ep.path, query);
-      payload.endpoints[ep.key] = body;
-      payload.inventory[ep.key] = inventoryEntry(body);
-      const inv = payload.inventory[ep.key];
-      console.log(
-        `  ✓ ${ep.key}: ${inv.count} record(s)` +
-          (inv.sampleKeys?.length ? ` — keys: ${inv.sampleKeys.slice(0, 12).join(', ')}${inv.sampleKeys.length > 12 ? ', …' : ''}` : ''),
-      );
+      const body = await get(endpoint.key, windowQuery(endpoint, days, now));
+      const records = recordsFrom(body);
+      const rows = records.map((r) => normalizeRow(ownerId, endpoint.key, r));
+      // An endpoint with nothing to return is empty, not an error — a newly
+      // set-up ring reports zero for daily_activity/sleep/heartrate for days.
+      if (!dryRun && rows.length) upsertOuraRows(endpoint.key, rows, { storeDir, asOf });
+      result.endpoints[endpoint.key] = { count: records.length, upserted: dryRun ? 0 : rows.length, error: null };
     } catch (err) {
-      payload.endpoints[ep.key] = null;
-      payload.inventory[ep.key] = {
-        ok: false,
-        status: err.status || null,
-        error: err.message,
-        body: err.body || null,
-      };
-      console.log(`  ✗ ${ep.key}: ${err.message}`);
+      result.endpoints[endpoint.key] = { count: 0, upserted: 0, error: err.message || String(err) };
     }
   }
+  return result;
+}
 
-  fs.mkdirSync(outDir, { recursive: true });
-  const outPath = path.join(outDir, `${ownerId}-latest.json`);
-  fs.writeFileSync(outPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  console.log(`Wrote ${outPath}`);
-  return payload;
+export async function runPull({
+  ownerIds = null, days = OURA_OVERLAP_DAYS, storeDir = defaultOuraStoreDir(), dryRun = false, now = new Date(),
+} = {}) {
+  const ids = ownerIds || loadOwnerIdsFromGoals().filter((id) => fs.existsSync(ouraOwnerEnvPath(id)));
+  const results = [];
+  for (const id of ids) {
+    results.push(await pullOwner(id, { days, storeDir, dryRun, now }));
+  }
+  return results;
+}
+
+function parseArgs(argv) {
+  const args = { ownerId: null, all: false, days: OURA_OVERLAP_DAYS, dryRun: false };
+  for (let i = 2; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '--owner' && argv[i + 1]) args.ownerId = argv[++i];
+    else if (a === '--all') args.all = true;
+    else if (a === '--dry-run') args.dryRun = true;
+    else if (a === '--backfill-days' && argv[i + 1]) args.days = Math.max(1, Number(argv[++i]) || OURA_OVERLAP_DAYS);
+  }
+  return args;
 }
 
 async function main() {
-  const { ownerId, all, days } = parseArgs(process.argv);
-  if (!ownerId && !all) {
-    console.error('Usage:');
-    console.error('  node scripts/oura-pull.mjs --owner <id> [--days 14]');
-    console.error('  node scripts/oura-pull.mjs --all [--days 14]');
+  const args = parseArgs(process.argv);
+  if (!args.ownerId && !args.all) {
+    console.error('Usage: node scripts/oura-pull.mjs --all [--backfill-days N] [--dry-run]');
+    console.error('       node scripts/oura-pull.mjs --owner <id> [--backfill-days N] [--dry-run]');
     process.exit(1);
   }
-
-  const ids = all
-    ? loadOwnerIdsFromGoals().filter((id) => fs.existsSync(ouraOwnerEnvPath(id)))
-    : [ownerId];
-
-  if (all) {
-    const fromGoals = loadOwnerIdsFromGoals();
-    for (const id of fromGoals) {
-      if (!fs.existsSync(ouraOwnerEnvPath(id))) {
-        console.log(`Skipping ${id} — no token file at ${ouraOwnerEnvPath(id)}`);
-      }
-    }
-    if (!ids.length) {
-      console.error('No owners with Oura tokens found. Run oura-auth-setup per owner first.');
-      process.exit(1);
-    }
+  const results = await runPull({
+    ownerIds: args.ownerId ? [args.ownerId] : null,
+    days: args.days,
+    dryRun: args.dryRun,
+  });
+  if (!results.length) {
+    console.error('No owners with Oura tokens found. Run `npm run oura:auth -- --owner <id>` first.');
+    process.exit(1);
   }
-
-  for (const id of ids) {
-    await pullOwner(id, days);
+  for (const r of results) {
+    const failed = Object.entries(r.endpoints).filter(([, v]) => v.error);
+    const found = Object.values(r.endpoints).reduce((s, v) => s + v.count, 0);
+    const total = Object.values(r.endpoints).reduce((s, v) => s + v.upserted, 0);
+    console.log(`${r.ownerId}: ${found} record(s) found, ${total} upserted across ${OURA_ENDPOINTS.length} endpoints`
+      + (failed.length ? `; ${failed.length} endpoint error(s): ${failed.map(([k]) => k).join(', ')}` : ''));
   }
-  console.log('\nDone. Inspect data/oura/*-latest.json, then brainstorm product use.');
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err) => {
-    console.error(err.message || err);
-    process.exit(1);
-  });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => { console.error(err.message || err); process.exit(1); });
 }
