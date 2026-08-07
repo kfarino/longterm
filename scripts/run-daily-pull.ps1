@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 
 $networthScript = Join-Path $PSScriptRoot 'networth-pull.ps1'
 $budgetScript = Join-Path $PSScriptRoot 'budget-tracking-pull.ps1'
+$ouraScript = Join-Path $PSScriptRoot 'oura-pull.ps1'
 $logDir = Join-Path $env:USERPROFILE '.longterm\logs'
 $logPath = Join-Path $logDir 'daily-pull.log'
 
@@ -62,6 +63,13 @@ Write-PullLog '=== Longterm daily pull begin ==='
 try {
     Invoke-DailyPullStep -Name 'net worth pull' -ScriptPath $networthScript
     Invoke-DailyPullStep -Name 'budget tracking pull' -ScriptPath $budgetScript
+    # Health data is a nice-to-have: an Oura outage must never fail the money
+    # pulls, the same containment rule calendar-sync follows inside the poll task.
+    try {
+        Invoke-DailyPullStep -Name 'oura pull' -ScriptPath $ouraScript
+    } catch {
+        Write-PullLog ('WARN oura pull failed (continuing): {0}' -f $_.Exception.Message)
+    }
     Write-PullLog '=== Longterm daily pull success ==='
 } catch {
     Write-PullLog ('=== Longterm daily pull FAILED: {0} ===' -f $_.Exception.Message)
