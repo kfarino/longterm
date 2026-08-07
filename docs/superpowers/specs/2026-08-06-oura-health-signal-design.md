@@ -54,9 +54,12 @@ Three id cases, mirroring `transactionId()`'s synthetic fallback:
 |------|-----|
 | Normal dated record | `<owner>:<endpoint>:<record.id>` |
 | `heartrate` — no per-record id, and takes `start_datetime`/`end_datetime` rather than `start_date`/`end_date` | `<owner>:heartrate:<timestamp>` |
+
 | Singletons (`personal_info`, `ring_configuration`) | `<owner>:<endpoint>` — current state, not history |
 
 Upsert matters here beyond surviving daily pulls: **Oura revises a day's scores as more data lands**, so a night first scored in the 70s can read differently a day later. Merge-by-id records the correction; snapshot-overwrite would replace it silently and append would double-count it.
+
+**`heartrate` is capped at 30 days per request** (HTTP 400: *"Timerange between start and endtime has to be less than or equal to 30 days"*, confirmed live during implementation). `windowChunks()` splits any longer window into contiguous ≤30-day requests. Without it a `--backfill-days 730` run returns zero heart-rate records while every other endpoint reports success — a silent data loss that looks like a healthy pull. Endpoint descriptors carry an optional `maxWindowDays` so any future server-side cap is one field, not new logic.
 
 An endpoint returning zero rows is recorded as empty, not as an error — a newly set-up ring returns nothing for `daily_activity`, `sleep` and `heartrate` for days, and Oura needs ~2 weeks before readiness contributors (`hrv_balance`, `sleep_balance`, `activity_balance`) stop coming back `null`.
 

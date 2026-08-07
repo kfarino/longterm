@@ -132,7 +132,14 @@ export function pickWorst(perOwner) {
   const depleted = Object.values(perOwner).filter((o) => o.depleted);
   if (!depleted.length) return null;
   const worst = depleted.sort((a, b) => (b.drop || 0) - (a.drop || 0))[0];
-  return { ownerId: worst.ownerId, depleted: true, reason: worst.reason };
+  // displayName rides along so downstream copy can say "Kevin", not "kevin" —
+  // every consumer here writes text a human reads in a Telegram message.
+  return {
+    ownerId: worst.ownerId,
+    displayName: worst.displayName || worst.ownerId,
+    depleted: true,
+    reason: worst.reason,
+  };
 }
 
 export function loadHealthContext({
@@ -145,7 +152,9 @@ export function loadHealthContext({
   let thresholds = DEFAULT_THRESHOLDS;
   try {
     const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
-    owners = (goals.owners || []).map((o) => o.id).filter(Boolean);
+    owners = (goals.owners || [])
+      .filter((o) => o && o.id)
+      .map((o) => ({ id: o.id, displayName: o.displayName || o.id }));
     thresholds = { ...DEFAULT_THRESHOLDS, ...(goals.healthThresholds || {}) };
   } catch { /* missing/unparseable — degrade to empty */ }
 
@@ -154,10 +163,13 @@ export function loadHealthContext({
   const endDate = new Date(now).toISOString().slice(0, 10);
 
   const perOwner = {};
-  for (const ownerId of owners) {
+  for (const { id: ownerId, displayName } of owners) {
     const sleepRows = queryOura('daily_sleep', { storeDir, ownerId, startDate, endDate });
     const stressRows = queryOura('daily_stress', { storeDir, ownerId, startDate, endDate });
-    perOwner[ownerId] = computeOwnerHealth(ownerId, { sleepRows, stressRows, thresholds, overrides, now });
+    perOwner[ownerId] = {
+      ...computeOwnerHealth(ownerId, { sleepRows, stressRows, thresholds, overrides, now }),
+      displayName,
+    };
   }
 
   const configured = Object.values(perOwner).some((o) => o.nights > 0);

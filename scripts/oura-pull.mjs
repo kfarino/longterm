@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Durable daily Oura pull. Replaces the original connect-sketch (which wrote a
 // snapshot to data/oura/<owner>-latest.json and existed only to inventory what
-// the API returns). Fetches all 15 v2 endpoints over a rolling window and
+// the API returns). Fetches every v2 endpoint (15 dated collections plus the 2
+// singletons — see OURA_ENDPOINTS) over a rolling window and
 // upserts into the per-endpoint accumulating store, so a day Oura later
 // re-scores is corrected in place rather than duplicated or silently replaced.
 //
@@ -33,7 +34,7 @@ function loadOwnerIdsFromGoals() {
   }
 }
 
-function windowQuery(endpoint, days, now) {
+export function windowQuery(endpoint, days, now) {
   const end = new Date(now);
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - (days - 1));
@@ -44,8 +45,32 @@ function windowQuery(endpoint, days, now) {
   return { start_date: ymd(start), end_date: ymd(end) };
 }
 
+/**
+ * Splits a request window into as many chunks as the endpoint's own server-side
+ * limit requires. Most endpoints have none and yield a single query; heartrate
+ * caps at 30 days and would otherwise 400 for any longer backfill, losing every
+ * heart-rate record while the rest of the pull looks perfectly healthy.
+ * @returns {object[]} one query object per request to make, oldest window last
+ */
+export function windowChunks(endpoint, days, now) {
+  const max = endpoint.maxWindowDays;
+  if (!max || days <= max) return [windowQuery(endpoint, days, now)];
+
+  const chunks = [];
+  let remaining = days;
+  let chunkEnd = new Date(now);
+  while (remaining > 0) {
+    const size = Math.min(max, remaining);
+    chunks.push(windowQuery(endpoint, size, chunkEnd));
+    chunkEnd = new Date(chunkEnd);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() - size);
+    remaining -= size;
+  }
+  return chunks;
+}
+
 /** A singleton returns a bare object; a dated collection returns { data: [...] }. */
-function recordsFrom(body) {
+export function recordsFrom(body) {
   if (body == null) return [];
   if (Array.isArray(body.data)) return body.data;
   if (typeof body === 'object') return [body];
@@ -67,8 +92,10 @@ export async function pullOwner(ownerId, {
 
   for (const endpoint of OURA_ENDPOINTS) {
     try {
-      const body = await get(endpoint.key, windowQuery(endpoint, days, now));
-      const records = recordsFrom(body);
+      const records = [];
+      for (const query of windowChunks(endpoint, days, now)) {
+        records.push(...recordsFrom(await get(endpoint.key, query)));
+      }
       const rows = records.map((r) => normalizeRow(ownerId, endpoint.key, r));
       // An endpoint with nothing to return is empty, not an error — a newly
       // set-up ring reports zero for daily_activity/sleep/heartrate for days.

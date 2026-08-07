@@ -16,7 +16,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
-import { loadHealthContext } from './health-context.mjs';
+import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
+import { defaultOuraStoreDir } from './oura-store.mjs';
 import { runSync as runCalendarSync } from './calendar-sync.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { googleCalendarEnvPath, telegramEnvPath } from './longterm-paths.mjs';
@@ -34,6 +35,8 @@ function parseArgs(argv) {
     offsetPath: path.join(repoDataDir, 'telegram-offset.json'),
     unparsedPath: path.join(repoDataDir, 'telegram-unparsed.jsonl'),
     goalsPath: path.join(repoDataDir, 'goals.json'),
+    ouraStoreDir: defaultOuraStoreDir(),
+    healthOverridesPath: defaultHealthOverridesPath(),
     favoritePlacesPath: path.join(repoDataDir, 'favorite_places.json'),
     venuesToFollowPath: path.join(repoDataDir, 'venues_to_follow.json'),
     upcomingShowsCachePath: path.join(repoDataDir, 'upcoming_shows_cache.json'),
@@ -61,6 +64,8 @@ function parseArgs(argv) {
       else if (key === 'offset-path') args.offsetPath = value;
       else if (key === 'unparsed-path') args.unparsedPath = value;
       else if (key === 'goals-path') args.goalsPath = value;
+      else if (key === 'oura-store-dir') args.ouraStoreDir = value;
+      else if (key === 'health-overrides-path') args.healthOverridesPath = value;
       else if (key === 'favorite-places-path') args.favoritePlacesPath = value;
       else if (key === 'venues-to-follow-path') args.venuesToFollowPath = value;
       else if (key === 'upcoming-shows-cache-path') args.upcomingShowsCachePath = value;
@@ -732,7 +737,12 @@ export async function runOnce(opts) {
   const calendarEventsForDining = await loadCalendarEventsForDining(calendarReadContext);
   const diningContext = loadDiningContext(args, routineOverrides, calendarEventsForDining);
   const financialContext = loadFinancialContext(args);
-  const healthContext = loadHealthContext({ now });
+  // Paths threaded from args, not defaulted — otherwise a test injecting
+  // fixture paths would still read this machine's real data/oura/ and
+  // goals.json, the same leak calendarEnvPath is guarded against above.
+  const healthContext = loadHealthContext({
+    now, storeDir: args.ouraStoreDir, overridesPath: args.healthOverridesPath, goalsPath: args.goalsPath,
+  });
   let recentConversation = loadRecentConversation(args.conversationLogPath);
   let maxSafeUpdateId = offset != null ? offset - 1 : null;
   const sentReplies = [];

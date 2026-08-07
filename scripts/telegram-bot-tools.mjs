@@ -273,7 +273,7 @@ export function get_dining_plan(monthPlanEvents, { occasion, now = null }, dinin
   const depleted = Boolean(depletion?.depleted) && swappable;
   const effectiveSlot = depleted ? { ...slot, tier: 'low-key' } : slot;
   const lowKeyReason = depleted
-    ? `${depletion.ownerId} is depleted — ${depletion.reason}. A low-key hang instead of a paid outing.`
+    ? `${depletion.displayName || depletion.ownerId} is depleted — ${depletion.reason}. A low-key hang instead of a paid outing.`
     : null;
   const rec = recommendForSlot(effectiveSlot, diningContext.favorites, diningContext.recentDiningActivity, diningContext.lowKeyHangIdeas, alreadyUsedNames, lowKeyReason);
   const pick = rec.picks[0];
@@ -655,10 +655,11 @@ export function get_health_status(healthContext) {
     return { reply: 'No Oura data yet — nothing has been pulled into the store.' };
   }
   const lines = Object.values(healthContext.perOwner).map((o) => {
+    const who = o.displayName || o.ownerId;
     if (o.reason === 'insufficient_data') {
-      return `${o.ownerId}: still building a baseline (${o.nights} night${o.nights === 1 ? '' : 's'} recorded).`;
+      return `${who}: still building a baseline (${o.nights} night${o.nights === 1 ? '' : 's'} recorded).`;
     }
-    return `${o.ownerId}: ${o.depleted ? 'running depleted' : 'in normal range'} — ${o.reason}.`;
+    return `${who}: ${o.depleted ? 'running depleted' : 'in normal range'} — ${o.reason}.`;
   });
   return { reply: lines.join('\n') };
 }

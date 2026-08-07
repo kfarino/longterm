@@ -1805,7 +1805,7 @@ const depletedContext = (extra = {}) => ({
   recentDiningActivity: [],
   routineOverrides: { family_dinner: null, date_night: null, weekend_social: null },
   calendarEvents: [],
-  depletion: { ownerId: 'sam', depleted: true, reason: 'week averaged 80 against a 90 baseline' },
+  depletion: { ownerId: 'sam', displayName: 'Sam', depleted: true, reason: 'week averaged 80 against a 90 baseline' },
   ...extra,
 });
 
@@ -1813,6 +1813,7 @@ test('depletion swaps date_night to a low-key hang with the real cause', () => {
   const result = get_dining_plan({ events: {} }, { occasion: 'date_night' }, depletedContext());
   assert.match(result.reply, /Walk to the overlook/);
   assert.match(result.reply, /90 baseline/);
+  assert.match(result.reply, /Sam is depleted/, 'display name, not the lowercase owner id');
   assert.doesNotMatch(result.reply, /Budget is tight/);
 });
 
@@ -1842,16 +1843,16 @@ test('get_health_status reports each owner, naming who is still building a basel
   const healthContext = {
     configured: true,
     perOwner: {
-      alex: { ownerId: 'alex', nights: 1, depleted: false, reason: 'insufficient_data' },
-      sam: { ownerId: 'sam', nights: 28, depleted: true, reason: 'week averaged 80 against a 90 baseline' },
+      alex: { ownerId: 'alex', displayName: 'Alex', nights: 1, depleted: false, reason: 'insufficient_data' },
+      sam: { ownerId: 'sam', displayName: 'Sam', nights: 28, depleted: true, reason: 'week averaged 80 against a 90 baseline' },
     },
-    worst: { ownerId: 'sam', depleted: true, reason: 'week averaged 80 against a 90 baseline' },
+    worst: { ownerId: 'sam', displayName: 'Sam', depleted: true, reason: 'week averaged 80 against a 90 baseline' },
   };
   const result = get_health_status(healthContext);
-  assert.match(result.reply, /alex/);
+  assert.match(result.reply, /Alex/, 'display name, not the lowercase owner id');
   assert.match(result.reply, /still building/i);
   assert.match(result.reply, /1 night\b/, 'singular night, not "1 nights"');
-  assert.match(result.reply, /sam/);
+  assert.match(result.reply, /Sam/);
   assert.match(result.reply, /90 baseline/);
   assert.match(result.reply, /depleted/);
 });
