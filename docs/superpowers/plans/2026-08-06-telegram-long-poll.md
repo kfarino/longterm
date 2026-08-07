@@ -546,7 +546,7 @@ $taskArgs = if ($Legacy) { ('"{0}" --once' -f $scriptPath) } else { ('"{0}"' -f 
 $modeLabel = if ($Legacy) { 'legacy short-poll (--once)' } else { 'long-poll loop' }
 
 if ($WhatIf) {
-    Write-Host ('Would create scheduled task "{0}" — {1}, checked/relaunched every {2} minute(s)' -f $TaskName, $modeLabel, $IntervalMinutes)
+    Write-Host ('Would create scheduled task "{0}" - {1}, checked/relaunched every {2} minute(s)' -f $TaskName, $modeLabel, $IntervalMinutes)
     Write-Host ('Task command: {0} {1}' -f $nodeExe, $taskArgs)
     exit 0
 }
@@ -561,16 +561,18 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
     -Description "Runs the Longterm Telegram bot poller ($modeLabel)." -Force | Out-Host
 
-Write-Host ("Registered scheduled task '{0}' — {1}, checked/relaunched every {2} minute(s)." -f $TaskName, $modeLabel, $IntervalMinutes)
+Write-Host ("Registered scheduled task '{0}' - {1}, checked/relaunched every {2} minute(s)." -f $TaskName, $modeLabel, $IntervalMinutes)
 ```
+
+**Encoding note (found while implementing):** this codebase's `.ps1` files use em dashes freely in `#` comments — that's already proven safe elsewhere in this repo — but Windows PowerShell 5.1 reads a `.ps1` file without a BOM using the system codepage, not UTF-8, so an em dash *inside an actual double-quoted string literal* gets corrupted into garbage bytes and breaks parsing outright (confirmed live: `Unexpected token '{' in expression or statement`). The two `Write-Host` format strings above use a plain hyphen instead, for exactly this reason — comments can keep em dashes, evaluated string literals cannot.
 
 - [ ] **Step 2: Verify both modes with `-WhatIf` (no real registration, safe to run anytime)**
 
 Run: `powershell -File scripts/install-telegram-scheduled-task.ps1 -WhatIf`
-Expected: `Would create scheduled task "LongtermTelegramPoll" — long-poll loop, checked/relaunched every 1 minute(s)` and a command line with no `--once`.
+Expected: `Would create scheduled task "LongtermTelegramPoll" - long-poll loop, checked/relaunched every 1 minute(s)` and a command line with no `--once`.
 
 Run: `powershell -File scripts/install-telegram-scheduled-task.ps1 -Legacy -WhatIf`
-Expected: `Would create scheduled task "LongtermTelegramPoll" — legacy short-poll (--once), checked/relaunched every 2 minute(s)` and a command line ending in `--once`.
+Expected: `Would create scheduled task "LongtermTelegramPoll" - legacy short-poll (--once), checked/relaunched every 2 minute(s)` and a command line ending in `--once`.
 
 Run: `powershell -File scripts/install-telegram-scheduled-task.ps1 -IntervalMinutes 5 -WhatIf`
 Expected: honors the explicit override — `every 5 minute(s)`, long-poll mode (no `--once`).
