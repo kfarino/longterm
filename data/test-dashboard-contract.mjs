@@ -307,7 +307,19 @@ await test('loadMonthPlanState reads events through the fake fetch API (display-
 });
 
 await test('a future day with a planned/live-suggested slot renders a plain, non-interactive chip', async () => {
-  const d = loadDashboard(undefined, { '2026-08-10': [{ source: 'manual', name: 'Bestia', tier: 'high', cost: 120 }] });
+  // Two staleness bugs fixed here (2026-08-06), both of which had left this
+  // assertion failing silently:
+  //  1. The seeded event carried no `kind`, but isBudgetPlanEvent() has
+  //     required kind 'dining'|'family' since 2026-08-04, so the chip was
+  //     filtered out and never rendered.
+  //  2. The date was hardcoded to 2026-08-10. Month Plan only draws today
+  //     through the cycle end, so the fixture silently stopped being a
+  //     "future day" once the real clock passed it — same class of bug as
+  //     get_dining_plan reading the real clock in test-telegram-recap.mjs.
+  //     Derived from today instead, so it can't rot again.
+  const t = new Date(); t.setDate(t.getDate() + 1);
+  const tomorrow = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  const d = loadDashboard(undefined, { [tomorrow]: [{ source: 'manual', kind: 'dining', name: 'Bestia', tier: 'high', cost: 120 }] });
   await d.initReady;
   const html = d.elements['pg-monthplan'].innerHTML;
   assert.ok(html.includes('Bestia'), 'the stored event should be displayed');
