@@ -74,6 +74,23 @@ export async function resolveArtistPageUrl(accessToken, artistName, { spotifyCli
   return top?.external_urls?.spotify || null;
 }
 
+export async function buildArtistLinks(accessToken, entries, { spotifyClient = spotifyGet, log = () => {} } = {}) {
+  const linked = [];
+  for (const entry of entries) {
+    try {
+      const url = await resolveArtistPageUrl(accessToken, entry.act, { spotifyClient });
+      if (!url) {
+        log(`No Spotify artist match for "${entry.act}" — skipped.`);
+        continue;
+      }
+      linked.push({ ...entry, url });
+    } catch (err) {
+      log(`Artist lookup failed for "${entry.act}" — skipped. (${err.message})`);
+    }
+  }
+  return linked;
+}
+
 export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
   const uris = [];
   for (const name of artistNames) {
