@@ -658,9 +658,15 @@ export async function runPlaylistUpdate({
   } catch (err) {
     if (err.status !== 404) throw err;
     // The saved playlist was deleted out from under us (e.g. manually via the
-    // Spotify app) — recreate rather than fail the whole weekly run.
+    // Spotify app) — recreate rather than fail the whole weekly run. A 404
+    // means the PLAYLIST is gone, not that we've forgotten who the user is:
+    // keep the known userId in state (ensurePlaylist already skips its /me
+    // call whenever userId is present, even with playlistId missing) so
+    // recreating never needs an extra catalog lookup for information we
+    // already have.
     log(`Saved playlist ${playlistId} is gone (404) — recreating.`);
-    fs.rmSync(statePath, { force: true });
+    const priorState = loadState(statePath);
+    saveState(statePath, { userId: priorState?.userId });
     ({ playlistId } = await ensurePlaylist(token, { spotifyClient, spotifyPostFn, statePath }));
     await replacePlaylistTracks(token, playlistId, uris, { spotifyPutFn });
   }
