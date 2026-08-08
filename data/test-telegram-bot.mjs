@@ -1862,6 +1862,61 @@ test('get_health_status degrades honestly when nothing has been pulled', () => {
   assert.match(result.reply, /No Oura data/i);
 });
 
+test('get_health_status reports vitals on a separate short line per owner', () => {
+  const healthContext = {
+    configured: true,
+    perOwner: {
+      hanna: {
+        ownerId: 'hanna', displayName: 'Hanna', nights: 27, depleted: false,
+        reason: 'week averaged 91.9 against a 89.3 baseline',
+        vitals: { readinessScore: 87, hrvBalance: 82, resilienceLevel: 'exceptional', stressBreakdown: { normal: 5, stressful: 1, restored: 1 } },
+      },
+    },
+    worst: null,
+  };
+  const result = get_health_status(healthContext);
+  const lines = result.reply.split('\n');
+  assert.equal(lines.length, 2, 'one sleep-baseline line plus one vitals line, not merged into one paragraph');
+  assert.match(lines[1], /Hanna vitals/);
+  assert.match(lines[1], /87\/100/);
+  assert.match(lines[1], /HRV 82/);
+  assert.match(lines[1], /exceptional/);
+  assert.match(lines[1], /5 normal\/1 stressful\/1 restored/);
+});
+
+test('get_health_status reports each vitals field as independently unavailable, not one blanket message', () => {
+  // Kevin's real case, 2026-08-08: a real readiness score, null HRV balance,
+  // zero resilience rows, null-day_summary stress rows.
+  const healthContext = {
+    configured: true,
+    perOwner: {
+      kevin: {
+        ownerId: 'kevin', displayName: 'Kevin', nights: 2, depleted: false, reason: 'insufficient_data',
+        vitals: { readinessScore: 89, hrvBalance: null, resilienceLevel: null, stressBreakdown: { normal: 0, stressful: 0, restored: 0 } },
+      },
+    },
+    worst: null,
+  };
+  const result = get_health_status(healthContext);
+  const vitalsLine = result.reply.split('\n')[1];
+  assert.match(vitalsLine, /89\/100/, 'the real score must still be reported');
+  assert.match(vitalsLine, /HRV still building/);
+  assert.match(vitalsLine, /resilience still building/);
+  assert.match(vitalsLine, /stress data still building/);
+});
+
+test('get_health_status handles a missing vitals field gracefully (backward compat)', () => {
+  // Pre-existing tests in this file construct perOwner entries with no
+  // vitals key at all — this must not throw.
+  const healthContext = {
+    configured: true,
+    perOwner: { alex: { ownerId: 'alex', displayName: 'Alex', nights: 1, depleted: false, reason: 'insufficient_data' } },
+    worst: null,
+  };
+  const result = get_health_status(healthContext);
+  assert.match(result.reply, /Alex vitals: not available yet\./);
+});
+
 test('an injected now reaches the date math instead of the real system clock', () => {
   // get_dining_plan used to call nextDateForDayOfWeek() with no `from`, so a
   // caller pinning a date (the recap, or any test) still got today's real
