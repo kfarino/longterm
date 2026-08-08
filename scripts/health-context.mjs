@@ -127,6 +127,57 @@ export function computeOwnerHealth(ownerId, {
   };
 }
 
+function mostRecentWithField(rows, extractFn, sinceDay) {
+  const candidates = rows
+    .filter((r) => r.day && r.day >= sinceDay)
+    .map((r) => ({ day: r.day, value: extractFn(r.data) }))
+    .filter((r) => r.value !== null && r.value !== undefined)
+    .sort((a, b) => (a.day < b.day ? 1 : -1));
+  return candidates[0] || null;
+}
+
+// Separate from computeOwnerHealth on purpose — that function's depletion
+// verdict feeds the Thursday recap's dining swap and must not change here.
+// This is purely additive reporting for get_health_status.
+//
+// Readiness/resilience are how-are-you-TODAY concepts (Oura presents them as
+// daily snapshots, not week averages), so this reports the most recent
+// available day within recentDays, not a mean. Each field is searched
+// independently: Kevin's real ring (set up 2026-08-06) had a genuine
+// readiness score on both its first two days while contributors.hrv_balance
+// was null on both — a present score must never be suppressed by an absent
+// HRV balance on the same day, and vice versa.
+export function computeOwnerVitals(ownerId, {
+  readinessRows = [], resilienceRows = [], stressRows = [], now = new Date(), recentDays = 7, weekDays = 7,
+} = {}) {
+  const sinceDay = isoDaysBefore(now, recentDays);
+  const weekStart = isoDaysBefore(now, weekDays);
+
+  const readiness = mostRecentWithField(readinessRows, (d) => (typeof d?.score === 'number' ? d.score : null), sinceDay);
+  const hrv = mostRecentWithField(
+    readinessRows,
+    (d) => (typeof d?.contributors?.hrv_balance === 'number' ? d.contributors.hrv_balance : null),
+    sinceDay,
+  );
+  const resilience = mostRecentWithField(resilienceRows, (d) => (typeof d?.level === 'string' ? d.level : null), sinceDay);
+
+  const stressBreakdown = { normal: 0, stressful: 0, restored: 0 };
+  for (const r of stressRows) {
+    if (!r.day || r.day < weekStart) continue;
+    const summary = r.data?.day_summary;
+    if (summary === 'normal' || summary === 'stressful' || summary === 'restored') stressBreakdown[summary] += 1;
+  }
+
+  return {
+    readinessScore: readiness ? readiness.value : null,
+    readinessDay: readiness ? readiness.day : null,
+    hrvBalance: hrv ? hrv.value : null,
+    resilienceLevel: resilience ? resilience.value : null,
+    resilienceDay: resilience ? resilience.day : null,
+    stressBreakdown,
+  };
+}
+
 /** Worse-of-the-two: depleted if ANY owner with sufficient data is. */
 export function pickWorst(perOwner) {
   const depleted = Object.values(perOwner).filter((o) => o.depleted);
@@ -166,8 +217,11 @@ export function loadHealthContext({
   for (const { id: ownerId, displayName } of owners) {
     const sleepRows = queryOura('daily_sleep', { storeDir, ownerId, startDate, endDate });
     const stressRows = queryOura('daily_stress', { storeDir, ownerId, startDate, endDate });
+    const readinessRows = queryOura('daily_readiness', { storeDir, ownerId, startDate, endDate });
+    const resilienceRows = queryOura('daily_resilience', { storeDir, ownerId, startDate, endDate });
     perOwner[ownerId] = {
       ...computeOwnerHealth(ownerId, { sleepRows, stressRows, thresholds, overrides, now }),
+      vitals: computeOwnerVitals(ownerId, { readinessRows, resilienceRows, stressRows, now }),
       displayName,
     };
   }
