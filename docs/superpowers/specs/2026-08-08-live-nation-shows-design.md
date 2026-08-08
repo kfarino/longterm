@@ -39,6 +39,8 @@ New script `scripts/live-nation-pull.mjs` (→ `npm run livenation:pull`):
 
 `spotify-match-shows.mjs` / `spotify-likeness.mjs` need no change to *find* these shows — they already consume `cache.shows`. They do need to **carry `promoter` through** scoring (currently `scoredShows` spreads `...show`, which already preserves unknown fields — verified against `spotify-likeness.mjs:493-601`, no code change needed there beyond the boost itself).
 
+**Correction found during planning:** `dedupeShows`'s dedupe *key* already ignores `promoter` (so it correctly recognizes a Live-Nation-sourced event as the same show found by another source), but its current implementation discards every field from a duplicate outright — it would silently drop the `promoter` tag on exactly the best-known shows (the ones a taste-based source already found). `dedupeShows` needs a small fix: a later duplicate may fill in a `promoter` the first-seen entry is missing, without overwriting anything the first-seen entry already has. See the implementation plan's Task 2.
+
 ## Scoring boost
 
 In `spotify-likeness.mjs`, alongside `venueRatingBoost`:
