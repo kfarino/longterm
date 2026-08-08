@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows } from '../scripts/spotify-playlist-shows.mjs';
+import { filterQualifyingShows, resolveArtistTracks, buildTrackList } from '../scripts/spotify-playlist-shows.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -58,6 +58,60 @@ test('an owner with no scores.kevin entry is excluded, not treated as qualifying
 test('empty or missing shows array degrades to an empty list, not a crash', () => {
   assert.deepEqual(filterQualifyingShows({ shows: [] }), []);
   assert.deepEqual(filterQualifyingShows({}), []);
+});
+
+function fakeSpotifyClient({ searchResults = {}, topTracks = {} } = {}) {
+  return async (token, pathSuffix, query) => {
+    if (pathSuffix === 'search') {
+      const name = query.q;
+      const items = searchResults[name] ? [{ id: searchResults[name] }] : [];
+      return { artists: { items } };
+    }
+    const match = pathSuffix.match(/^artists\/([^/]+)\/top-tracks$/);
+    if (match) {
+      const tracks = topTracks[match[1]] || [];
+      return { tracks: tracks.map((uri) => ({ uri })) };
+    }
+    throw new Error(`Unexpected path in fakeSpotifyClient: ${pathSuffix}`);
+  };
+}
+
+await asyncTest('resolves an artist to up to 3 top-track URIs', async () => {
+  const client = fakeSpotifyClient({
+    searchResults: { 'Counting Crows': 'artist-1' },
+    topTracks: { 'artist-1': ['spotify:track:a', 'spotify:track:b', 'spotify:track:c', 'spotify:track:d'] },
+  });
+  const uris = await resolveArtistTracks('token', 'Counting Crows', { spotifyClient: client });
+  assert.deepEqual(uris, ['spotify:track:a', 'spotify:track:b', 'spotify:track:c']);
+});
+
+await asyncTest('an artist with no search results resolves to an empty list, not a throw', async () => {
+  const client = fakeSpotifyClient({});
+  const uris = await resolveArtistTracks('token', 'Nobody Findable', { spotifyClient: client });
+  assert.deepEqual(uris, []);
+});
+
+await asyncTest('buildTrackList flattens across artists and skips an unresolvable one without failing the run', async () => {
+  const client = fakeSpotifyClient({
+    searchResults: { 'Counting Crows': 'artist-1' },
+    topTracks: { 'artist-1': ['spotify:track:a'] },
+  });
+  const logs = [];
+  const uris = await buildTrackList('token', ['Counting Crows', 'Nobody Findable'], { spotifyClient: client, log: (m) => logs.push(m) });
+  assert.deepEqual(uris, ['spotify:track:a']);
+  assert.ok(logs.some((l) => l.includes('Nobody Findable')), 'the skipped artist should be logged');
+});
+
+await asyncTest('buildTrackList continues past a client that throws for one artist', async () => {
+  const client = async (token, pathSuffix, query) => {
+    if (pathSuffix === 'search' && query.q === 'Throws') throw new Error('simulated Spotify API failure');
+    if (pathSuffix === 'search') return { artists: { items: [{ id: 'ok-artist' }] } };
+    return { tracks: [{ uri: 'spotify:track:ok' }] };
+  };
+  const logs = [];
+  const uris = await buildTrackList('token', ['Throws', 'Fine Artist'], { spotifyClient: client, log: (m) => logs.push(m) });
+  assert.deepEqual(uris, ['spotify:track:ok']);
+  assert.ok(logs.some((l) => l.includes('Throws')));
 });
 
 console.log('All spotify-playlist-shows tests passed.');

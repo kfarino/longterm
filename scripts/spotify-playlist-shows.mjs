@@ -43,3 +43,28 @@ export function filterQualifyingShows(matchData) {
   }
   return artists;
 }
+
+export async function resolveArtistTracks(accessToken, artistName, { spotifyClient = spotifyGet } = {}) {
+  const searchResult = await spotifyClient(accessToken, 'search', { q: artistName, type: 'artist', limit: 1 });
+  const artistId = searchResult?.artists?.items?.[0]?.id;
+  if (!artistId) return [];
+  const topTracks = await spotifyClient(accessToken, `artists/${artistId}/top-tracks`, { market: 'US' });
+  return (topTracks?.tracks || []).slice(0, 3).map((t) => t.uri);
+}
+
+export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
+  const uris = [];
+  for (const name of artistNames) {
+    try {
+      const trackUris = await resolveArtistTracks(accessToken, name, { spotifyClient });
+      if (!trackUris.length) {
+        log(`No Spotify catalog match for "${name}" — skipped.`);
+        continue;
+      }
+      uris.push(...trackUris);
+    } catch (err) {
+      log(`Track lookup failed for "${name}" — skipped. (${err.message})`);
+    }
+  }
+  return [...new Set(uris)];
+}
