@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runOnce } from '../scripts/telegram-bot-poll.mjs';
+import { runOnce, REPHRASE_SYSTEM_PROMPT } from '../scripts/telegram-bot-poll.mjs';
 import { get_dining_plan, get_health_status } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -719,6 +719,25 @@ await asyncTest('naturalizeBatch: a rephrase failure falls back to a plain join 
   const result = await runOnce(baseOpts(paths, { rephraseClient: mockRephraseClient }));
   assert.ok(result.combinedReply.includes('Added ✓'), 'a rephrase failure should never lose the underlying confirmation');
   assert.equal(result.todos.items.length, 2, 'the action itself must still have succeeded');
+});
+
+test('REPHRASE_SYSTEM_PROMPT asks for short transactional lines, not warm flowing prose', () => {
+  // Regression guard (2026-08-08): the household's actual live experience was
+  // paragraphs like "Good news on sleep — Hanna's tracking well this week
+  // at 91.9... If you're noticing a specific pattern... just let me know" —
+  // directly caused by this prompt's prior wording ("warm", "flowing
+  // reply"). This asserts the instruction genuinely changed, not just that
+  // some string exists, so a future edit can't silently drift it back.
+  const lower = REPHRASE_SYSTEM_PROMPT.toLowerCase();
+  // A bare "must not contain 'warm'" check can't tell "you are a warm
+  // assistant" (the old, rejected framing) apart from "no warmth-for-its-
+  // own-sake" (the new prompt's own explicit rejection of exactly that) —
+  // both legitimately contain the substring. Check the specific old phrase.
+  assert.ok(!lower.includes('a warm, concise family assistant'), 'must not reuse the old "warm assistant" framing');
+  assert.ok(lower.includes('no warmth-for-its-own-sake') || lower.includes('no warmth for its own sake'), 'must explicitly reject warmth-for-its-own-sake');
+  assert.ok(!lower.includes('flowing'), 'must not ask for flowing prose');
+  assert.ok(lower.includes('short'), 'must explicitly ask for short lines');
+  assert.ok(lower.includes('markdown') && lower.includes('bullet'), 'must still rule out markdown/bullet glyphs, matching the recap convention');
 });
 
 // --- Dining-planning tools (Part 3) — only reachable via the LLM fallback, no deterministic pattern ---
@@ -1860,6 +1879,61 @@ test('get_health_status reports each owner, naming who is still building a basel
 test('get_health_status degrades honestly when nothing has been pulled', () => {
   const result = get_health_status({ configured: false, perOwner: {}, worst: null });
   assert.match(result.reply, /No Oura data/i);
+});
+
+test('get_health_status reports vitals on a separate short line per owner', () => {
+  const healthContext = {
+    configured: true,
+    perOwner: {
+      hanna: {
+        ownerId: 'hanna', displayName: 'Hanna', nights: 27, depleted: false,
+        reason: 'week averaged 91.9 against a 89.3 baseline',
+        vitals: { readinessScore: 87, hrvBalance: 82, resilienceLevel: 'exceptional', stressBreakdown: { normal: 5, stressful: 1, restored: 1 } },
+      },
+    },
+    worst: null,
+  };
+  const result = get_health_status(healthContext);
+  const lines = result.reply.split('\n');
+  assert.equal(lines.length, 2, 'one sleep-baseline line plus one vitals line, not merged into one paragraph');
+  assert.match(lines[1], /Hanna vitals/);
+  assert.match(lines[1], /87\/100/);
+  assert.match(lines[1], /HRV 82/);
+  assert.match(lines[1], /exceptional/);
+  assert.match(lines[1], /5 normal\/1 stressful\/1 restored/);
+});
+
+test('get_health_status reports each vitals field as independently unavailable, not one blanket message', () => {
+  // Kevin's real case, 2026-08-08: a real readiness score, null HRV balance,
+  // zero resilience rows, null-day_summary stress rows.
+  const healthContext = {
+    configured: true,
+    perOwner: {
+      kevin: {
+        ownerId: 'kevin', displayName: 'Kevin', nights: 2, depleted: false, reason: 'insufficient_data',
+        vitals: { readinessScore: 89, hrvBalance: null, resilienceLevel: null, stressBreakdown: { normal: 0, stressful: 0, restored: 0 } },
+      },
+    },
+    worst: null,
+  };
+  const result = get_health_status(healthContext);
+  const vitalsLine = result.reply.split('\n')[1];
+  assert.match(vitalsLine, /89\/100/, 'the real score must still be reported');
+  assert.match(vitalsLine, /HRV still building/);
+  assert.match(vitalsLine, /resilience still building/);
+  assert.match(vitalsLine, /stress data still building/);
+});
+
+test('get_health_status handles a missing vitals field gracefully (backward compat)', () => {
+  // Pre-existing tests in this file construct perOwner entries with no
+  // vitals key at all — this must not throw.
+  const healthContext = {
+    configured: true,
+    perOwner: { alex: { ownerId: 'alex', displayName: 'Alex', nights: 1, depleted: false, reason: 'insufficient_data' } },
+    worst: null,
+  };
+  const result = get_health_status(healthContext);
+  assert.match(result.reply, /Alex vitals: not available yet\./);
 });
 
 test('an injected now reaches the date math instead of the real system clock', () => {

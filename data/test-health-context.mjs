@@ -8,7 +8,7 @@
 // night not worn is absent rather than zero. Run with:
 //   node Longterm/data/test-health-context.mjs
 import assert from 'node:assert/strict';
-import { computeOwnerHealth, pickWorst } from '../scripts/health-context.mjs';
+import { computeOwnerHealth, pickWorst, computeOwnerVitals } from '../scripts/health-context.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 console.log('test-health-context.mjs');
@@ -195,6 +195,90 @@ test('pickWorst picks the larger drop when both are depleted', () => {
 
 test('pickWorst returns null when nobody is depleted', () => {
   assert.equal(pickWorst({ alex: { ownerId: 'alex', depleted: false, drop: 0 } }), null);
+});
+
+function readinessRow(daysAgo, { score = null, hrvBalance = null } = {}) {
+  return {
+    ownerId: 'alex', endpoint: 'daily_readiness', day: dayBefore(daysAgo),
+    data: { score, contributors: { hrv_balance: hrvBalance } },
+  };
+}
+
+function resilienceRow(daysAgo, level) {
+  return { ownerId: 'alex', endpoint: 'daily_resilience', day: dayBefore(daysAgo), data: { level } };
+}
+
+function stressDayRow(daysAgo, daySummary) {
+  return { ownerId: 'alex', endpoint: 'daily_stress', day: dayBefore(daysAgo), data: { day_summary: daySummary } };
+}
+
+test('reports the most recent readiness score and HRV balance within the window', () => {
+  const readinessRows = [readinessRow(1, { score: 89, hrvBalance: 82 }), readinessRow(3, { score: 70, hrvBalance: 75 })];
+  const v = computeOwnerVitals('alex', { readinessRows, now: NOW });
+  assert.equal(v.readinessScore, 89);
+  assert.equal(v.hrvBalance, 82);
+  assert.equal(v.readinessDay, dayBefore(1));
+});
+
+test('Kevin\'s real case: a present readiness score does not get suppressed by a null HRV balance on the same day', () => {
+  // Verified live 2026-08-08: Kevin's ring (set up 2026-08-06) had real scores
+  // (63, 89) on both recorded days while contributors.hrv_balance was null on
+  // both — Oura needs longer history before it computes HRV balance at all.
+  const readinessRows = [readinessRow(1, { score: 89, hrvBalance: null }), readinessRow(2, { score: 63, hrvBalance: null })];
+  const v = computeOwnerVitals('alex', { readinessRows, now: NOW });
+  assert.equal(v.readinessScore, 89, 'the score must still be reported');
+  assert.equal(v.hrvBalance, null, 'HRV balance is independently absent, not defaulted to 0 or copied from score');
+});
+
+test('HRV balance is found from an older row than the most recent readiness score, when the recent one lacks it', () => {
+  const readinessRows = [readinessRow(1, { score: 89, hrvBalance: null }), readinessRow(2, { score: 63, hrvBalance: 75 })];
+  const v = computeOwnerVitals('alex', { readinessRows, now: NOW });
+  assert.equal(v.readinessScore, 89, 'still the most recent score');
+  assert.equal(v.hrvBalance, 75, 'HRV balance is searched independently, so an older row with a real value is used');
+});
+
+test('no readiness rows at all reports null, not a throw', () => {
+  const v = computeOwnerVitals('alex', { readinessRows: [], now: NOW });
+  assert.equal(v.readinessScore, null);
+  assert.equal(v.hrvBalance, null);
+  assert.equal(v.readinessDay, null);
+});
+
+test('a readiness row outside recentDays is ignored', () => {
+  const readinessRows = [readinessRow(10, { score: 50, hrvBalance: 50 })];
+  const v = computeOwnerVitals('alex', { readinessRows, now: NOW, recentDays: 7 });
+  assert.equal(v.readinessScore, null, 'a 10-day-old reading is too stale to call "current"');
+});
+
+test('resilience reports the most recent level within the window; zero rows reports null', () => {
+  const resilienceRows = [resilienceRow(2, 'exceptional'), resilienceRow(5, 'solid')];
+  const v1 = computeOwnerVitals('alex', { resilienceRows, now: NOW });
+  assert.equal(v1.resilienceLevel, 'exceptional');
+  assert.equal(v1.resilienceDay, dayBefore(2));
+
+  const v2 = computeOwnerVitals('alex', { resilienceRows: [], now: NOW });
+  assert.equal(v2.resilienceLevel, null, 'Kevin\'s real case: zero resilience rows so far — needs longer history than readiness');
+});
+
+test('stress breakdown counts this week\'s day_summary values by category', () => {
+  const stressRows = [
+    stressDayRow(1, 'normal'), stressDayRow(2, 'normal'), stressDayRow(3, 'stressful'),
+    stressDayRow(4, 'restored'), stressDayRow(5, 'normal'),
+  ];
+  const v = computeOwnerVitals('alex', { stressRows, now: NOW, weekDays: 7 });
+  assert.deepEqual(v.stressBreakdown, { normal: 3, stressful: 1, restored: 1 });
+});
+
+test('a stress row with a null day_summary is excluded from every category, not miscounted', () => {
+  const stressRows = [stressDayRow(1, null), stressDayRow(2, 'normal')];
+  const v = computeOwnerVitals('alex', { stressRows, now: NOW });
+  assert.deepEqual(v.stressBreakdown, { normal: 1, stressful: 0, restored: 0 });
+});
+
+test('a stress row outside the week window is excluded from the breakdown', () => {
+  const stressRows = [stressDayRow(10, 'stressful')];
+  const v = computeOwnerVitals('alex', { stressRows, now: NOW, weekDays: 7 });
+  assert.deepEqual(v.stressBreakdown, { normal: 0, stressful: 0, restored: 0 });
 });
 
 console.log('All health-context tests passed.');

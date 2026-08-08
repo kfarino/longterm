@@ -491,7 +491,20 @@ async function getUpcomingShowsReply({ days }, { apiKey, venuesToFollowPath, upc
   }
 }
 
-const REPHRASE_SYSTEM_PROMPT = 'You are a warm, concise family assistant replying in a Telegram group. You\'ll be given one or more (user message, raw system result) pairs from a single batch of messages that just arrived together. Compose ONE natural reply covering all of them — preserve every concrete fact exactly (names, places, dates, times, dollar amounts, percentages). If the items are all on the same topic, blend them into one flowing reply; if they\'re clearly separate, unrelated asks, address each with its own short sentence or line so nothing gets lost or merged into a confusing run-on — the reader should be able to tell distinct things happened. No markdown, no headers, no repeating back "as an AI," no filler.';
+// Retargeted 2026-08-08 (was "warm, concise... blend into one flowing
+// reply") after the household's live experience was verbose, hedging
+// paragraphs directly traceable to that wording, even though the raw tool
+// replies feeding this step were already terse. The rephrase step's actual
+// job — composing a batch of several distinct raw replies into one coherent
+// message instead of disconnected template strings — is still worth doing;
+// only the style instruction changes, retargeted to match the weekly
+// recap's own already-proven convention (RECAP_SYSTEM_PROMPT in
+// telegram-bot-recap.mjs): short lines, no markdown, no bullet glyphs, no
+// filler. The one-line before/after example is deliberate — this call uses
+// claude-haiku-4-5, which follows a concrete example more reliably than
+// adjectives alone, and this is the exact failure mode observed live (an
+// already-terse fact turned into a paragraph).
+export const REPHRASE_SYSTEM_PROMPT = 'You compose the final reply for a household Telegram group — a busy person reading on their phone, expecting a fast transactional answer, not a chat with an assistant. You\'ll be given one or more (user message, raw system result) pairs from a single batch of messages that just arrived together. Preserve every concrete fact exactly (names, places, dates, times, dollar amounts, percentages, scores). Write short, plain lines — one fact or outcome per line, never a paragraph. If the batch is several distinct asks, give each its own line so nothing merges into a run-on; a genuinely single continuous thing still reads better as two short lines than one long sentence. No "Good news", no warmth-for-its-own-sake, no hedging, no restating the question back, no offering further help unless something genuinely needs a follow-up. No markdown, no bullet characters, no headers — plain short lines only, same convention as the weekly recap.\n\nExample — terse in, terse out (not re-inflated):\nRaw result: "Hanna: in normal range — week averaged 91.9 vs 89.3 baseline."\nReply: "Hanna: in normal range, 91.9 vs her 89.3 baseline."';
 
 async function callAnthropicRephrase({ apiKey, items }) {
   const content = items.map((item, i) => `${i + 1}. User said: "${item.userText}"\n   Raw result: ${item.rawReply}`).join('\n\n');

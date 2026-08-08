@@ -650,17 +650,33 @@ export const FINANCIAL_TOOL_NAMES = new Set(['get_budget_status', 'get_savings_g
 // same reason as the others: genuinely different inputs, no value in forcing
 // one uniform signature. Reports both owners; this is a shared group chat that
 // already surfaces budget and todos the same way.
+function formatVitalsLine(who, vitals) {
+  if (!vitals) return `${who} vitals: not available yet.`;
+  const readiness = vitals.readinessScore != null
+    ? `readiness ${vitals.readinessScore}/100 (HRV ${vitals.hrvBalance != null ? vitals.hrvBalance : 'still building'})`
+    : 'readiness still building';
+  const resilience = vitals.resilienceLevel ? `resilience ${vitals.resilienceLevel}` : 'resilience still building';
+  const b = vitals.stressBreakdown || { normal: 0, stressful: 0, restored: 0 };
+  const stressLine = (b.normal + b.stressful + b.restored) > 0
+    ? `${b.normal} normal/${b.stressful} stressful/${b.restored} restored this week`
+    : 'stress data still building';
+  return `${who} vitals: ${readiness}, ${resilience}, ${stressLine}.`;
+}
+
 export function get_health_status(healthContext) {
   if (!healthContext || !healthContext.configured) {
     return { reply: 'No Oura data yet — nothing has been pulled into the store.' };
   }
-  const lines = Object.values(healthContext.perOwner).map((o) => {
+  const lines = [];
+  for (const o of Object.values(healthContext.perOwner)) {
     const who = o.displayName || o.ownerId;
     if (o.reason === 'insufficient_data') {
-      return `${who}: still building a baseline (${o.nights} night${o.nights === 1 ? '' : 's'} recorded).`;
+      lines.push(`${who}: still building a baseline (${o.nights} night${o.nights === 1 ? '' : 's'} recorded).`);
+    } else {
+      lines.push(`${who}: ${o.depleted ? 'running depleted' : 'in normal range'} — ${o.reason}.`);
     }
-    return `${who}: ${o.depleted ? 'running depleted' : 'in normal range'} — ${o.reason}.`;
-  });
+    lines.push(formatVitalsLine(who, o.vitals));
+  }
   return { reply: lines.join('\n') };
 }
 
