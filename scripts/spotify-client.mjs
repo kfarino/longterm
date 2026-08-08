@@ -19,8 +19,8 @@ export const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
 export const SPOTIFY_REDIRECT_PORT = 51825;
 export const SPOTIFY_REDIRECT_URI = `http://127.0.0.1:${SPOTIFY_REDIRECT_PORT}/oauth2callback`;
 
-/** Intentional-taste scopes only — see the design spec for why recently-played/top-artists are excluded. */
-export const SPOTIFY_SCOPES = 'user-follow-read user-library-read playlist-read-private playlist-read-collaborative playlist-modify-private';
+/** Intentional-taste scopes only — see the design spec for why recently-played/top-artists are excluded. playlist-modify-private was added and removed in the same week (2026-08-07 → 2026-08-08): Spotify's Development Mode policy permanently blocks playlist writes for this app tier, confirmed live, so the scope can never be exercised — see docs/superpowers/specs/2026-08-08-spotify-shows-telegram-design.md. */
+export const SPOTIFY_SCOPES = 'user-follow-read user-library-read playlist-read-private playlist-read-collaborative';
 
 export function parseEnvFile(envFilePath) {
   const vars = {};
