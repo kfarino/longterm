@@ -44,7 +44,7 @@ export function filterQualifyingShows(matchData) {
     const key = normalizeArtistName(String(s.act || '').trim());
     if (seen.has(key)) continue;
     seen.add(key);
-    entries.push({ act: s.act, kind: s.kind, date: s.date, venue: s.venue });
+    entries.push({ act: s.act, kind: s.kind, date: s.date, venue: s.venue, score: kevinScore.score });
   }
   return entries;
 }
@@ -94,15 +94,18 @@ export function formatShowDate(isoDate) {
   return `${MONTH_NAMES[month - 1]} ${day}`;
 }
 
-const KIND_EMOJI = { music: '🎵', comedy: '🎤' };
+const KIND_EMOJI = { music: '🎸', comedy: '🤣' };
 
-// Sorted soonest-first; a plain string sort is safe here because every date
-// is "YYYY-MM-DD" and lexicographic order matches chronological order for
-// that format.
+// Sorted by match score, strongest first — mirrors the same basis the
+// dashboard's own recommendations are filtered/ranked by (scores.kevin.score),
+// so "what am I most likely to want to go to" outranks "what's soonest."
+// Ties broken by date (soonest first); a plain string comparison is safe
+// there because every date is "YYYY-MM-DD" and lexicographic order matches
+// chronological order for that format.
 export function formatMessage(entries) {
-  const sorted = [...entries].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const sorted = [...entries].sort((a, b) => (b.score - a.score) || String(a.date).localeCompare(String(b.date)));
   return sorted
-    .map((e) => `${KIND_EMOJI[e.kind] || '🎵'} ${e.act} — ${formatShowDate(e.date)} @ ${e.venue || 'TBD'}: ${e.url}`)
+    .map((e) => `${KIND_EMOJI[e.kind] || KIND_EMOJI.music} ${e.act} (${e.score}%) — ${formatShowDate(e.date)} @ ${e.venue || 'TBD'}: ${e.url}`)
     .join('\n');
 }
 

@@ -29,14 +29,14 @@ The original design excluded `kind === 'comedy'` because there was no way to res
 
 ## Message format
 
-Sorted by date (soonest first), one line per artist:
+Sorted by match score, strongest first (ties broken by soonest date) — changed post-launch (2026-08-08) from the originally shipped date-ascending sort, per Kevin: he wants the list to lead with what he's most likely to want to go to, not just what's soonest. One line per artist, score shown alongside the act:
 
 ```
-🎵 Counting Crows — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/0vEsuISMWAKNctLlUAhSZC
-🎤 Anthony Jeselnik — Aug 16 @ Largo: https://open.spotify.com/artist/...
+🎸 Counting Crows (97%) — Aug 7 @ Hollywood Bowl: https://open.spotify.com/artist/0vEsuISMWAKNctLlUAhSZC
+🤣 Pete Holmes (95%) — Aug 22 @ Largo at the Coronet: https://open.spotify.com/artist/728ycbzLcFEbkixT3RIyXt
 ```
 
-🎵 for `kind === 'music'`, 🎤 for `kind === 'comedy'`. An artist with no confident search match is skipped (logged, not fatal) — same error-containment convention the original design already established, still valid: one bad lookup must not drop the rest of the week's list.
+🎸 for `kind === 'music'`, 🤣 for `kind === 'comedy'` (changed from the originally shipped 🎵/🎤 the same day, per Kevin's preference). An artist with no confident search match is skipped (logged, not fatal) — same error-containment convention the original design already established, still valid: one bad lookup must not drop the rest of the week's list.
 
 Sent as its own message to the household Telegram group, triggered as the 4th step of `run-weekly-shows-pull.ps1` — the same slot the (now-deleted) playlist step occupied, same isolated `try`/`catch` so a Telegram send failure never marks `spotify:find-shows`/`shows:pull`/`spotify:match` (which the dashboard already depends on) as failed.
 

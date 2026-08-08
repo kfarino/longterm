@@ -31,10 +31,10 @@ test('keeps music and comedy shows with a real signal (basis !== claude)', () =>
   assert.deepEqual(result.map((e) => e.act), ['Counting Crows', 'JAŸ-Z', 'Some Playlist Artist', 'Anthony Jeselnik']);
 });
 
-test('returns {act, kind, date, venue} objects, not bare strings', () => {
-  const shows = [show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl' })];
+test('returns {act, kind, date, venue, score} objects, not bare strings', () => {
+  const shows = [show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97 })];
   assert.deepEqual(filterQualifyingShows({ shows }), [
-    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl' },
+    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97 },
   ]);
 });
 
@@ -156,33 +156,44 @@ test('formatShowDate turns an ISO date-only string into "Mon D"', () => {
   assert.equal(formatShowDate('2026-12-31'), 'Dec 31');
 });
 
-test('formatMessage sorts entries soonest-first regardless of input order', () => {
+test('formatMessage sorts entries by score, strongest first, regardless of input order', () => {
   const entries = [
-    { act: 'Later Artist', kind: 'music', date: '2026-08-24', venue: 'The Echo', url: 'https://open.spotify.com/artist/later' },
-    { act: 'Sooner Artist', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/sooner' },
+    { act: 'Weaker Match', kind: 'music', date: '2026-08-14', venue: 'The Echo', url: 'https://open.spotify.com/artist/weaker', score: 60 },
+    { act: 'Stronger Match', kind: 'music', date: '2026-08-24', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/stronger', score: 95 },
   ];
   const text = formatMessage(entries);
   const lines = text.split('\n');
-  assert.ok(lines[0].startsWith('🎵 Sooner Artist'), `expected Sooner Artist first, got: ${lines[0]}`);
-  assert.ok(lines[1].startsWith('🎵 Later Artist'), `expected Later Artist second, got: ${lines[1]}`);
+  assert.ok(lines[0].startsWith('🎸 Stronger Match'), `expected Stronger Match first, got: ${lines[0]}`);
+  assert.ok(lines[1].startsWith('🎸 Weaker Match'), `expected Weaker Match second, got: ${lines[1]}`);
 });
 
-test('formatMessage uses the music note for music and the mic for comedy', () => {
+test('formatMessage breaks a score tie by soonest date', () => {
   const entries = [
-    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/cc' },
-    { act: 'Anthony Jeselnik', kind: 'comedy', date: '2026-08-16', venue: 'Largo', url: 'https://open.spotify.com/artist/aj' },
+    { act: 'Later Artist', kind: 'music', date: '2026-08-24', venue: 'The Echo', url: 'https://open.spotify.com/artist/later', score: 92 },
+    { act: 'Sooner Artist', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/sooner', score: 92 },
+  ];
+  const text = formatMessage(entries);
+  const lines = text.split('\n');
+  assert.ok(lines[0].startsWith('🎸 Sooner Artist'), `expected Sooner Artist first, got: ${lines[0]}`);
+  assert.ok(lines[1].startsWith('🎸 Later Artist'), `expected Later Artist second, got: ${lines[1]}`);
+});
+
+test('formatMessage uses the guitar for music, the laughing face for comedy, and shows the score', () => {
+  const entries = [
+    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/cc', score: 97 },
+    { act: 'Anthony Jeselnik', kind: 'comedy', date: '2026-08-16', venue: 'Largo', url: 'https://open.spotify.com/artist/aj', score: 56 },
   ];
   const text = formatMessage(entries);
   assert.equal(
     text,
-    '🎵 Counting Crows — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
-    + '🎤 Anthony Jeselnik — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+    '🎸 Counting Crows (97%) — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
+    + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
   );
 });
 
 test('formatMessage falls back to "TBD" when an entry has no venue', () => {
-  const entries = [{ act: 'No Venue Artist', kind: 'music', date: '2026-08-14', venue: undefined, url: 'https://open.spotify.com/artist/nv' }];
-  assert.equal(formatMessage(entries), '🎵 No Venue Artist — Aug 14 @ TBD: https://open.spotify.com/artist/nv');
+  const entries = [{ act: 'No Venue Artist', kind: 'music', date: '2026-08-14', venue: undefined, url: 'https://open.spotify.com/artist/nv', score: 90 }];
+  assert.equal(formatMessage(entries), '🎸 No Venue Artist (90%) — Aug 14 @ TBD: https://open.spotify.com/artist/nv');
 });
 
 test('formatMessage on an empty array returns an empty string', () => {
@@ -242,8 +253,8 @@ await asyncTest('runOnce --dry-run composes the message but never calls the Tele
   assert.equal(result.reason, 'dry_run');
   assert.equal(
     result.text,
-    '🎵 Counting Crows — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
-    + '🎤 Anthony Jeselnik — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+    '🎸 Counting Crows (90%) — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
+    + '🤣 Anthony Jeselnik (90%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
   );
 });
 
