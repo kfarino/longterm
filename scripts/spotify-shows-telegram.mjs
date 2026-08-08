@@ -1,22 +1,25 @@
 #!/usr/bin/env node
-// Rebuilds a private Spotify playlist (Kevin's account) from this week's
-// taste-matched upcoming LA music shows — see
-// docs/superpowers/specs/2026-08-07-spotify-shows-playlist-design.md.
+// Resolves this week's taste-matched upcoming LA shows (music + comedy) to
+// Spotify artist-page links and sends one Telegram message, one line per
+// artist. Supersedes the auto-playlist approach — see
+// docs/superpowers/specs/2026-08-08-spotify-shows-telegram-design.md for why:
+// Spotify permanently blocked playlist-write access for this app's
+// Development Mode registration (POST /users/{id}/playlists returned 403
+// even with playlist-modify-private freshly granted; Extended Quota Mode,
+// the only fix, requires a registered org with 250k+ MAU). An artist-*page*
+// link needs no such scope — GET /search is, and always was, unrestricted.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { getValidAccessToken, spotifyGet, spotifyPost, spotifyPut } from './spotify-client.mjs';
+import { getValidAccessToken, spotifyGet } from './spotify-client.mjs';
 import { normalizeArtistName } from './spotify-pull.mjs';
+import { telegramEnvPath } from './longterm-paths.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
 
 export function defaultMatchDataPath() {
   return path.join(repoRoot, 'data', 'spotify', 'show-matches-latest.json');
-}
-
-export function defaultStatePath() {
-  return path.join(repoRoot, 'data', 'spotify', 'show-playlist-state.json');
 }
 
 // Only shows backed by a genuine signal count as "recommended" —
@@ -44,19 +47,6 @@ export function filterQualifyingShows(matchData) {
     entries.push({ act: s.act, kind: s.kind, date: s.date, venue: s.venue });
   }
   return entries;
-}
-
-// A direct track search (artist:"<name>" field filter), not the more obvious
-// search-for-artist-id-then-GET-/artists/{id}/top-tracks. Verified live
-// (2026-08-07): /artists/{id}/top-tracks returns 403 Forbidden on this app's
-// registration — the same class of restriction the design spec already
-// flagged for related-artists/recommendations, apparently extending to
-// top-tracks too. Track search uses only /search, already confirmed working,
-// and Spotify's own relevance ranking puts an artist's well-known songs
-// first — same practical result, one API call instead of two.
-export async function resolveArtistTracks(accessToken, artistName, { spotifyClient = spotifyGet } = {}) {
-  const result = await spotifyClient(accessToken, 'search', { q: `artist:"${artistName}"`, type: 'track', limit: 3 });
-  return (result?.tracks?.items || []).slice(0, 3).map((t) => t.uri);
 }
 
 // Resolves an artist to their Spotify artist-*page* URL (GET /search?type=
@@ -116,112 +106,94 @@ export function formatMessage(entries) {
     .join('\n');
 }
 
-export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
-  const uris = [];
-  for (const name of artistNames) {
+function readLocalEnv(filePath) {
+  const values = {};
+  if (!fs.existsSync(filePath)) throw new Error(`Missing env file: ${filePath}`);
+  for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const idx = trimmed.indexOf('=');
+    if (idx === -1) continue;
+    values[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+  }
+  return values;
+}
+
+async function callTelegram(token, method, body) {
+  const maxAttempts = 3;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const trackUris = await resolveArtistTracks(accessToken, name, { spotifyClient });
-      if (!trackUris.length) {
-        log(`No Spotify catalog match for "${name}" — skipped.`);
-        continue;
-      }
-      uris.push(...trackUris);
+      const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(`Telegram ${method} rejected: ${JSON.stringify(json)}`);
+      return json;
     } catch (err) {
-      log(`Track lookup failed for "${name}" — skipped. (${err.message})`);
+      lastErr = err;
+      if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
     }
   }
-  return [...new Set(uris)];
+  throw lastErr;
 }
 
-const PLAYLIST_NAME = 'LA Shows — This Week';
-const PLAYLIST_DESCRIPTION = 'Auto-updated weekly from taste-matched upcoming LA shows — see the Dining + Shows tab.';
-
-function loadState(statePath) {
-  try {
-    return JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  } catch {
-    return null;
+function parseArgs(argv) {
+  const args = {
+    envPath: telegramEnvPath(),
+    matchDataPath: defaultMatchDataPath(),
+    ownerId: 'kevin',
+    dryRun: false,
+  };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--dry-run') { args.dryRun = true; continue; }
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2);
+      const value = argv[i + 1];
+      i += 1;
+      if (key === 'env-path') args.envPath = value;
+      else if (key === 'match-data-path') args.matchDataPath = value;
+      else if (key === 'owner') args.ownerId = value;
+      else throw new Error(`Unknown argument: ${arg}`);
+    }
   }
+  return args;
 }
 
-function saveState(statePath, state) {
-  fs.mkdirSync(path.dirname(statePath), { recursive: true });
-  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
-}
+export async function runOnce(opts) {
+  const args = { ...parseArgs([]), ...opts };
+  const log = args.log || (() => {});
 
-// First run: resolves the account's user id, creates a private playlist, and
-// persists both. Every later run reuses the saved ids without an extra GET —
-// only ensurePlaylist's caller (runPlaylistUpdate) knows to fall back to
-// creating a new one if the saved playlist id turns out to be gone (404).
-export async function ensurePlaylist(accessToken, {
-  spotifyClient = spotifyGet, spotifyPostFn = spotifyPost, statePath = defaultStatePath(),
-} = {}) {
-  const existing = loadState(statePath);
-  if (existing?.playlistId && existing?.userId) {
-    return { playlistId: existing.playlistId, userId: existing.userId };
-  }
-  const userId = existing?.userId || (await spotifyClient(accessToken, 'me', {})).id;
-  const created = await spotifyPostFn(accessToken, `users/${userId}/playlists`, {
-    name: PLAYLIST_NAME,
-    public: false,
-    description: PLAYLIST_DESCRIPTION,
-  });
-  const state = { playlistId: created.id, userId };
-  saveState(statePath, state);
-  return state;
-}
+  const matchData = JSON.parse(fs.readFileSync(args.matchDataPath, 'utf8'));
+  const qualifying = filterQualifyingShows(matchData);
+  if (!qualifying.length) return { sent: false, reason: 'no_qualifying_shows' };
 
-// Spotify's replace-tracks endpoint clears and resets the entire playlist in
-// one call — this is what makes "replace entirely" a single request rather
-// than a separate remove-then-add. An empty list is a legitimate, intended
-// call (clears the playlist for a week with zero qualifying shows), not a
-// case to special-case away.
-export async function replacePlaylistTracks(accessToken, playlistId, uris, { spotifyPutFn = spotifyPut } = {}) {
-  await spotifyPutFn(accessToken, `playlists/${playlistId}/tracks`, { uris });
-}
+  const accessToken = args.accessToken || (await getValidAccessToken(args.ownerId));
+  const linked = await buildArtistLinks(accessToken, qualifying, { spotifyClient: args.spotifyClient, log });
+  if (!linked.length) return { sent: false, reason: 'no_artist_matches' };
 
-export async function runPlaylistUpdate({
-  ownerId = 'kevin',
-  matchDataPath = defaultMatchDataPath(),
-  statePath = defaultStatePath(),
-  accessToken = null,
-  spotifyClient = spotifyGet,
-  spotifyPostFn = spotifyPost,
-  spotifyPutFn = spotifyPut,
-  log = console.log,
-} = {}) {
-  const token = accessToken || (await getValidAccessToken(ownerId));
-  const matchData = JSON.parse(fs.readFileSync(matchDataPath, 'utf8'));
-  const artists = filterQualifyingShows(matchData);
-  const uris = await buildTrackList(token, artists, { spotifyClient, log });
+  const text = formatMessage(linked);
 
-  let { playlistId } = await ensurePlaylist(token, { spotifyClient, spotifyPostFn, statePath });
-  try {
-    await replacePlaylistTracks(token, playlistId, uris, { spotifyPutFn });
-  } catch (err) {
-    if (err.status !== 404) throw err;
-    // The saved playlist was deleted out from under us (e.g. manually via the
-    // Spotify app) — recreate rather than fail the whole weekly run. A 404
-    // means the PLAYLIST is gone, not that we've forgotten who the user is:
-    // keep the known userId in state (ensurePlaylist already skips its /me
-    // call whenever userId is present, even with playlistId missing) so
-    // recreating never needs an extra catalog lookup for information we
-    // already have.
-    log(`Saved playlist ${playlistId} is gone (404) — recreating.`);
-    const priorState = loadState(statePath);
-    saveState(statePath, { userId: priorState?.userId });
-    ({ playlistId } = await ensurePlaylist(token, { spotifyClient, spotifyPostFn, statePath }));
-    await replacePlaylistTracks(token, playlistId, uris, { spotifyPutFn });
-  }
+  if (args.dryRun) return { sent: false, reason: 'dry_run', text, entryCount: linked.length };
 
-  return { playlistId, trackCount: uris.length, artistCount: artists.length };
+  const envValues = args.token && args.groupChatId ? {} : readLocalEnv(args.envPath);
+  const token = args.token || envValues.TELEGRAM_BOT_TOKEN;
+  const groupChatId = args.groupChatId || envValues.TELEGRAM_GROUP_CHAT_ID;
+  const telegramClient = args.telegramClient || callTelegram;
+  await telegramClient(token, 'sendMessage', { chat_id: groupChatId, text });
+
+  return { sent: true, text, entryCount: linked.length };
 }
 
 async function main() {
-  const result = await runPlaylistUpdate({});
-  console.log(JSON.stringify({ ok: true, ...result }));
+  const args = parseArgs(process.argv.slice(2));
+  const result = await runOnce(args);
+  console.log(JSON.stringify({ ok: true, sent: result.sent, reason: result.reason || null, entryCount: result.entryCount || 0 }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err) => { console.error(err.message || err); process.exit(1); });
+  main().catch((err) => { console.error(err); process.exit(1); });
 }

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate, resolveArtistPageUrl, buildArtistLinks, formatShowDate, formatMessage } from '../scripts/spotify-shows-telegram.mjs';
+import { filterQualifyingShows, resolveArtistPageUrl, buildArtistLinks, formatShowDate, formatMessage, runOnce } from '../scripts/spotify-shows-telegram.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -189,68 +189,8 @@ test('formatMessage on an empty array returns an empty string', () => {
   assert.equal(formatMessage([]), '');
 });
 
-function tmpStatePath() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-playlist-state-'));
-  return path.join(dir, 'show-playlist-state.json');
-}
-
-await asyncTest('ensurePlaylist creates a new private playlist on first run and saves its id', async () => {
-  const statePath = tmpStatePath();
-  const postCalls = [];
-  const client = async (token, pathSuffix) => {
-    if (pathSuffix === 'me') return { id: 'spotify-user-123' };
-    throw new Error(`Unexpected GET in this test: ${pathSuffix}`);
-  };
-  const postFn = async (token, pathSuffix, body) => {
-    postCalls.push({ pathSuffix, body });
-    return { id: 'new-playlist-id' };
-  };
-  const result = await ensurePlaylist('token', { spotifyClient: client, spotifyPostFn: postFn, statePath });
-
-  assert.equal(result.playlistId, 'new-playlist-id');
-  assert.equal(result.userId, 'spotify-user-123');
-  assert.equal(postCalls.length, 1);
-  assert.equal(postCalls[0].pathSuffix, 'users/spotify-user-123/playlists');
-  assert.equal(postCalls[0].body.public, false, 'the playlist must be private');
-  assert.equal(postCalls[0].body.name, 'LA Shows — This Week');
-
-  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(saved.playlistId, 'new-playlist-id');
-  assert.equal(saved.userId, 'spotify-user-123');
-});
-
-await asyncTest('ensurePlaylist reuses the saved playlist id on a later run, without creating a new one', async () => {
-  const statePath = tmpStatePath();
-  fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'existing-id', userId: 'spotify-user-123' }));
-  let postCalled = false;
-  const result = await ensurePlaylist('token', {
-    spotifyClient: async () => { throw new Error('should not need GET /me when state already has a userId'); },
-    spotifyPostFn: async () => { postCalled = true; return {}; },
-    statePath,
-  });
-  assert.equal(result.playlistId, 'existing-id');
-  assert.equal(postCalled, false);
-});
-
-await asyncTest('replacePlaylistTracks PUTs the full URI list to the playlist tracks endpoint', async () => {
-  const putCalls = [];
-  const putFn = async (token, pathSuffix, body) => { putCalls.push({ pathSuffix, body }); };
-  await replacePlaylistTracks('token', 'playlist-abc', ['spotify:track:a', 'spotify:track:b'], { spotifyPutFn: putFn });
-  assert.equal(putCalls.length, 1);
-  assert.equal(putCalls[0].pathSuffix, 'playlists/playlist-abc/tracks');
-  assert.deepEqual(putCalls[0].body.uris, ['spotify:track:a', 'spotify:track:b']);
-});
-
-await asyncTest('replacePlaylistTracks with an empty list still PUTs (clears the playlist), never skips the call', async () => {
-  const putCalls = [];
-  const putFn = async (token, pathSuffix, body) => { putCalls.push({ pathSuffix, body }); };
-  await replacePlaylistTracks('token', 'playlist-abc', [], { spotifyPutFn: putFn });
-  assert.equal(putCalls.length, 1, 'an empty qualifying-shows week must clear the playlist, not silently leave stale tracks');
-  assert.deepEqual(putCalls[0].body.uris, []);
-});
-
 function tmpMatchDataPath(shows) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-match-data-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-shows-telegram-'));
   const p = path.join(dir, 'show-matches-latest.json');
   fs.writeFileSync(p, JSON.stringify({ shows }));
   return p;
@@ -258,77 +198,75 @@ function tmpMatchDataPath(shows) {
 
 function realisticShows() {
   return [
-    show({ act: 'Counting Crows', basis: 'like' }),
-    show({ act: 'JAŸ-Z', basis: 'follow' }),
-    { ...show({ act: 'JAŸ-Z', basis: 'follow' }), date: '2026-08-24' },
+    show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl' }),
+    show({ act: 'Anthony Jeselnik', kind: 'comedy', basis: 'comedy', date: '2026-08-16', venue: 'Largo' }),
     show({ act: 'LLM Guess Artist', basis: 'claude' }),
-    show({ act: 'Some Comedian', kind: 'comedy', basis: 'like' }),
   ];
 }
 
-await asyncTest('runPlaylistUpdate end to end: filters, resolves tracks, creates, and replaces', async () => {
-  const matchDataPath = tmpMatchDataPath(realisticShows());
-  const statePath = tmpStatePath();
-  const putCalls = [];
-  const client = fakeSpotifyClient({
-    tracksByArtist: { 'Counting Crows': ['spotify:track:cc1'], 'JAŸ-Z': ['spotify:track:jz1', 'spotify:track:jz2'] },
-  });
-  const wrappedClient = async (token, pathSuffix, query) => {
-    if (pathSuffix === 'me') return { id: 'spotify-user-123' };
-    return client(token, pathSuffix, query);
-  };
-  const postFn = async () => ({ id: 'created-playlist-id' });
-  const putFn = async (token, pathSuffix, body) => { putCalls.push({ pathSuffix, body }); };
-
-  const result = await runPlaylistUpdate({
-    matchDataPath, statePath, accessToken: 'token',
-    spotifyClient: wrappedClient, spotifyPostFn: postFn, spotifyPutFn: putFn, log: () => {},
-  });
-
-  assert.equal(result.artistCount, 2, 'Counting Crows + JAŸ-Z once each — comedy and claude-basis excluded, JAŸ-Z deduped');
-  assert.equal(result.trackCount, 3);
-  assert.equal(putCalls.length, 1);
-  assert.deepEqual(new Set(putCalls[0].body.uris), new Set(['spotify:track:cc1', 'spotify:track:jz1', 'spotify:track:jz2']));
-});
-
-await asyncTest('runPlaylistUpdate recreates the playlist when the saved id 404s', async () => {
-  const matchDataPath = tmpMatchDataPath([show({ act: 'Counting Crows', basis: 'like' })]);
-  const statePath = tmpStatePath();
-  fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'gone-id', userId: 'spotify-user-123' }));
-  const client = fakeSpotifyClient({ tracksByArtist: { 'Counting Crows': ['spotify:track:cc1'] } });
-  let putAttempts = 0;
-  const putFn = async (token, pathSuffix) => {
-    putAttempts += 1;
-    if (putAttempts === 1) { const e = new Error('not found'); e.status = 404; throw e; }
-  };
-  const postFn = async () => ({ id: 'recreated-playlist-id' });
-
-  const result = await runPlaylistUpdate({
-    matchDataPath, statePath, accessToken: 'token',
-    spotifyClient: client, spotifyPostFn: postFn, spotifyPutFn: putFn, log: () => {},
-  });
-
-  assert.equal(result.playlistId, 'recreated-playlist-id');
-  assert.equal(putAttempts, 2, 'first PUT 404s against the stale id, second succeeds against the recreated one');
-  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  assert.equal(saved.playlistId, 'recreated-playlist-id');
-});
-
-await asyncTest('an empty qualifying-shows week still clears the playlist rather than skipping the run', async () => {
+await asyncTest('runOnce with no qualifying shows sends nothing and calls neither client', async () => {
   const matchDataPath = tmpMatchDataPath([show({ act: 'LLM Guess Only', basis: 'claude' })]);
-  const statePath = tmpStatePath();
-  fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'existing-id', userId: 'spotify-user-123' }));
-  const putCalls = [];
-  const result = await runPlaylistUpdate({
-    matchDataPath, statePath, accessToken: 'token',
+  const result = await runOnce({
+    matchDataPath, accessToken: 'token',
     spotifyClient: async () => { throw new Error('should not be called'); },
-    spotifyPostFn: async () => { throw new Error('should not create when state already has ids'); },
-    spotifyPutFn: async (t, p, body) => { putCalls.push(body); },
+    telegramClient: async () => { throw new Error('should not be called'); },
+  });
+  assert.deepEqual(result, { sent: false, reason: 'no_qualifying_shows' });
+});
+
+await asyncTest('runOnce where every artist fails to resolve sends nothing', async () => {
+  const matchDataPath = tmpMatchDataPath([show({ act: 'Nobody Findable', basis: 'like' })]);
+  const telegramCalls = [];
+  const result = await runOnce({
+    matchDataPath, accessToken: 'token',
+    spotifyClient: async () => ({ artists: { items: [] } }),
+    telegramClient: async (...args) => { telegramCalls.push(args); },
     log: () => {},
   });
-  assert.equal(result.trackCount, 0);
-  assert.equal(putCalls.length, 1);
-  assert.deepEqual(putCalls[0].uris, []);
+  assert.deepEqual(result, { sent: false, reason: 'no_artist_matches' });
+  assert.equal(telegramCalls.length, 0);
 });
 
-console.log('All spotify-playlist-shows tests passed.');
+await asyncTest('runOnce --dry-run composes the message but never calls the Telegram client', async () => {
+  const matchDataPath = tmpMatchDataPath(realisticShows());
+  const client = fakeArtistSearchClient({
+    urlByArtist: { 'Counting Crows': 'https://open.spotify.com/artist/cc', 'Anthony Jeselnik': 'https://open.spotify.com/artist/aj' },
+  });
+  const result = await runOnce({
+    matchDataPath, accessToken: 'token', dryRun: true,
+    spotifyClient: client,
+    telegramClient: async () => { throw new Error('dry-run must never call the Telegram client'); },
+    log: () => {},
+  });
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, 'dry_run');
+  assert.equal(
+    result.text,
+    '🎵 Counting Crows — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
+    + '🎤 Anthony Jeselnik — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+  );
+});
+
+await asyncTest('runOnce sends the composed message via the injected Telegram client, bypassing the env file when token/groupChatId are passed directly', async () => {
+  const matchDataPath = tmpMatchDataPath(realisticShows());
+  const client = fakeArtistSearchClient({
+    urlByArtist: { 'Counting Crows': 'https://open.spotify.com/artist/cc', 'Anthony Jeselnik': 'https://open.spotify.com/artist/aj' },
+  });
+  const telegramCalls = [];
+  const result = await runOnce({
+    matchDataPath, accessToken: 'token',
+    token: 'fake-bot-token', groupChatId: 'fake-chat-id',
+    spotifyClient: client,
+    telegramClient: async (token, method, body) => { telegramCalls.push({ token, method, body }); return { ok: true }; },
+    log: () => {},
+  });
+  assert.equal(result.sent, true);
+  assert.equal(result.entryCount, 2);
+  assert.equal(telegramCalls.length, 1);
+  assert.equal(telegramCalls[0].token, 'fake-bot-token');
+  assert.equal(telegramCalls[0].method, 'sendMessage');
+  assert.equal(telegramCalls[0].body.chat_id, 'fake-chat-id');
+  assert.equal(telegramCalls[0].body.text, result.text);
+});
+
+console.log('All spotify-shows-telegram tests passed.');
