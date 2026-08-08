@@ -104,7 +104,17 @@ export function dedupeShows(shows) {
   const map = new Map();
   for (const s of shows || []) {
     const k = showDedupeKey(s);
-    if (!map.has(k)) map.set(k, s);
+    const existing = map.get(k);
+    if (!existing) {
+      map.set(k, s);
+      continue;
+    }
+    // First-seen wins for every field it already has — this only fills a
+    // gap (e.g. a Live Nation promoter tag a second source found) rather
+    // than letting a later duplicate override anything.
+    if (s.promoter && !existing.promoter) {
+      map.set(k, { ...existing, promoter: s.promoter });
+    }
   }
   return [...map.values()];
 }
