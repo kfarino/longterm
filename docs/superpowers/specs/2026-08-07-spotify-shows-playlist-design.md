@@ -1,5 +1,7 @@
 # Weekly auto-updating Spotify playlist from taste-matched shows
 
+> **SUPERSEDED 2026-08-08** — see `2026-08-08-spotify-shows-telegram-design.md`. The playlist-write mechanism this spec describes was built, shipped, and confirmed permanently blocked by Spotify's Development Mode policy (403 on `POST /users/{id}/playlists` even with the correct scope granted — Extended Quota Mode now requires a registered org with 250k+ MAU). The filtering/dedup logic below survives; the playlist-writing code does not.
+
 *Approved 2026-08-07 — a private Spotify playlist, under Kevin's account, rebuilt every week from `show-matches-latest.json`'s genuinely taste-matched upcoming LA music shows.*
 
 ## Goal
