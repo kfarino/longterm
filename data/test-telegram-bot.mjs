@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runOnce } from '../scripts/telegram-bot-poll.mjs';
+import { runOnce, REPHRASE_SYSTEM_PROMPT } from '../scripts/telegram-bot-poll.mjs';
 import { get_dining_plan, get_health_status } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -719,6 +719,25 @@ await asyncTest('naturalizeBatch: a rephrase failure falls back to a plain join 
   const result = await runOnce(baseOpts(paths, { rephraseClient: mockRephraseClient }));
   assert.ok(result.combinedReply.includes('Added ✓'), 'a rephrase failure should never lose the underlying confirmation');
   assert.equal(result.todos.items.length, 2, 'the action itself must still have succeeded');
+});
+
+test('REPHRASE_SYSTEM_PROMPT asks for short transactional lines, not warm flowing prose', () => {
+  // Regression guard (2026-08-08): the household's actual live experience was
+  // paragraphs like "Good news on sleep — Hanna's tracking well this week
+  // at 91.9... If you're noticing a specific pattern... just let me know" —
+  // directly caused by this prompt's prior wording ("warm", "flowing
+  // reply"). This asserts the instruction genuinely changed, not just that
+  // some string exists, so a future edit can't silently drift it back.
+  const lower = REPHRASE_SYSTEM_PROMPT.toLowerCase();
+  // A bare "must not contain 'warm'" check can't tell "you are a warm
+  // assistant" (the old, rejected framing) apart from "no warmth-for-its-
+  // own-sake" (the new prompt's own explicit rejection of exactly that) —
+  // both legitimately contain the substring. Check the specific old phrase.
+  assert.ok(!lower.includes('a warm, concise family assistant'), 'must not reuse the old "warm assistant" framing');
+  assert.ok(lower.includes('no warmth-for-its-own-sake') || lower.includes('no warmth for its own sake'), 'must explicitly reject warmth-for-its-own-sake');
+  assert.ok(!lower.includes('flowing'), 'must not ask for flowing prose');
+  assert.ok(lower.includes('short'), 'must explicitly ask for short lines');
+  assert.ok(lower.includes('markdown') && lower.includes('bullet'), 'must still rule out markdown/bullet glyphs, matching the recap convention');
 });
 
 // --- Dining-planning tools (Part 3) — only reachable via the LLM fallback, no deterministic pattern ---
