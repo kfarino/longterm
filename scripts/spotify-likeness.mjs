@@ -22,6 +22,16 @@ export const SCORE_FLOORS = {
 /** Max liked tracks from one artist that count toward digest ranking (stops Kanye/Drake pile-ups). */
 export const LIKED_TRACK_CAP = 5;
 
+/** Flat score bump when a show is Live Nation-promoted — Kevin has a
+ * personal connection who can often get free/discounted tickets to these.
+ * A nudge on top of taste fit, not a floor: a show he'd genuinely dislike
+ * doesn't jump to "must-go" just because the ticket is free. */
+export const LIVE_NATION_BOOST = 15;
+
+export function liveNationBoost(promoter) {
+  return promoter === 'Live Nation' ? LIVE_NATION_BOOST : 0;
+}
+
 /** Bump when digest/profile scoring prompt changes so old Claude scores re-fetch. */
 export const DIGEST_VERSION = 5;
 
@@ -140,18 +150,40 @@ export function venueRatingBoost(rating) {
   return -12;
 }
 
-function applyVenueBoost(scoreObj, venueInfo) {
+function applyVenueBoost(scoreObj, venueInfo, promoter) {
   if (!scoreObj || typeof scoreObj.score !== 'number') return scoreObj;
   const boost = venueRatingBoost(venueInfo?.rating);
-  if (!boost) {
-    return { ...scoreObj, venueRating: venueInfo?.rating ?? null, venueBoost: 0 };
-  }
-  const next = Math.max(0, Math.min(100, scoreObj.score + boost));
+  const lnBoost = liveNationBoost(promoter);
+  const total = boost + lnBoost;
+  // Fold both boosts into one clamp — clamping them separately would lose
+  // information whenever one alone pushed the score out of [0,100] (e.g. a
+  // 2-star penalty clamped to 0 first would let a second boost start from 0
+  // instead of the true negative subtotal).
+  const next = total ? Math.max(0, Math.min(100, scoreObj.score + total)) : scoreObj.score;
   return {
     ...scoreObj,
     score: next,
-    venueRating: venueInfo.rating,
+    venueRating: venueInfo?.rating ?? null,
     venueBoost: boost,
+    liveNation: lnBoost > 0,
+    liveNationBoost: lnBoost,
+  };
+}
+
+// Comedy never gets venueRatingBoost (already baked into
+// comedyVenueBaseScore, so applying it again would double-count) but still
+// needs the Live Nation boost.
+function applyLiveNationOnlyBoost(scoreObj, promoter) {
+  const lnBoost = liveNationBoost(promoter);
+  if (!scoreObj) return scoreObj;
+  if (!lnBoost || typeof scoreObj.score !== 'number') {
+    return { ...scoreObj, liveNation: false, liveNationBoost: 0 };
+  }
+  return {
+    ...scoreObj,
+    score: Math.max(0, Math.min(100, scoreObj.score + lnBoost)),
+    liveNation: true,
+    liveNationBoost: lnBoost,
   };
 }
 
@@ -513,7 +545,7 @@ export async function scoreShowsLikeness({
         const exact = matchActForOwner(show.act || show.name, indexes[id]);
         const floored = floorFromExactHit(exact);
         if (floored) {
-          scores[id] = applyVenueBoost({ ...floored, suggestionStars }, venueInfo);
+          scores[id] = applyVenueBoost({ ...floored, suggestionStars }, venueInfo, show.promoter);
           continue;
         }
       }
@@ -532,14 +564,14 @@ export async function scoreShowsLikeness({
           suggestionStars,
         };
         scores[id] = kind === 'comedy'
-          ? { ...base, venueRating: venueInfo?.rating ?? null, venueBoost: 0 }
-          : applyVenueBoost(base, venueInfo);
+          ? applyLiveNationOnlyBoost({ ...base, venueRating: venueInfo?.rating ?? null, venueBoost: 0 }, show.promoter)
+          : applyVenueBoost(base, venueInfo, show.promoter);
         continue;
       }
       if (skipClaude || !key) {
         if (kind === 'comedy') {
           const base = comedyVenueBaseScore(venueInfo?.rating);
-          scores[id] = {
+          scores[id] = applyLiveNationOnlyBoost({
             linked: true,
             score: base,
             basis: 'comedy-venue',
@@ -550,7 +582,7 @@ export async function scoreShowsLikeness({
             suggestionStars,
             venueRating: venueInfo?.rating ?? null,
             venueBoost: 0,
-          };
+          }, show.promoter);
         } else {
           scores[id] = {
             linked: true,
@@ -560,6 +592,8 @@ export async function scoreShowsLikeness({
             suggestionStars,
             venueRating: venueInfo?.rating ?? null,
             venueBoost: 0,
+            liveNation: false,
+            liveNationBoost: 0,
           };
         }
         continue;
@@ -651,15 +685,17 @@ export async function scoreShowsLikeness({
             cached: false,
             suggestionStars: ref.suggestionStars,
           };
+          const promoter = scoredShows[ref.showIdx].promoter;
           scoredShows[ref.showIdx].scores[ref.ownerId] = job.kind === 'comedy'
-            ? { ...base, venueRating: ref.venueInfo?.rating ?? null, venueBoost: 0 }
-            : applyVenueBoost(base, ref.venueInfo);
+            ? applyLiveNationOnlyBoost({ ...base, venueRating: ref.venueInfo?.rating ?? null, venueBoost: 0 }, promoter)
+            : applyVenueBoost(base, ref.venueInfo, promoter);
         }
       } catch {
         for (const ref of jobKeyToIndices.get(job.jk) || []) {
+          const promoter = scoredShows[ref.showIdx].promoter;
           if (ref.kind === 'comedy') {
             const base = comedyVenueBaseScore(ref.venueInfo?.rating);
-            scoredShows[ref.showIdx].scores[ref.ownerId] = {
+            scoredShows[ref.showIdx].scores[ref.ownerId] = applyLiveNationOnlyBoost({
               linked: true,
               score: base,
               basis: 'comedy-venue',
@@ -668,7 +704,7 @@ export async function scoreShowsLikeness({
               suggestionStars: ref.suggestionStars,
               venueRating: ref.venueInfo?.rating ?? null,
               venueBoost: 0,
-            };
+            }, promoter);
           } else {
             scoredShows[ref.showIdx].scores[ref.ownerId] = {
               linked: true,
@@ -676,6 +712,8 @@ export async function scoreShowsLikeness({
               basis: 'error',
               label: '?',
               suggestionStars: ref.suggestionStars,
+              liveNation: false,
+              liveNationBoost: 0,
             };
           }
         }
