@@ -15,31 +15,47 @@ function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
 console.log('test-spotify-shows-telegram.mjs');
 
-function show({ act, kind = 'music', basis = 'like', score = 90 }) {
-  return { act, kind, date: '2026-08-10', scores: { kevin: { basis, score, linked: true } } };
+function show({ act, kind = 'music', basis = 'like', score = 90, date = '2026-08-10', venue = 'The Wiltern' }) {
+  return { act, kind, date, venue, scores: { kevin: { basis, score, linked: true } } };
 }
 
-test('keeps only music shows with a real signal (basis !== claude)', () => {
+test('keeps music and comedy shows with a real signal (basis !== claude)', () => {
   const shows = [
     show({ act: 'Counting Crows', basis: 'like' }),
     show({ act: 'JAŸ-Z', basis: 'follow' }),
     show({ act: 'Some Playlist Artist', basis: 'playlist' }),
+    show({ act: 'Anthony Jeselnik', kind: 'comedy', basis: 'comedy' }),
     show({ act: 'LLM Guess Artist', basis: 'claude' }),
   ];
-  assert.deepEqual(filterQualifyingShows({ shows }), ['Counting Crows', 'JAŸ-Z', 'Some Playlist Artist']);
+  const result = filterQualifyingShows({ shows });
+  assert.deepEqual(result.map((e) => e.act), ['Counting Crows', 'JAŸ-Z', 'Some Playlist Artist', 'Anthony Jeselnik']);
 });
 
-test('excludes comedy shows even with a real signal', () => {
-  const shows = [show({ act: 'Some Comedian', kind: 'comedy', basis: 'like' })];
+test('returns {act, kind, date, venue} objects, not bare strings', () => {
+  const shows = [show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl' })];
+  assert.deepEqual(filterQualifyingShows({ shows }), [
+    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl' },
+  ]);
+});
+
+test('excludes a kind other than music or comedy', () => {
+  const shows = [{ act: 'Some Festival', kind: 'other', date: '2026-08-10', scores: { kevin: { basis: 'like' } } }];
   assert.deepEqual(filterQualifyingShows({ shows }), []);
 });
 
-test('deduplicates an artist appearing across multiple tour dates', () => {
+test('excludes an LLM-guessed comedy show the same as an LLM-guessed music show', () => {
+  const shows = [show({ act: 'Guessed Comedian', kind: 'comedy', basis: 'claude' })];
+  assert.deepEqual(filterQualifyingShows({ shows }), []);
+});
+
+test('deduplicates an artist appearing across multiple tour dates, first occurrence wins', () => {
   const shows = [
-    show({ act: 'JAŸ-Z', basis: 'follow' }),
-    { ...show({ act: 'JAŸ-Z', basis: 'follow' }), date: '2026-08-11' },
+    show({ act: 'JAŸ-Z', basis: 'follow', date: '2026-08-10' }),
+    show({ act: 'JAŸ-Z', basis: 'follow', date: '2026-08-24' }),
   ];
-  assert.deepEqual(filterQualifyingShows({ shows }), ['JAŸ-Z']);
+  const result = filterQualifyingShows({ shows });
+  assert.equal(result.length, 1);
+  assert.equal(result[0].date, '2026-08-10');
 });
 
 test('deduplicates case/whitespace variants of the same artist name', () => {

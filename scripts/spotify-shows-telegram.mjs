@@ -19,17 +19,19 @@ export function defaultStatePath() {
   return path.join(repoRoot, 'data', 'spotify', 'show-playlist-state.json');
 }
 
-// Only shows backed by a genuine signal from Kevin's own Spotify library
-// (like/follow/playlist) count as "recommended" — basis: 'claude' is an LLM
-// guess, not a real taste signal, and the current real match data ranges
-// from score 97 down to 18 with everything below 84 being an LLM guess (see
-// the design doc). Comedy shows have no Spotify-track equivalent.
+// Only shows backed by a genuine signal count as "recommended" —
+// basis: 'claude' is an LLM guess, not a real taste signal (see the design
+// doc). Comedy is included as of the Telegram redesign: an artist-*page*
+// link (unlike a track) has no music-catalog requirement, and comedy's own
+// basis is literally the string 'comedy' (from comedyTaste matching, not an
+// LLM guess), so it already passes this same basis !== 'claude' check
+// without a comedy-specific branch.
 export function filterQualifyingShows(matchData) {
   const shows = matchData?.shows || [];
   const seen = new Set();
-  const artists = [];
+  const entries = [];
   for (const s of shows) {
-    if (s.kind !== 'music') continue;
+    if (s.kind !== 'music' && s.kind !== 'comedy') continue;
     const kevinScore = s.scores?.kevin;
     if (!kevinScore || kevinScore.basis === 'claude') continue;
     // Trimmed first: normalizeArtistName's leading-"the"-strip is anchored to
@@ -39,9 +41,9 @@ export function filterQualifyingShows(matchData) {
     const key = normalizeArtistName(String(s.act || '').trim());
     if (seen.has(key)) continue;
     seen.add(key);
-    artists.push(s.act);
+    entries.push({ act: s.act, kind: s.kind, date: s.date, venue: s.venue });
   }
-  return artists;
+  return entries;
 }
 
 // A direct track search (artist:"<name>" field filter), not the more obvious
