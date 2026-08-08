@@ -91,6 +91,31 @@ export async function buildArtistLinks(accessToken, entries, { spotifyClient = s
   return linked;
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Formats a "YYYY-MM-DD" date-only string straight from its parts, not
+// through a Date object. A Date built from a bare date string is UTC
+// midnight; formatting it back out with a local-timezone method
+// (toLocaleDateString) can roll the displayed day back by one anywhere west
+// of UTC (e.g. Pacific). Splitting the string sidesteps that entirely.
+export function formatShowDate(isoDate) {
+  const [, month, day] = String(isoDate || '').split('-').map(Number);
+  if (!month || !day) return isoDate || '';
+  return `${MONTH_NAMES[month - 1]} ${day}`;
+}
+
+const KIND_EMOJI = { music: '🎵', comedy: '🎤' };
+
+// Sorted soonest-first; a plain string sort is safe here because every date
+// is "YYYY-MM-DD" and lexicographic order matches chronological order for
+// that format.
+export function formatMessage(entries) {
+  const sorted = [...entries].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return sorted
+    .map((e) => `${KIND_EMOJI[e.kind] || '🎵'} ${e.act} — ${formatShowDate(e.date)} @ ${e.venue || 'TBD'}: ${e.url}`)
+    .join('\n');
+}
+
 export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
   const uris = [];
   for (const name of artistNames) {

@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate, resolveArtistPageUrl, buildArtistLinks } from '../scripts/spotify-shows-telegram.mjs';
+import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate, resolveArtistPageUrl, buildArtistLinks, formatShowDate, formatMessage } from '../scripts/spotify-shows-telegram.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -148,6 +148,45 @@ await asyncTest('buildArtistLinks continues past a client that throws for one ar
 await asyncTest('buildArtistLinks on an empty entries array resolves to an empty array without calling the client', async () => {
   const linked = await buildArtistLinks('token', [], { spotifyClient: async () => { throw new Error('should not be called'); } });
   assert.deepEqual(linked, []);
+});
+
+test('formatShowDate turns an ISO date-only string into "Mon D"', () => {
+  assert.equal(formatShowDate('2026-08-14'), 'Aug 14');
+  assert.equal(formatShowDate('2026-01-05'), 'Jan 5');
+  assert.equal(formatShowDate('2026-12-31'), 'Dec 31');
+});
+
+test('formatMessage sorts entries soonest-first regardless of input order', () => {
+  const entries = [
+    { act: 'Later Artist', kind: 'music', date: '2026-08-24', venue: 'The Echo', url: 'https://open.spotify.com/artist/later' },
+    { act: 'Sooner Artist', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/sooner' },
+  ];
+  const text = formatMessage(entries);
+  const lines = text.split('\n');
+  assert.ok(lines[0].startsWith('🎵 Sooner Artist'), `expected Sooner Artist first, got: ${lines[0]}`);
+  assert.ok(lines[1].startsWith('🎵 Later Artist'), `expected Later Artist second, got: ${lines[1]}`);
+});
+
+test('formatMessage uses the music note for music and the mic for comedy', () => {
+  const entries = [
+    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/cc' },
+    { act: 'Anthony Jeselnik', kind: 'comedy', date: '2026-08-16', venue: 'Largo', url: 'https://open.spotify.com/artist/aj' },
+  ];
+  const text = formatMessage(entries);
+  assert.equal(
+    text,
+    '🎵 Counting Crows — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
+    + '🎤 Anthony Jeselnik — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+  );
+});
+
+test('formatMessage falls back to "TBD" when an entry has no venue', () => {
+  const entries = [{ act: 'No Venue Artist', kind: 'music', date: '2026-08-14', venue: undefined, url: 'https://open.spotify.com/artist/nv' }];
+  assert.equal(formatMessage(entries), '🎵 No Venue Artist — Aug 14 @ TBD: https://open.spotify.com/artist/nv');
+});
+
+test('formatMessage on an empty array returns an empty string', () => {
+  assert.equal(formatMessage([]), '');
 });
 
 function tmpStatePath() {
