@@ -37,7 +37,7 @@ function ownersWithTokens() {
   return ids.filter((id) => fs.existsSync(spotifyOwnerEnvPath(id)));
 }
 
-function normalizeArtistName(name) {
+export function normalizeArtistName(name) {
   return String(name || '')
     .toLowerCase()
     .normalize('NFKD')
