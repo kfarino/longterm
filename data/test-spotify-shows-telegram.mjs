@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate } from '../scripts/spotify-shows-telegram.mjs';
+import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate, resolveArtistPageUrl } from '../scripts/spotify-shows-telegram.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -76,33 +76,42 @@ test('empty or missing shows array degrades to an empty list, not a crash', () =
   assert.deepEqual(filterQualifyingShows({}), []);
 });
 
-// Keyed by the exact `artist:"<name>"` query resolveArtistTracks sends —
-// track search directly, not the search-for-id-then-top-tracks shape this
-// originally had. /artists/{id}/top-tracks was verified live to return 403
-// Forbidden on this app's registration (see resolveArtistTracks's own
-// comment); track search only ever needs /search, already proven working.
-function fakeSpotifyClient({ tracksByArtist = {} } = {}) {
+// Keyed by the exact `artist:"<name>"` field-filter query resolveArtistPageUrl
+// sends, with type=artist — a bare-name query was verified live to be
+// unreliable (returned "Bill Burr" for "Anthony Jeselnik" in one test), so
+// only the field-filter form is exercised here.
+function fakeArtistSearchClient({ urlByArtist = {} } = {}) {
   return async (token, pathSuffix, query) => {
-    if (pathSuffix !== 'search') throw new Error(`Unexpected path in fakeSpotifyClient: ${pathSuffix}`);
+    if (pathSuffix !== 'search') throw new Error(`Unexpected path in fakeArtistSearchClient: ${pathSuffix}`);
+    if (query.type !== 'artist') throw new Error(`Expected type=artist, got ${query.type}`);
     const match = query.q.match(/^artist:"(.+)"$/);
     const name = match ? match[1] : null;
-    const uris = (name && tracksByArtist[name]) || [];
-    return { tracks: { items: uris.map((uri) => ({ uri })) } };
+    const url = name ? urlByArtist[name] : null;
+    return { artists: { items: url ? [{ name, external_urls: { spotify: url } }] : [] } };
   };
 }
 
-await asyncTest('resolves an artist to up to 3 track URIs via direct track search', async () => {
-  const client = fakeSpotifyClient({
-    tracksByArtist: { 'Counting Crows': ['spotify:track:a', 'spotify:track:b', 'spotify:track:c', 'spotify:track:d'] },
+await asyncTest('resolves an artist to its Spotify artist-page URL via artist search', async () => {
+  const client = fakeArtistSearchClient({
+    urlByArtist: { 'Counting Crows': 'https://open.spotify.com/artist/0vEsuISMWAKNctLlUAhSZC' },
   });
-  const uris = await resolveArtistTracks('token', 'Counting Crows', { spotifyClient: client });
-  assert.deepEqual(uris, ['spotify:track:a', 'spotify:track:b', 'spotify:track:c']);
+  const url = await resolveArtistPageUrl('token', 'Counting Crows', { spotifyClient: client });
+  assert.equal(url, 'https://open.spotify.com/artist/0vEsuISMWAKNctLlUAhSZC');
 });
 
-await asyncTest('an artist with no search results resolves to an empty list, not a throw', async () => {
-  const client = fakeSpotifyClient({});
-  const uris = await resolveArtistTracks('token', 'Nobody Findable', { spotifyClient: client });
-  assert.deepEqual(uris, []);
+await asyncTest('an artist with no search results resolves to null, not a throw', async () => {
+  const client = fakeArtistSearchClient({});
+  const url = await resolveArtistPageUrl('token', 'Nobody Findable', { spotifyClient: client });
+  assert.equal(url, null);
+});
+
+await asyncTest('sends the artist:"<name>" field-filter query, never a bare-name query', async () => {
+  let seenQuery = null;
+  const client = async (token, pathSuffix, query) => { seenQuery = query; return { artists: { items: [] } }; };
+  await resolveArtistPageUrl('token', 'Anthony Jeselnik', { spotifyClient: client });
+  assert.equal(seenQuery.q, 'artist:"Anthony Jeselnik"');
+  assert.equal(seenQuery.type, 'artist');
+  assert.equal(seenQuery.limit, 1);
 });
 
 await asyncTest('buildTrackList flattens across artists and skips an unresolvable one without failing the run', async () => {

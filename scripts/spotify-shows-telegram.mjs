@@ -59,6 +59,21 @@ export async function resolveArtistTracks(accessToken, artistName, { spotifyClie
   return (result?.tracks?.items || []).slice(0, 3).map((t) => t.uri);
 }
 
+// Resolves an artist to their Spotify artist-*page* URL (GET /search?type=
+// artist), not a track — this needs no scope beyond what was already
+// granted, and never needs /artists/{id}/top-tracks (403'd, see below).
+// MUST use the artist:"<name>" field-filter form: a bare-name query
+// (`q: artistName`, no filter) was verified live to be unreliable — one test
+// returned "Bill Burr" for "Anthony Jeselnik" — while the field-filter form
+// was retested and correct twice. Comedians with released specials have real
+// Spotify artist pages (verified live: Jeselnik, Patton Oswalt, Tig Notaro,
+// Pete Holmes all resolve), so this works for both kinds this script handles.
+export async function resolveArtistPageUrl(accessToken, artistName, { spotifyClient = spotifyGet } = {}) {
+  const result = await spotifyClient(accessToken, 'search', { q: `artist:"${artistName}"`, type: 'artist', limit: 1 });
+  const top = result?.artists?.items?.[0];
+  return top?.external_urls?.spotify || null;
+}
+
 export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
   const uris = [];
   for (const name of artistNames) {
