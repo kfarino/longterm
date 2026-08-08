@@ -739,12 +739,18 @@ param(
 )
 ```
 
-And in the `try` block, after the existing three steps:
+And in the `try` block, after the existing three steps — **revised during implementation**: the playlist step gets its own nested `try`/`catch`, not a bare `if`. This script's existing three steps share one unified `try`/`catch` (any one failing already stops the others — pre-existing behavior, unchanged here), but the playlist step is *expected* to fail loudly until the manual re-consent happens, and that failure must not report the whole weekly pull as failed when the three steps the dashboard actually depends on all succeeded. This mirrors `run-daily-pull.ps1`'s own established containment pattern for its optional Oura step:
 ```powershell
     if (-not $SkipFindShows) { Invoke-NpmScript 'spotify:find-shows' }
     if (-not $SkipVenuePull) { Invoke-NpmScript 'shows:pull' }
     if (-not $SkipMatch) { Invoke-NpmScript 'spotify:match' }
-    if (-not $SkipPlaylist) { Invoke-NpmScript 'spotify:update-show-playlist' }
+    if (-not $SkipPlaylist) {
+        try {
+            Invoke-NpmScript 'spotify:update-show-playlist'
+        } catch {
+            Write-ShowsLog ('WARN spotify:update-show-playlist failed (continuing): {0}' -f $_.Exception.Message)
+        }
+    }
     Write-ShowsLog '=== Longterm weekly shows pull success ==='
 ```
 
@@ -760,9 +766,9 @@ Expected: `Parses OK`.
 
 - [ ] **Step 3: Document the manual rollout step and the new script in `claude.md`**
 
-Add a bullet near the existing Spotify/dining documentation in `claude.md`:
+Extend the existing `data/upcoming_shows_cache.json` / Spotify match artifacts bullet in `claude.md` with the 4th pipeline step, and add a new bullet:
 ```
-- `scripts/spotify-playlist-shows.mjs` — rebuilds a private Spotify playlist under Kevin's account every week (`npm run spotify:update-show-playlist`, wired as the 4th step of `run-weekly-shows-pull.ps1`) from `show-matches-latest.json`'s genuinely taste-matched music shows (`scores.kevin.basis !== 'claude'` — excludes LLM-guessed recommendations, keeping only shows backed by a real like/follow/playlist signal). Replaces the entire tracklist every run (`PUT /playlists/{id}/tracks`), so a show that's passed or dropped off the list disappears automatically rather than accumulating forever. **Requires the `playlist-modify-private` scope**, added 2026-08-07 — existing Spotify tokens on this machine predate it, so `npm run spotify:auth -- --owner kevin` must be re-run once to re-consent before this step can succeed; until then it fails loudly (by design) rather than silently no-op'ing.
+- `scripts/spotify-playlist-shows.mjs` — rebuilds a private Spotify playlist under Kevin's account every week (`npm run spotify:update-show-playlist`, the 4th step above) from `show-matches-latest.json`'s genuinely taste-matched music shows (`scores.kevin.basis !== 'claude'` — excludes LLM-guessed recommendations, keeping only shows backed by a real like/follow/playlist signal). Replaces the entire tracklist every run (`PUT /playlists/{id}/tracks`), so a show that's passed or dropped off the list disappears automatically rather than accumulating forever. Track resolution is a direct catalog track search (`artist:"<name>"`), not `/artists/{id}/top-tracks` — that endpoint returns `403 Forbidden` on this app's Spotify registration (confirmed live 2026-08-07), the same class of app-tier restriction already noted for related-artists/recommendations. **Requires the `playlist-modify-private` scope**, added 2026-08-07 — existing Spotify tokens on this machine predate it, so `npm run spotify:auth -- --owner kevin` must be re-run once to re-consent before this step can succeed; until then it fails loudly by design, isolated in its own try/catch in `run-weekly-shows-pull.ps1` (same containment rule `run-daily-pull.ps1` already uses for its own optional Oura step) so the other three steps — which the dashboard already depends on — are never marked failed because of it.
 ```
 
 - [ ] **Step 4: Run the full test suite one more time**

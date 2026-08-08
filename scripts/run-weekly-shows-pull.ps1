@@ -1,7 +1,8 @@
 param(
     [switch]$SkipFindShows,
     [switch]$SkipVenuePull,
-    [switch]$SkipMatch
+    [switch]$SkipMatch,
+    [switch]$SkipPlaylist
 )
 
 Set-StrictMode -Version Latest
@@ -47,6 +48,20 @@ try {
     if (-not $SkipFindShows) { Invoke-NpmScript 'spotify:find-shows' }
     if (-not $SkipVenuePull) { Invoke-NpmScript 'shows:pull' }
     if (-not $SkipMatch) { Invoke-NpmScript 'spotify:match' }
+    # Isolated from the three steps above, same containment rule
+    # run-daily-pull.ps1 already uses for its own Oura step: the playlist is a
+    # nice-to-have that must never mark the whole weekly pull as failed. It's
+    # also expected to fail loudly on its own until the playlist-modify-private
+    # scope is granted (see claude.md) — that failure belongs to this step
+    # alone, not to spotify:find-shows/shows:pull/spotify:match, which the
+    # dashboard already depends on and which succeed independently of it.
+    if (-not $SkipPlaylist) {
+        try {
+            Invoke-NpmScript 'spotify:update-show-playlist'
+        } catch {
+            Write-ShowsLog ('WARN spotify:update-show-playlist failed (continuing): {0}' -f $_.Exception.Message)
+        }
+    }
     Write-ShowsLog '=== Longterm weekly shows pull success ==='
 } catch {
     Write-ShowsLog ('=== Longterm weekly shows pull FAILED: {0} ===' -f $_.Exception.Message)
