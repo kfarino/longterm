@@ -44,7 +44,7 @@ export function filterQualifyingShows(matchData) {
     const key = normalizeArtistName(String(s.act || '').trim());
     if (seen.has(key)) continue;
     seen.add(key);
-    entries.push({ act: s.act, kind: s.kind, date: s.date, venue: s.venue, score: kevinScore.score });
+    entries.push({ act: s.act, kind: s.kind, date: s.date, venue: s.venue, score: kevinScore.score, promoter: s.promoter || null });
   }
   return entries;
 }
@@ -105,7 +105,10 @@ const KIND_EMOJI = { music: '🎸', comedy: '🤣' };
 export function formatMessage(entries) {
   const sorted = [...entries].sort((a, b) => (b.score - a.score) || String(a.date).localeCompare(String(b.date)));
   return sorted
-    .map((e) => `${KIND_EMOJI[e.kind] || KIND_EMOJI.music} ${e.act} (${e.score}%) — ${formatShowDate(e.date)} @ ${e.venue || 'TBD'}: ${e.url}`)
+    .map((e) => {
+      const lnTag = e.promoter === 'Live Nation' ? ' [LN]' : '';
+      return `${KIND_EMOJI[e.kind] || KIND_EMOJI.music} ${e.act} (${e.score}%)${lnTag} — ${formatShowDate(e.date)} @ ${e.venue || 'TBD'}: ${e.url}`;
+    })
     .join('\n');
 }
 

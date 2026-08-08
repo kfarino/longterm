@@ -15,8 +15,10 @@ function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
 console.log('test-spotify-shows-telegram.mjs');
 
-function show({ act, kind = 'music', basis = 'like', score = 90, date = '2026-08-10', venue = 'The Wiltern' }) {
-  return { act, kind, date, venue, scores: { kevin: { basis, score, linked: true } } };
+function show({ act, kind = 'music', basis = 'like', score = 90, date = '2026-08-10', venue = 'The Wiltern', promoter = undefined }) {
+  const s = { act, kind, date, venue, scores: { kevin: { basis, score, linked: true } } };
+  if (promoter) s.promoter = promoter;
+  return s;
 }
 
 test('keeps music and comedy shows with a real signal (basis !== claude)', () => {
@@ -34,8 +36,14 @@ test('keeps music and comedy shows with a real signal (basis !== claude)', () =>
 test('returns {act, kind, date, venue, score} objects, not bare strings', () => {
   const shows = [show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97 })];
   assert.deepEqual(filterQualifyingShows({ shows }), [
-    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97 },
+    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97, promoter: null },
   ]);
+});
+
+test('carries a Live Nation promoter tag through when present', () => {
+  const shows = [show({ act: 'Counting Crows', basis: 'like', score: 97, promoter: 'Live Nation' })];
+  const [entry] = filterQualifyingShows({ shows });
+  assert.equal(entry.promoter, 'Live Nation');
 });
 
 test('excludes a kind other than music or comedy', () => {
@@ -187,6 +195,19 @@ test('formatMessage uses the guitar for music, the laughing face for comedy, and
   assert.equal(
     text,
     '🎸 Counting Crows (97%) — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
+    + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+  );
+});
+
+test('formatMessage tags a Live Nation show with [LN] right after the score', () => {
+  const entries = [
+    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', url: 'https://open.spotify.com/artist/cc', score: 97, promoter: 'Live Nation' },
+    { act: 'Anthony Jeselnik', kind: 'comedy', date: '2026-08-16', venue: 'Largo', url: 'https://open.spotify.com/artist/aj', score: 56 },
+  ];
+  const text = formatMessage(entries);
+  assert.equal(
+    text,
+    '🎸 Counting Crows (97%) [LN] — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
     + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
   );
 });
