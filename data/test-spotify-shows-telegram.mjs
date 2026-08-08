@@ -1,19 +1,19 @@
-// Longterm/data/test-spotify-playlist-shows.mjs
+// Longterm/data/test-spotify-shows-telegram.mjs
 //
 // Permanent regression test (NOT a temp task script — do not delete). Covers
-// spotify-playlist-shows.mjs's filtering/dedup, track resolution, and
-// playlist create-vs-replace orchestration — all with injected Spotify
+// spotify-shows-telegram.mjs's filtering/dedup, artist-page resolution, and
+// message composition/send orchestration — all with injected Spotify/Telegram
 // clients, never a real network call. Run with:
-//   node Longterm/data/test-spotify-playlist-shows.mjs
+//   node Longterm/data/test-spotify-shows-telegram.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate } from '../scripts/spotify-playlist-shows.mjs';
+import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate } from '../scripts/spotify-shows-telegram.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
-console.log('test-spotify-playlist-shows.mjs');
+console.log('test-spotify-shows-telegram.mjs');
 
 function show({ act, kind = 'music', basis = 'like', score = 90 }) {
   return { act, kind, date: '2026-08-10', scores: { kevin: { basis, score, linked: true } } };
