@@ -20,7 +20,7 @@ export const SPOTIFY_REDIRECT_PORT = 51825;
 export const SPOTIFY_REDIRECT_URI = `http://127.0.0.1:${SPOTIFY_REDIRECT_PORT}/oauth2callback`;
 
 /** Intentional-taste scopes only — see the design spec for why recently-played/top-artists are excluded. */
-export const SPOTIFY_SCOPES = 'user-follow-read user-library-read playlist-read-private playlist-read-collaborative';
+export const SPOTIFY_SCOPES = 'user-follow-read user-library-read playlist-read-private playlist-read-collaborative playlist-modify-private';
 
 export function parseEnvFile(envFilePath) {
   const vars = {};
@@ -160,4 +160,35 @@ export async function spotifyGet(accessToken, pathSuffix, query = {}) {
     throw err;
   }
   return body;
+}
+
+async function spotifyWrite(method, accessToken, pathSuffix, body) {
+  const res = await fetch(`${SPOTIFY_API_BASE}/${pathSuffix.replace(/^\//, '')}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body || {}),
+  });
+  const text = await res.text();
+  let parsed = null;
+  if (text) {
+    try { parsed = JSON.parse(text); } catch { parsed = { raw: text }; }
+  }
+  if (!res.ok) {
+    const err = new Error(`Spotify ${method} ${pathSuffix} failed: ${res.status}`);
+    err.status = res.status;
+    err.body = parsed;
+    throw err;
+  }
+  return parsed;
+}
+
+export async function spotifyPost(accessToken, pathSuffix, body) {
+  return spotifyWrite('POST', accessToken, pathSuffix, body);
+}
+
+export async function spotifyPut(accessToken, pathSuffix, body) {
+  return spotifyWrite('PUT', accessToken, pathSuffix, body);
 }
