@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistTracks, buildTrackList } from '../scripts/spotify-playlist-shows.mjs';
+import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks } from '../scripts/spotify-playlist-shows.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -112,6 +112,66 @@ await asyncTest('buildTrackList continues past a client that throws for one arti
   const uris = await buildTrackList('token', ['Throws', 'Fine Artist'], { spotifyClient: client, log: (m) => logs.push(m) });
   assert.deepEqual(uris, ['spotify:track:ok']);
   assert.ok(logs.some((l) => l.includes('Throws')));
+});
+
+function tmpStatePath() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-playlist-state-'));
+  return path.join(dir, 'show-playlist-state.json');
+}
+
+await asyncTest('ensurePlaylist creates a new private playlist on first run and saves its id', async () => {
+  const statePath = tmpStatePath();
+  const postCalls = [];
+  const client = async (token, pathSuffix) => {
+    if (pathSuffix === 'me') return { id: 'spotify-user-123' };
+    throw new Error(`Unexpected GET in this test: ${pathSuffix}`);
+  };
+  const postFn = async (token, pathSuffix, body) => {
+    postCalls.push({ pathSuffix, body });
+    return { id: 'new-playlist-id' };
+  };
+  const result = await ensurePlaylist('token', { spotifyClient: client, spotifyPostFn: postFn, statePath });
+
+  assert.equal(result.playlistId, 'new-playlist-id');
+  assert.equal(result.userId, 'spotify-user-123');
+  assert.equal(postCalls.length, 1);
+  assert.equal(postCalls[0].pathSuffix, 'users/spotify-user-123/playlists');
+  assert.equal(postCalls[0].body.public, false, 'the playlist must be private');
+  assert.equal(postCalls[0].body.name, 'LA Shows — This Week');
+
+  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(saved.playlistId, 'new-playlist-id');
+  assert.equal(saved.userId, 'spotify-user-123');
+});
+
+await asyncTest('ensurePlaylist reuses the saved playlist id on a later run, without creating a new one', async () => {
+  const statePath = tmpStatePath();
+  fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'existing-id', userId: 'spotify-user-123' }));
+  let postCalled = false;
+  const result = await ensurePlaylist('token', {
+    spotifyClient: async () => { throw new Error('should not need GET /me when state already has a userId'); },
+    spotifyPostFn: async () => { postCalled = true; return {}; },
+    statePath,
+  });
+  assert.equal(result.playlistId, 'existing-id');
+  assert.equal(postCalled, false);
+});
+
+await asyncTest('replacePlaylistTracks PUTs the full URI list to the playlist tracks endpoint', async () => {
+  const putCalls = [];
+  const putFn = async (token, pathSuffix, body) => { putCalls.push({ pathSuffix, body }); };
+  await replacePlaylistTracks('token', 'playlist-abc', ['spotify:track:a', 'spotify:track:b'], { spotifyPutFn: putFn });
+  assert.equal(putCalls.length, 1);
+  assert.equal(putCalls[0].pathSuffix, 'playlists/playlist-abc/tracks');
+  assert.deepEqual(putCalls[0].body.uris, ['spotify:track:a', 'spotify:track:b']);
+});
+
+await asyncTest('replacePlaylistTracks with an empty list still PUTs (clears the playlist), never skips the call', async () => {
+  const putCalls = [];
+  const putFn = async (token, pathSuffix, body) => { putCalls.push({ pathSuffix, body }); };
+  await replacePlaylistTracks('token', 'playlist-abc', [], { spotifyPutFn: putFn });
+  assert.equal(putCalls.length, 1, 'an empty qualifying-shows week must clear the playlist, not silently leave stale tracks');
+  assert.deepEqual(putCalls[0].body.uris, []);
 });
 
 console.log('All spotify-playlist-shows tests passed.');

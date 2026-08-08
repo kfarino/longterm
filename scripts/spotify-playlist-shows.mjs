@@ -68,3 +68,50 @@ export async function buildTrackList(accessToken, artistNames, { spotifyClient =
   }
   return [...new Set(uris)];
 }
+
+const PLAYLIST_NAME = 'LA Shows — This Week';
+const PLAYLIST_DESCRIPTION = 'Auto-updated weekly from taste-matched upcoming LA shows — see the Dining + Shows tab.';
+
+function loadState(statePath) {
+  try {
+    return JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveState(statePath, state) {
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+// First run: resolves the account's user id, creates a private playlist, and
+// persists both. Every later run reuses the saved ids without an extra GET —
+// only ensurePlaylist's caller (runPlaylistUpdate) knows to fall back to
+// creating a new one if the saved playlist id turns out to be gone (404).
+export async function ensurePlaylist(accessToken, {
+  spotifyClient = spotifyGet, spotifyPostFn = spotifyPost, statePath = defaultStatePath(),
+} = {}) {
+  const existing = loadState(statePath);
+  if (existing?.playlistId && existing?.userId) {
+    return { playlistId: existing.playlistId, userId: existing.userId };
+  }
+  const userId = existing?.userId || (await spotifyClient(accessToken, 'me', {})).id;
+  const created = await spotifyPostFn(accessToken, `users/${userId}/playlists`, {
+    name: PLAYLIST_NAME,
+    public: false,
+    description: PLAYLIST_DESCRIPTION,
+  });
+  const state = { playlistId: created.id, userId };
+  saveState(statePath, state);
+  return state;
+}
+
+// Spotify's replace-tracks endpoint clears and resets the entire playlist in
+// one call — this is what makes "replace entirely" a single request rather
+// than a separate remove-then-add. An empty list is a legitimate, intended
+// call (clears the playlist for a week with zero qualifying shows), not a
+// case to special-case away.
+export async function replacePlaylistTracks(accessToken, playlistId, uris, { spotifyPutFn = spotifyPut } = {}) {
+  await spotifyPutFn(accessToken, `playlists/${playlistId}/tracks`, { uris });
+}
