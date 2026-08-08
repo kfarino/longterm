@@ -1,6 +1,7 @@
 param(
     [switch]$SkipFindShows,
     [switch]$SkipVenuePull,
+    [switch]$SkipLiveNation,
     [switch]$SkipMatch,
     [switch]$SkipShowNotify
 )
@@ -47,6 +48,18 @@ Write-ShowsLog '=== Longterm weekly shows pull begin ==='
 try {
     if (-not $SkipFindShows) { Invoke-NpmScript 'spotify:find-shows' }
     if (-not $SkipVenuePull) { Invoke-NpmScript 'shows:pull' }
+    # Isolated the same way the spotify:notify-shows step below already is:
+    # a missing Ticketmaster API key (expected until Kevin registers one) or
+    # an API outage must never fail spotify:find-shows/shows:pull, which
+    # already ran successfully, or block spotify:match from running on
+    # whatever the cache already has.
+    if (-not $SkipLiveNation) {
+        try {
+            Invoke-NpmScript 'livenation:pull'
+        } catch {
+            Write-ShowsLog ('WARN livenation:pull failed (continuing): {0}' -f $_.Exception.Message)
+        }
+    }
     if (-not $SkipMatch) { Invoke-NpmScript 'spotify:match' }
     # Isolated from the three steps above, same containment rule
     # run-daily-pull.ps1 already uses for its own Oura step: resolving
