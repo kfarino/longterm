@@ -52,3 +52,7 @@ export function spotifyOwnerEnvPath(ownerId) {
   }
   return path.join(longtermHome(), `spotify-${ownerId}.env`);
 }
+
+export function ticketmasterEnvPath() {
+  return path.join(longtermHome(), 'ticketmaster.env');
+}
