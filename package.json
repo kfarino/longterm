@@ -13,7 +13,7 @@
     "spotify:pull": "node scripts/spotify-pull.mjs",
     "spotify:find-shows": "node scripts/spotify-find-shows.mjs",
     "spotify:match": "node scripts/spotify-match-shows.mjs",
-    "spotify:update-show-playlist": "node scripts/spotify-playlist-shows.mjs",
+    "spotify:notify-shows": "node scripts/spotify-shows-telegram.mjs",
     "spotify:profile": "node scripts/spotify-taste-profile.mjs",
     "shows:pull": "node scripts/upcoming-shows-pull.mjs",
     "shows:weekly": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-weekly-shows-pull.ps1",
