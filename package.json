@@ -16,6 +16,7 @@
     "spotify:notify-shows": "node scripts/spotify-shows-telegram.mjs",
     "spotify:profile": "node scripts/spotify-taste-profile.mjs",
     "shows:pull": "node scripts/upcoming-shows-pull.mjs",
+    "livenation:pull": "node scripts/live-nation-pull.mjs",
     "shows:weekly": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-weekly-shows-pull.ps1",
     "spotify:monthly-profile": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-monthly-spotify-profile.ps1",
     "check:secrets": "node scripts/check-no-secrets.mjs"
