@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks } from '../scripts/spotify-playlist-shows.mjs';
+import { filterQualifyingShows, resolveArtistTracks, buildTrackList, ensurePlaylist, replacePlaylistTracks, runPlaylistUpdate } from '../scripts/spotify-playlist-shows.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -60,26 +60,24 @@ test('empty or missing shows array degrades to an empty list, not a crash', () =
   assert.deepEqual(filterQualifyingShows({}), []);
 });
 
-function fakeSpotifyClient({ searchResults = {}, topTracks = {} } = {}) {
+// Keyed by the exact `artist:"<name>"` query resolveArtistTracks sends —
+// track search directly, not the search-for-id-then-top-tracks shape this
+// originally had. /artists/{id}/top-tracks was verified live to return 403
+// Forbidden on this app's registration (see resolveArtistTracks's own
+// comment); track search only ever needs /search, already proven working.
+function fakeSpotifyClient({ tracksByArtist = {} } = {}) {
   return async (token, pathSuffix, query) => {
-    if (pathSuffix === 'search') {
-      const name = query.q;
-      const items = searchResults[name] ? [{ id: searchResults[name] }] : [];
-      return { artists: { items } };
-    }
-    const match = pathSuffix.match(/^artists\/([^/]+)\/top-tracks$/);
-    if (match) {
-      const tracks = topTracks[match[1]] || [];
-      return { tracks: tracks.map((uri) => ({ uri })) };
-    }
-    throw new Error(`Unexpected path in fakeSpotifyClient: ${pathSuffix}`);
+    if (pathSuffix !== 'search') throw new Error(`Unexpected path in fakeSpotifyClient: ${pathSuffix}`);
+    const match = query.q.match(/^artist:"(.+)"$/);
+    const name = match ? match[1] : null;
+    const uris = (name && tracksByArtist[name]) || [];
+    return { tracks: { items: uris.map((uri) => ({ uri })) } };
   };
 }
 
-await asyncTest('resolves an artist to up to 3 top-track URIs', async () => {
+await asyncTest('resolves an artist to up to 3 track URIs via direct track search', async () => {
   const client = fakeSpotifyClient({
-    searchResults: { 'Counting Crows': 'artist-1' },
-    topTracks: { 'artist-1': ['spotify:track:a', 'spotify:track:b', 'spotify:track:c', 'spotify:track:d'] },
+    tracksByArtist: { 'Counting Crows': ['spotify:track:a', 'spotify:track:b', 'spotify:track:c', 'spotify:track:d'] },
   });
   const uris = await resolveArtistTracks('token', 'Counting Crows', { spotifyClient: client });
   assert.deepEqual(uris, ['spotify:track:a', 'spotify:track:b', 'spotify:track:c']);
@@ -92,10 +90,7 @@ await asyncTest('an artist with no search results resolves to an empty list, not
 });
 
 await asyncTest('buildTrackList flattens across artists and skips an unresolvable one without failing the run', async () => {
-  const client = fakeSpotifyClient({
-    searchResults: { 'Counting Crows': 'artist-1' },
-    topTracks: { 'artist-1': ['spotify:track:a'] },
-  });
+  const client = fakeSpotifyClient({ tracksByArtist: { 'Counting Crows': ['spotify:track:a'] } });
   const logs = [];
   const uris = await buildTrackList('token', ['Counting Crows', 'Nobody Findable'], { spotifyClient: client, log: (m) => logs.push(m) });
   assert.deepEqual(uris, ['spotify:track:a']);
@@ -104,9 +99,8 @@ await asyncTest('buildTrackList flattens across artists and skips an unresolvabl
 
 await asyncTest('buildTrackList continues past a client that throws for one artist', async () => {
   const client = async (token, pathSuffix, query) => {
-    if (pathSuffix === 'search' && query.q === 'Throws') throw new Error('simulated Spotify API failure');
-    if (pathSuffix === 'search') return { artists: { items: [{ id: 'ok-artist' }] } };
-    return { tracks: [{ uri: 'spotify:track:ok' }] };
+    if (query.q === 'artist:"Throws"') throw new Error('simulated Spotify API failure');
+    return { tracks: { items: [{ uri: 'spotify:track:ok' }] } };
   };
   const logs = [];
   const uris = await buildTrackList('token', ['Throws', 'Fine Artist'], { spotifyClient: client, log: (m) => logs.push(m) });
@@ -172,6 +166,88 @@ await asyncTest('replacePlaylistTracks with an empty list still PUTs (clears the
   await replacePlaylistTracks('token', 'playlist-abc', [], { spotifyPutFn: putFn });
   assert.equal(putCalls.length, 1, 'an empty qualifying-shows week must clear the playlist, not silently leave stale tracks');
   assert.deepEqual(putCalls[0].body.uris, []);
+});
+
+function tmpMatchDataPath(shows) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spotify-match-data-'));
+  const p = path.join(dir, 'show-matches-latest.json');
+  fs.writeFileSync(p, JSON.stringify({ shows }));
+  return p;
+}
+
+function realisticShows() {
+  return [
+    show({ act: 'Counting Crows', basis: 'like' }),
+    show({ act: 'JAŸ-Z', basis: 'follow' }),
+    { ...show({ act: 'JAŸ-Z', basis: 'follow' }), date: '2026-08-24' },
+    show({ act: 'LLM Guess Artist', basis: 'claude' }),
+    show({ act: 'Some Comedian', kind: 'comedy', basis: 'like' }),
+  ];
+}
+
+await asyncTest('runPlaylistUpdate end to end: filters, resolves tracks, creates, and replaces', async () => {
+  const matchDataPath = tmpMatchDataPath(realisticShows());
+  const statePath = tmpStatePath();
+  const putCalls = [];
+  const client = fakeSpotifyClient({
+    tracksByArtist: { 'Counting Crows': ['spotify:track:cc1'], 'JAŸ-Z': ['spotify:track:jz1', 'spotify:track:jz2'] },
+  });
+  const wrappedClient = async (token, pathSuffix, query) => {
+    if (pathSuffix === 'me') return { id: 'spotify-user-123' };
+    return client(token, pathSuffix, query);
+  };
+  const postFn = async () => ({ id: 'created-playlist-id' });
+  const putFn = async (token, pathSuffix, body) => { putCalls.push({ pathSuffix, body }); };
+
+  const result = await runPlaylistUpdate({
+    matchDataPath, statePath, accessToken: 'token',
+    spotifyClient: wrappedClient, spotifyPostFn: postFn, spotifyPutFn: putFn, log: () => {},
+  });
+
+  assert.equal(result.artistCount, 2, 'Counting Crows + JAŸ-Z once each — comedy and claude-basis excluded, JAŸ-Z deduped');
+  assert.equal(result.trackCount, 3);
+  assert.equal(putCalls.length, 1);
+  assert.deepEqual(new Set(putCalls[0].body.uris), new Set(['spotify:track:cc1', 'spotify:track:jz1', 'spotify:track:jz2']));
+});
+
+await asyncTest('runPlaylistUpdate recreates the playlist when the saved id 404s', async () => {
+  const matchDataPath = tmpMatchDataPath([show({ act: 'Counting Crows', basis: 'like' })]);
+  const statePath = tmpStatePath();
+  fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'gone-id', userId: 'spotify-user-123' }));
+  const client = fakeSpotifyClient({ tracksByArtist: { 'Counting Crows': ['spotify:track:cc1'] } });
+  let putAttempts = 0;
+  const putFn = async (token, pathSuffix) => {
+    putAttempts += 1;
+    if (putAttempts === 1) { const e = new Error('not found'); e.status = 404; throw e; }
+  };
+  const postFn = async () => ({ id: 'recreated-playlist-id' });
+
+  const result = await runPlaylistUpdate({
+    matchDataPath, statePath, accessToken: 'token',
+    spotifyClient: client, spotifyPostFn: postFn, spotifyPutFn: putFn, log: () => {},
+  });
+
+  assert.equal(result.playlistId, 'recreated-playlist-id');
+  assert.equal(putAttempts, 2, 'first PUT 404s against the stale id, second succeeds against the recreated one');
+  const saved = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(saved.playlistId, 'recreated-playlist-id');
+});
+
+await asyncTest('an empty qualifying-shows week still clears the playlist rather than skipping the run', async () => {
+  const matchDataPath = tmpMatchDataPath([show({ act: 'LLM Guess Only', basis: 'claude' })]);
+  const statePath = tmpStatePath();
+  fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'existing-id', userId: 'spotify-user-123' }));
+  const putCalls = [];
+  const result = await runPlaylistUpdate({
+    matchDataPath, statePath, accessToken: 'token',
+    spotifyClient: async () => { throw new Error('should not be called'); },
+    spotifyPostFn: async () => { throw new Error('should not create when state already has ids'); },
+    spotifyPutFn: async (t, p, body) => { putCalls.push(body); },
+    log: () => {},
+  });
+  assert.equal(result.trackCount, 0);
+  assert.equal(putCalls.length, 1);
+  assert.deepEqual(putCalls[0].uris, []);
 });
 
 console.log('All spotify-playlist-shows tests passed.');

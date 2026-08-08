@@ -24,11 +24,11 @@ Reads `data/spotify/show-matches-latest.json`'s `shows[]` — already fresh from
 
 ## Track resolution
 
-For each deduplicated qualifying artist:
-1. Spotify catalog search (`GET /search?type=artist&q=<name>`) for the artist's Spotify id. Public catalog data — works with any valid access token, no extra scope.
-2. `GET /artists/{id}/top-tracks` for that artist, take the top 3 track URIs.
+For each deduplicated qualifying artist: a direct track search, `GET /search?type=track&q=artist:"<name>"`, taking the top 3 returned track URIs. Public catalog data — works with any valid access token, no extra scope.
 
-An artist with no confident search match (no results, or a name mismatch worth flagging) is **skipped, not fatal** — that week's playlist just has fewer tracks, logged, not thrown. A total show-to-track yield of zero (every artist unmatched) is not treated as an error either; see Refresh mechanics.
+**Revised during implementation** from the originally planned search-for-artist-id-then-`GET /artists/{id}/top-tracks`: verified live (2026-08-07) that `top-tracks` returns `403 Forbidden` on this app's Spotify registration, while `/me`, `/search`, and `/artists/{id}` (basic metadata) all work fine. This is very likely the same app-tier restriction the design already anticipated for related-artists/recommendations (see the 2026-08-05 spec's non-goals), just extending to `top-tracks` as well. Direct track search uses only the already-proven-working `/search` endpoint, needs one API call instead of two, and Spotify's own relevance ranking puts an artist's well-known songs first — same practical outcome. Verified end-to-end against real data: 3 of 4 real qualifying artists resolved cleanly; the fourth (`"Santana & The Doobie Brothers"`, a co-headline tour billing rather than a real Spotify artist name) correctly hit the no-match path and was skipped, not treated as a failure.
+
+An artist with no confident search match (no results, or a co-billing/tour-name that isn't a real Spotify artist) is **skipped, not fatal** — that week's playlist just has fewer tracks, logged, not thrown. A total show-to-track yield of zero (every artist unmatched) is not treated as an error either; see Refresh mechanics.
 
 ## Auth: new write scope required
 

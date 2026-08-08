@@ -44,12 +44,17 @@ export function filterQualifyingShows(matchData) {
   return artists;
 }
 
+// A direct track search (artist:"<name>" field filter), not the more obvious
+// search-for-artist-id-then-GET-/artists/{id}/top-tracks. Verified live
+// (2026-08-07): /artists/{id}/top-tracks returns 403 Forbidden on this app's
+// registration — the same class of restriction the design spec already
+// flagged for related-artists/recommendations, apparently extending to
+// top-tracks too. Track search uses only /search, already confirmed working,
+// and Spotify's own relevance ranking puts an artist's well-known songs
+// first — same practical result, one API call instead of two.
 export async function resolveArtistTracks(accessToken, artistName, { spotifyClient = spotifyGet } = {}) {
-  const searchResult = await spotifyClient(accessToken, 'search', { q: artistName, type: 'artist', limit: 1 });
-  const artistId = searchResult?.artists?.items?.[0]?.id;
-  if (!artistId) return [];
-  const topTracks = await spotifyClient(accessToken, `artists/${artistId}/top-tracks`, { market: 'US' });
-  return (topTracks?.tracks || []).slice(0, 3).map((t) => t.uri);
+  const result = await spotifyClient(accessToken, 'search', { q: `artist:"${artistName}"`, type: 'track', limit: 3 });
+  return (result?.tracks?.items || []).slice(0, 3).map((t) => t.uri);
 }
 
 export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
@@ -114,4 +119,50 @@ export async function ensurePlaylist(accessToken, {
 // case to special-case away.
 export async function replacePlaylistTracks(accessToken, playlistId, uris, { spotifyPutFn = spotifyPut } = {}) {
   await spotifyPutFn(accessToken, `playlists/${playlistId}/tracks`, { uris });
+}
+
+export async function runPlaylistUpdate({
+  ownerId = 'kevin',
+  matchDataPath = defaultMatchDataPath(),
+  statePath = defaultStatePath(),
+  accessToken = null,
+  spotifyClient = spotifyGet,
+  spotifyPostFn = spotifyPost,
+  spotifyPutFn = spotifyPut,
+  log = console.log,
+} = {}) {
+  const token = accessToken || (await getValidAccessToken(ownerId));
+  const matchData = JSON.parse(fs.readFileSync(matchDataPath, 'utf8'));
+  const artists = filterQualifyingShows(matchData);
+  const uris = await buildTrackList(token, artists, { spotifyClient, log });
+
+  let { playlistId } = await ensurePlaylist(token, { spotifyClient, spotifyPostFn, statePath });
+  try {
+    await replacePlaylistTracks(token, playlistId, uris, { spotifyPutFn });
+  } catch (err) {
+    if (err.status !== 404) throw err;
+    // The saved playlist was deleted out from under us (e.g. manually via the
+    // Spotify app) — recreate rather than fail the whole weekly run. A 404
+    // means the PLAYLIST is gone, not that we've forgotten who the user is:
+    // keep the known userId in state (ensurePlaylist already skips its /me
+    // call whenever userId is present, even with playlistId missing) so
+    // recreating never needs an extra catalog lookup for information we
+    // already have.
+    log(`Saved playlist ${playlistId} is gone (404) — recreating.`);
+    const priorState = loadState(statePath);
+    saveState(statePath, { userId: priorState?.userId });
+    ({ playlistId } = await ensurePlaylist(token, { spotifyClient, spotifyPostFn, statePath }));
+    await replacePlaylistTracks(token, playlistId, uris, { spotifyPutFn });
+  }
+
+  return { playlistId, trackCount: uris.length, artistCount: artists.length };
+}
+
+async function main() {
+  const result = await runPlaylistUpdate({});
+  console.log(JSON.stringify({ ok: true, ...result }));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => { console.error(err.message || err); process.exit(1); });
 }

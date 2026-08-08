@@ -270,26 +270,22 @@ Append to `data/test-spotify-playlist-shows.mjs`, before its final `console.log`
 ```js
 import { resolveArtistTracks, buildTrackList } from '../scripts/spotify-playlist-shows.mjs';
 
-function fakeSpotifyClient({ searchResults = {}, topTracks = {} } = {}) {
+// Keyed by the exact `artist:"<name>"` query resolveArtistTracks sends — a
+// direct track search, not search-for-id-then-top-tracks (see Step 3: verified
+// live that /artists/{id}/top-tracks 403s on this app's registration).
+function fakeSpotifyClient({ tracksByArtist = {} } = {}) {
   return async (token, pathSuffix, query) => {
-    if (pathSuffix === 'search') {
-      const name = query.q;
-      const items = searchResults[name] ? [{ id: searchResults[name] }] : [];
-      return { artists: { items } };
-    }
-    const match = pathSuffix.match(/^artists\/([^/]+)\/top-tracks$/);
-    if (match) {
-      const tracks = topTracks[match[1]] || [];
-      return { tracks: tracks.map((uri) => ({ uri })) };
-    }
-    throw new Error(`Unexpected path in fakeSpotifyClient: ${pathSuffix}`);
+    if (pathSuffix !== 'search') throw new Error(`Unexpected path in fakeSpotifyClient: ${pathSuffix}`);
+    const match = query.q.match(/^artist:"(.+)"$/);
+    const name = match ? match[1] : null;
+    const uris = (name && tracksByArtist[name]) || [];
+    return { tracks: { items: uris.map((uri) => ({ uri })) } };
   };
 }
 
-await asyncTest('resolves an artist to up to 3 top-track URIs', async () => {
+await asyncTest('resolves an artist to up to 3 track URIs via direct track search', async () => {
   const client = fakeSpotifyClient({
-    searchResults: { 'Counting Crows': 'artist-1' },
-    topTracks: { 'artist-1': ['spotify:track:a', 'spotify:track:b', 'spotify:track:c', 'spotify:track:d'] },
+    tracksByArtist: { 'Counting Crows': ['spotify:track:a', 'spotify:track:b', 'spotify:track:c', 'spotify:track:d'] },
   });
   const uris = await resolveArtistTracks('token', 'Counting Crows', { spotifyClient: client });
   assert.deepEqual(uris, ['spotify:track:a', 'spotify:track:b', 'spotify:track:c']);
@@ -302,10 +298,7 @@ await asyncTest('an artist with no search results resolves to an empty list, not
 });
 
 await asyncTest('buildTrackList flattens across artists and skips an unresolvable one without failing the run', async () => {
-  const client = fakeSpotifyClient({
-    searchResults: { 'Counting Crows': 'artist-1' },
-    topTracks: { 'artist-1': ['spotify:track:a'] },
-  });
+  const client = fakeSpotifyClient({ tracksByArtist: { 'Counting Crows': ['spotify:track:a'] } });
   const logs = [];
   const uris = await buildTrackList('token', ['Counting Crows', 'Nobody Findable'], { spotifyClient: client, log: (m) => logs.push(m) });
   assert.deepEqual(uris, ['spotify:track:a']);
@@ -314,9 +307,8 @@ await asyncTest('buildTrackList flattens across artists and skips an unresolvabl
 
 await asyncTest('buildTrackList continues past a client that throws for one artist', async () => {
   const client = async (token, pathSuffix, query) => {
-    if (pathSuffix === 'search' && query.q === 'Throws') throw new Error('simulated Spotify API failure');
-    if (pathSuffix === 'search') return { artists: { items: [{ id: 'ok-artist' }] } };
-    return { tracks: [{ uri: 'spotify:track:ok' }] };
+    if (query.q === 'artist:"Throws"') throw new Error('simulated Spotify API failure');
+    return { tracks: { items: [{ uri: 'spotify:track:ok' }] } };
   };
   const logs = [];
   const uris = await buildTrackList('token', ['Throws', 'Fine Artist'], { spotifyClient: client, log: (m) => logs.push(m) });
@@ -334,13 +326,15 @@ Expected: FAIL — `resolveArtistTracks`/`buildTrackList` are not exported yet.
 
 Append to `scripts/spotify-playlist-shows.mjs`:
 
+**Revised during implementation:** the version below (direct track search) replaced an originally-planned search-for-artist-id-then-`GET /artists/{id}/top-tracks` after live verification found `top-tracks` returns `403 Forbidden` on this app's Spotify registration — the same class of restriction the design spec already flagged for related-artists/recommendations. `/search`, `/me`, and `/artists/{id}` (basic metadata) all confirmed working; only `top-tracks` is blocked. Track search needs one API call instead of two and produces the same practical result (Spotify's relevance ranking surfaces well-known songs first).
+
 ```js
+// See docs/superpowers/specs/2026-08-07-spotify-shows-playlist-design.md's
+// Track resolution section for the full story on why this is a direct track
+// search rather than /artists/{id}/top-tracks.
 export async function resolveArtistTracks(accessToken, artistName, { spotifyClient = spotifyGet } = {}) {
-  const searchResult = await spotifyClient(accessToken, 'search', { q: artistName, type: 'artist', limit: 1 });
-  const artistId = searchResult?.artists?.items?.[0]?.id;
-  if (!artistId) return [];
-  const topTracks = await spotifyClient(accessToken, `artists/${artistId}/top-tracks`, { market: 'US' });
-  return (topTracks?.tracks || []).slice(0, 3).map((t) => t.uri);
+  const result = await spotifyClient(accessToken, 'search', { q: `artist:"${artistName}"`, type: 'track', limit: 3 });
+  return (result?.tracks?.items || []).slice(0, 3).map((t) => t.uri);
 }
 
 export async function buildTrackList(accessToken, artistNames, { spotifyClient = spotifyGet, log = () => {} } = {}) {
@@ -565,8 +559,7 @@ await asyncTest('runPlaylistUpdate end to end: filters, resolves tracks, creates
   const statePath = tmpStatePath();
   const putCalls = [];
   const client = fakeSpotifyClient({
-    searchResults: { 'Counting Crows': 'artist-cc', 'JAŸ-Z': 'artist-jz' },
-    topTracks: { 'artist-cc': ['spotify:track:cc1'], 'artist-jz': ['spotify:track:jz1', 'spotify:track:jz2'] },
+    tracksByArtist: { 'Counting Crows': ['spotify:track:cc1'], 'JAŸ-Z': ['spotify:track:jz1', 'spotify:track:jz2'] },
   });
   const wrappedClient = async (token, pathSuffix, query) => {
     if (pathSuffix === 'me') return { id: 'spotify-user-123' };
@@ -590,7 +583,7 @@ await asyncTest('runPlaylistUpdate recreates the playlist when the saved id 404s
   const matchDataPath = tmpMatchDataPath([show({ act: 'Counting Crows', basis: 'like' })]);
   const statePath = tmpStatePath();
   fs.writeFileSync(statePath, JSON.stringify({ playlistId: 'gone-id', userId: 'spotify-user-123' }));
-  const client = fakeSpotifyClient({ searchResults: { 'Counting Crows': 'artist-cc' }, topTracks: { 'artist-cc': ['spotify:track:cc1'] } });
+  const client = fakeSpotifyClient({ tracksByArtist: { 'Counting Crows': ['spotify:track:cc1'] } });
   let putAttempts = 0;
   const putFn = async (token, pathSuffix) => {
     putAttempts += 1;
@@ -696,9 +689,9 @@ In `package.json`, alongside the existing `"spotify:match": "node scripts/spotif
     "spotify:update-show-playlist": "node scripts/spotify-playlist-shows.mjs",
 ```
 
-- [ ] **Step 6: Verify the read-only parts against the real Spotify catalog (search + top-tracks only — no write)**
+- [x] **Step 6: Verify the read-only parts against the real Spotify catalog (no write)**
 
-This is possible today without the new scope, since catalog search and top-tracks are public data. Run:
+This is possible today without the new scope, since catalog search is public data. This step is what surfaced the `top-tracks` 403 documented in Task 3 — the very first live run against `resolveArtistTracks` hit it before the direct-track-search fix existed. Run:
 ```bash
 node -e "
 import { resolveArtistTracks } from './scripts/spotify-playlist-shows.mjs';
@@ -708,7 +701,11 @@ const uris = await resolveArtistTracks(token, 'Counting Crows');
 console.log(uris);
 "
 ```
-Expected: an array of up to 3 real `spotify:track:...` URIs, no error. **Do not** attempt to run `runPlaylistUpdate`/`main()` against the real API yet — the write scope (Task 1) is not yet granted on this machine; that call will fail with an insufficient-scope error until Kevin completes the manual re-consent step (Task 6 of this plan documents this as a rollout prerequisite, not something to force through here).
+Expected: an array of up to 3 real `spotify:track:...` URIs, no error.
+
+**Actually run, full pipeline** (filter real match data → resolve tracks for all 4 qualifying artists): 3 of 4 resolved cleanly (Counting Crows, JAŸ-Z, John Mellencamp — 6 total track URIs); the fourth, `"Santana & The Doobie Brothers"` (a co-headline tour billing, not a real Spotify artist name), correctly hit the no-match path and was skipped rather than failing the run — confirms the skip-on-no-match design decision against a real, not hypothetical, case.
+
+**Do not** attempt to run `runPlaylistUpdate`/`main()` against the real API — the write scope (Task 1) is not yet granted on this machine; that call will fail with an insufficient-scope error until Kevin completes the manual re-consent step (Task 6 of this plan documents this as a rollout prerequisite, not something to force through here).
 
 - [ ] **Step 7: Commit**
 
