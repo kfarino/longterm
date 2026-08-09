@@ -194,8 +194,8 @@ test('formatMessage uses the guitar for music, the laughing face for comedy, and
   const text = formatMessage(entries);
   assert.equal(
     text,
-    '🎸 Counting Crows (97%) — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
-    + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+    '🎸 Counting Crows (97%) — Aug 14 @ Hollywood Bowl: <a href="https://open.spotify.com/artist/cc">click to listen</a>\n'
+    + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: <a href="https://open.spotify.com/artist/aj">click to listen</a>',
   );
 });
 
@@ -207,18 +207,26 @@ test('formatMessage tags a Live Nation show with [LN] right after the score', ()
   const text = formatMessage(entries);
   assert.equal(
     text,
-    '🎸 Counting Crows (97%) [LN] — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
-    + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+    '🎸 Counting Crows (97%) [LN] — Aug 14 @ Hollywood Bowl: <a href="https://open.spotify.com/artist/cc">click to listen</a>\n'
+    + '🤣 Anthony Jeselnik (56%) — Aug 16 @ Largo: <a href="https://open.spotify.com/artist/aj">click to listen</a>',
   );
 });
 
 test('formatMessage falls back to "TBD" when an entry has no venue', () => {
   const entries = [{ act: 'No Venue Artist', kind: 'music', date: '2026-08-14', venue: undefined, url: 'https://open.spotify.com/artist/nv', score: 90 }];
-  assert.equal(formatMessage(entries), '🎸 No Venue Artist (90%) — Aug 14 @ TBD: https://open.spotify.com/artist/nv');
+  assert.equal(formatMessage(entries), '🎸 No Venue Artist (90%) — Aug 14 @ TBD: <a href="https://open.spotify.com/artist/nv">click to listen</a>');
 });
 
 test('formatMessage on an empty array returns an empty string', () => {
   assert.equal(formatMessage([]), '');
+});
+
+test('formatMessage HTML-escapes an act/venue name containing &, <, or > — never breaks the markup', () => {
+  const entries = [{ act: 'Earth & Fire <Live>', kind: 'music', date: '2026-08-14', venue: 'Bar & Grill', url: 'https://open.spotify.com/artist/ef', score: 80 }];
+  assert.equal(
+    formatMessage(entries),
+    '🎸 Earth &amp; Fire &lt;Live&gt; (80%) — Aug 14 @ Bar &amp; Grill: <a href="https://open.spotify.com/artist/ef">click to listen</a>',
+  );
 });
 
 function tmpMatchDataPath(shows) {
@@ -274,8 +282,8 @@ await asyncTest('runOnce --dry-run composes the message but never calls the Tele
   assert.equal(result.reason, 'dry_run');
   assert.equal(
     result.text,
-    '🎸 Counting Crows (90%) — Aug 14 @ Hollywood Bowl: https://open.spotify.com/artist/cc\n'
-    + '🤣 Anthony Jeselnik (90%) — Aug 16 @ Largo: https://open.spotify.com/artist/aj',
+    '🎸 Counting Crows (90%) — Aug 14 @ Hollywood Bowl: <a href="https://open.spotify.com/artist/cc">click to listen</a>\n'
+    + '🤣 Anthony Jeselnik (90%) — Aug 16 @ Largo: <a href="https://open.spotify.com/artist/aj">click to listen</a>',
   );
 });
 
@@ -299,6 +307,7 @@ await asyncTest('runOnce sends the composed message via the injected Telegram cl
   assert.equal(telegramCalls[0].method, 'sendMessage');
   assert.equal(telegramCalls[0].body.chat_id, 'fake-chat-id');
   assert.equal(telegramCalls[0].body.text, result.text);
+  assert.equal(telegramCalls[0].body.parse_mode, 'HTML', 'must render the "click to listen" link, not a raw URL');
 });
 
 console.log('All spotify-shows-telegram tests passed.');

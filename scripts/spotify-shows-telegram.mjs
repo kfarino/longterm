@@ -96,18 +96,34 @@ export function formatShowDate(isoDate) {
 
 const KIND_EMOJI = { music: '🎸', comedy: '🤣' };
 
+// Telegram's HTML parse mode only requires escaping these three characters
+// in text content — narrower than MarkdownV2's long reserved-character list,
+// which is why this codebase's other bot-facing text stayed plain until now.
+function escapeHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // Sorted by match score, strongest first — mirrors the same basis the
 // dashboard's own recommendations are filtered/ranked by (scores.kevin.score),
 // so "what am I most likely to want to go to" outranks "what's soonest."
 // Ties broken by date (soonest first); a plain string comparison is safe
 // there because every date is "YYYY-MM-DD" and lexicographic order matches
 // chronological order for that format.
+//
+// Rendered with Telegram's HTML parse mode (runOnce sends parse_mode:
+// 'HTML') so the URL becomes a plain "click to listen" link instead of a
+// long raw URL taking up the whole line.
 export function formatMessage(entries) {
   const sorted = [...entries].sort((a, b) => (b.score - a.score) || String(a.date).localeCompare(String(b.date)));
   return sorted
     .map((e) => {
       const lnTag = e.promoter === 'Live Nation' ? ' [LN]' : '';
-      return `${KIND_EMOJI[e.kind] || KIND_EMOJI.music} ${e.act} (${e.score}%)${lnTag} — ${formatShowDate(e.date)} @ ${e.venue || 'TBD'}: ${e.url}`;
+      const venue = escapeHtml(e.venue || 'TBD');
+      const link = `<a href="${escapeHtml(e.url)}">click to listen</a>`;
+      return `${KIND_EMOJI[e.kind] || KIND_EMOJI.music} ${escapeHtml(e.act)} (${e.score}%)${lnTag} — ${formatShowDate(e.date)} @ ${venue}: ${link}`;
     })
     .join('\n');
 }
@@ -189,7 +205,7 @@ export async function runOnce(opts) {
   const token = args.token || envValues.TELEGRAM_BOT_TOKEN;
   const groupChatId = args.groupChatId || envValues.TELEGRAM_GROUP_CHAT_ID;
   const telegramClient = args.telegramClient || callTelegram;
-  await telegramClient(token, 'sendMessage', { chat_id: groupChatId, text });
+  await telegramClient(token, 'sendMessage', { chat_id: groupChatId, text, parse_mode: 'HTML' });
 
   return { sent: true, text, entryCount: linked.length };
 }
