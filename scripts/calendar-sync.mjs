@@ -338,6 +338,33 @@ export async function getAccessToken({ clientId, clientSecret, refreshToken }) {
   return json.access_token;
 }
 
+/** True for revoked/expired refresh tokens — not a transient Calendar blip. */
+export function isGoogleAuthFailure(err) {
+  const msg = String(err?.message || err || '');
+  return /invalid_grant|expired or revoked|unauthorized_client/i.test(msg);
+}
+
+export function readCalendarAuthPause(pausePath) {
+  if (!pausePath || !fs.existsSync(pausePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(pausePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+export function writeCalendarAuthPause(pausePath, reason) {
+  fs.mkdirSync(path.dirname(pausePath), { recursive: true });
+  fs.writeFileSync(pausePath, `${JSON.stringify({
+    at: new Date().toISOString(),
+    reason: String(reason || 'Google auth failed'),
+  }, null, 2)}\n`, 'utf8');
+}
+
+export function clearCalendarAuthPause(pausePath) {
+  if (pausePath && fs.existsSync(pausePath)) fs.unlinkSync(pausePath);
+}
+
 function defaultCalendarClient(accessToken) {
   const base = 'https://www.googleapis.com/calendar/v3';
   const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` };

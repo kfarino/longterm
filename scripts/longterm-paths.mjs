@@ -16,6 +16,11 @@ export function googleCalendarEnvPath() {
   return path.join(longtermHome(), 'google-calendar.env');
 }
 
+/** Written when Google refresh returns invalid_grant — poll skips sync until cleared. */
+export function calendarSyncAuthPausePath() {
+  return path.join(longtermHome(), 'calendar-sync-auth-pause.json');
+}
+
 export function monarchEnvPath() {
   return path.join(longtermHome(), 'monarch.env');
 }

@@ -148,4 +148,39 @@ await asyncTest('start and exit are recorded in the log file, creating its direc
   assert.match(log, /loop exiting after 1 iteration/);
 });
 
+import { runCalendarSyncStep } from '../scripts/telegram-bot-poll.mjs';
+import { isGoogleAuthFailure } from '../scripts/calendar-sync.mjs';
+
+test('isGoogleAuthFailure catches invalid_grant / revoked refresh tokens', () => {
+  assert.equal(isGoogleAuthFailure(new Error('Google token refresh failed: 400 { "error": "invalid_grant" }')), true);
+  assert.equal(isGoogleAuthFailure(new Error('Token has been expired or revoked.')), true);
+  assert.equal(isGoogleAuthFailure(new Error('Calendar API 503')), false);
+});
+
+await asyncTest('runCalendarSyncStep pauses after invalid_grant and stays quiet on later calls', async () => {
+  const dir = tmpDir();
+  const envPath = path.join(dir, 'google-calendar.env');
+  const pausePath = path.join(dir, 'auth-pause.json');
+  const logPath = path.join(dir, 'poll.log');
+  fs.writeFileSync(envPath, 'GOOGLE_CLIENT_ID=x\n');
+  let calls = 0;
+  const syncFn = async () => {
+    calls += 1;
+    throw new Error('Google token refresh failed: 400 { "error": "invalid_grant", "error_description": "Token has been expired or revoked." }');
+  };
+
+  const first = await runCalendarSyncStep({ envPath, authPausePath: pausePath, logPath, syncFn });
+  assert.equal(first.paused, true);
+  assert.equal(calls, 1);
+  assert.ok(fs.existsSync(pausePath));
+  const log1 = fs.readFileSync(logPath, 'utf8');
+  assert.match(log1, /PAUSED \(auth\)/);
+
+  const second = await runCalendarSyncStep({ envPath, authPausePath: pausePath, logPath, syncFn });
+  assert.equal(second.paused, true);
+  assert.equal(calls, 1, 'must not retry Google while the pause file exists');
+  const log2 = fs.readFileSync(logPath, 'utf8');
+  assert.equal((log2.match(/PAUSED \(auth\)/g) || []).length, 1, 'must not re-log the pause on every poll iteration');
+});
+
 console.log('All telegram-poll-loop tests passed.');

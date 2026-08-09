@@ -18,11 +18,12 @@ import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES
 import { loadFinancialContext } from './financial-context.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
-import { runSync as runCalendarSync } from './calendar-sync.mjs';
+import { runSync as runCalendarSync, isGoogleAuthFailure, readCalendarAuthPause, writeCalendarAuthPause, clearCalendarAuthPause } from './calendar-sync.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
-import { googleCalendarEnvPath, telegramEnvPath, telegramPollLogPath } from './longterm-paths.mjs';
+import { googleCalendarEnvPath, telegramEnvPath, telegramPollLogPath, calendarSyncAuthPausePath } from './longterm-paths.mjs';
 
 const CALENDAR_ENV_PATH = googleCalendarEnvPath();
+const CALENDAR_AUTH_PAUSE_PATH = calendarSyncAuthPausePath();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
@@ -988,13 +989,37 @@ export async function runPollLoop(opts = {}) {
 // Skips quietly until calendar-auth-setup.mjs has been run once (no env
 // file yet), and never lets a Calendar API problem fail the poll itself —
 // to-dos/dining are the poll's job and must keep working either way.
-async function runCalendarSyncStep() {
-  if (!fs.existsSync(CALENDAR_ENV_PATH)) return { skipped: true };
+//
+// invalid_grant / revoked refresh tokens are sticky: we write a pause file
+// under ~/.longterm/ and skip further sync attempts (no console.error spam
+// every ~25s that flashes a node.exe window). Re-auth via
+// calendar-auth-setup.mjs, then delete the pause file (or just succeed once).
+export async function runCalendarSyncStep(opts = {}) {
+  const envPath = opts.envPath || CALENDAR_ENV_PATH;
+  const pausePath = opts.authPausePath || CALENDAR_AUTH_PAUSE_PATH;
+  const logPath = opts.logPath || telegramPollLogPath();
+  const syncFn = opts.syncFn || (() => runCalendarSync({}));
+
+  if (!fs.existsSync(envPath)) return { skipped: true };
+  if (readCalendarAuthPause(pausePath)) {
+    return { skipped: true, paused: true };
+  }
   try {
-    return await runCalendarSync({});
+    const result = await syncFn();
+    clearCalendarAuthPause(pausePath);
+    return result;
   } catch (err) {
-    console.error('calendar-sync step failed (poll itself still succeeded):', err.message);
-    return { skipped: true, error: err.message };
+    const message = err?.message || String(err);
+    if (isGoogleAuthFailure(err)) {
+      const alreadyPaused = !!readCalendarAuthPause(pausePath);
+      writeCalendarAuthPause(pausePath, message);
+      if (!alreadyPaused) {
+        appendPollLog(logPath, `calendar sync PAUSED (auth): ${message} — re-auth with node scripts/calendar-auth-setup.mjs then delete ${pausePath}`);
+      }
+      return { skipped: true, paused: true, error: message };
+    }
+    appendPollLog(logPath, `calendar sync ERROR: ${message}`);
+    return { skipped: true, error: message };
   }
 }
 
