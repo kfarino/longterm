@@ -277,6 +277,27 @@ function ownerAmountsNote(bucket) {
   return ownersList().map((o) => `${o.displayName} ${fmtM(bucket?.[o.id] || 0)}`).join(' · ');
 }
 
+/** Absolute dollars owed on mapped spend cards (Monarch balances are typically negative). */
+function cardDebtOwed(cardBalances) {
+  return (cardBalances || []).reduce((s, r) => s + Math.abs(Number(r.balance) || 0), 0);
+}
+
+/** Gross cash, personal + joint CC debt, and net liquid — household and per adult. */
+function liquidCashBreakdown() {
+  const cash = D.assets.cash || {};
+  const bt = D.budgetTracking || {};
+  const perOwner = ownersList().map((o) => {
+    const cashAmt = Number(cash[o.id]) || 0;
+    const cc = cardDebtOwed(bt.personal?.[o.id]?.cardBalances);
+    return { id: o.id, name: o.displayName, cash: cashAmt, cc, net: cashAmt - cc };
+  });
+  const jointCc = cardDebtOwed(bt.joint?.cardBalances);
+  const totalCash = perOwner.reduce((s, p) => s + p.cash, 0);
+  const personalCc = perOwner.reduce((s, p) => s + p.cc, 0);
+  const totalCc = personalCc + jointCc;
+  return { perOwner, jointCc, totalCash, totalCc, net: totalCash - totalCc };
+}
+
 function phaseIncome(p) { return Object.values(p.income).reduce((a,b)=>a+b,0); }
 function phaseExpenses(p) { return Object.values(p.expenses).reduce((a,b)=>a+b,0); }
 function phaseSurplus(p) { return phaseIncome(p) - phaseExpenses(p); }
@@ -383,6 +404,11 @@ function renderStatusSection() {
   const p1 = D.phases[0];
   const p1surplus = phaseSurplus(p1);
   const a = D.assets;
+  const liq = liquidCashBreakdown();
+  const personLines = liq.perOwner.map((p) =>
+    `${p.name}: ${fmt(p.cash)} − CC ${fmt(p.cc)} = ${fmt(p.net)}`
+  ).join('<br>');
+  const jointLine = liq.jointCc > 0 ? `<br>Joint CC debt −${fmt(liq.jointCc)}` : '';
 
   const futureAssetsHTML = D.futureAssets.map((fa) =>
     trHTML(`${fa.name} (${fa.owner})`, `${fmt(fa.value)} · accessible ${fa.accessibleYear}`, 'muted')
@@ -408,8 +434,8 @@ function renderStatusSection() {
       </div>
       <div class="metric c-green">
         <div class="mlabel">Liquid cash</div>
-        <div class="mval green">${fmt(sumOwnerBucket(a.cash))}</div>
-        <div class="mnote">${ownerAmountsNote(a.cash)}</div>
+        <div class="mval green">${fmt(liq.totalCash)}</div>
+        <div class="mnote">CC debt −${fmt(liq.totalCc)}<br><strong style="color:var(--navy)">Net liquid ${fmt(liq.net)}</strong><br>${personLines}${jointLine}</div>
       </div>
     </div>
 
