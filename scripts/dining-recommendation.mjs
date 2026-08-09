@@ -12,6 +12,43 @@ export const TIER_MIDPOINT = { cheap: 25, mid: 75, high: 150 };
 export const TIER_RANK = { cheap: 0, mid: 1, high: 2 };
 export const RECENT_VISIT_EXCLUSION_DAYS = 10;
 
+// When we host people at home, Month Plan budget assumes ~$75 groceries
+// (Kevin/Hanna 2026-08-09). Outings (dinner at a place, Bowl, etc.) stay $0
+// unless an explicit restaurant cost is set. Mirrored in dashboard_v5.html's
+// looksLikeHosting / effectivePlanEventCost — keep identical.
+export const HOSTING_GROCERY_COST = 75;
+
+export function looksLikeHosting(title) {
+  const t = String(title || '').toLowerCase();
+  if (!/\b(dinner|lunch|brunch|bbq|cookout|pizza|party|drinks|hang|breakfast)\b/.test(t)) return false;
+  if (/\bat home\b/.test(t)) return true;
+  // Venue / restaurant outings — not home hosting
+  if (/\bat\b|@/.test(t)) return false;
+  if (/\bin\b/.test(t)) return false;
+  if (/bowl|concert|theatre|theater|cinema|\bshow\b|festival/.test(t)) return false;
+  return true;
+}
+
+/** Budget fields for a new family (social) event title. */
+export function familyEventBudgetFields(title, kind) {
+  if (kind !== 'family') return { tier: 'low-key', cost: 0 };
+  if (looksLikeHosting(title)) {
+    return { tier: 'mid', cost: HOSTING_GROCERY_COST, hosting: true };
+  }
+  return { tier: 'low-key', cost: 0 };
+}
+
+/** Resolve spend for Month Plan pacing — hosting with cost 0 still counts as groceries. */
+export function effectivePlanEventCost(ev, tierMidpoint = TIER_MIDPOINT) {
+  const name = ev?.name || ev?.title || '';
+  const explicit = typeof ev?.cost === 'number' && !Number.isNaN(ev.cost) ? ev.cost : null;
+  if (ev?.hosting === true || (ev?.kind === 'family' && looksLikeHosting(name) && (explicit === null || explicit === 0))) {
+    return explicit && explicit > 0 ? explicit : HOSTING_GROCERY_COST;
+  }
+  if (explicit !== null) return explicit;
+  return tierMidpoint[ev?.tier] || tierMidpoint.mid;
+}
+
 // Maps a conversational "occasion" name to goals.json's diningRoutine
 // dayOfWeek convention (Wed=family dinner, Fri=date night, Sat=weekend
 // social — see claude.md's Dining recommendations section).

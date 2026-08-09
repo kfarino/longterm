@@ -19,7 +19,7 @@
 // tools' (todos, args, owner) signature, since they genuinely need
 // different inputs. telegram-bot-poll.mjs's dispatch branches on which
 // shape a given tool name expects.
-import { slotForOccasion, recommendForSlot, TIER_MIDPOINT } from './dining-recommendation.mjs';
+import { slotForOccasion, recommendForSlot, TIER_MIDPOINT, familyEventBudgetFields } from './dining-recommendation.mjs';
 
 // Financial Q&A tools (get_budget_status/get_savings_goals/get_decisions,
 // added 2026-07-31) are read-only over a financialContext bundle (see
@@ -338,11 +338,10 @@ export function classifyEventKind(title) {
   return null;
 }
 
-// General one-off (or weekly-recurring) events beyond the 3 dining occasions.
 // kind 'family' = social/spend (Month Plan + Google); kind 'schedule' =
 // appointment/logistics (Google only — hidden from Month Plan budget view).
-// Always cost:0/tier:'low-key' so appointments never inflate social budget
-// even if somehow shown. Recurrence materializes N concrete weekly events.
+// Hosting dinners default to ~$75 grocery cost (see familyEventBudgetFields);
+// schedule events stay cost:0. Recurrence materializes N concrete weekly events.
 export function add_family_event(monthPlanEvents, { date, title, time, recurrenceWeeks, durationHours, kind }) {
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { monthPlanEvents, reply: "Couldn't add that — need a specific date (YYYY-MM-DD)." };
@@ -364,20 +363,22 @@ export function add_family_event(monthPlanEvents, { date, title, time, recurrenc
   const resolvedDuration = parseDurationHours(durationHours);
   const weeks = Math.max(1, Math.min(52, parseInt(recurrenceWeeks, 10) || 1));
   const recurrenceId = weeks > 1 ? `${date}|${trimmedTitle.toLowerCase()}` : null;
+  const budget = familyEventBudgetFields(trimmedTitle, resolvedKind);
   let lastDate = date;
   for (let w = 0; w < weeks; w += 1) {
     const d = new Date(`${date}T00:00:00`);
     d.setDate(d.getDate() + w * 7);
     const occDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const event = { source: 'manual', kind: resolvedKind, name: trimmedTitle, tier: 'low-key', cost: 0, time: resolvedTime, ...(resolvedDuration ? { durationHours: resolvedDuration } : {}), ...(recurrenceId ? { recurrenceId } : {}) };
+    const event = { source: 'manual', kind: resolvedKind, name: trimmedTitle, ...budget, time: resolvedTime, ...(resolvedDuration ? { durationHours: resolvedDuration } : {}), ...(recurrenceId ? { recurrenceId } : {}) };
     monthPlanEvents.events[occDate] = [...(monthPlanEvents.events[occDate] || []), event];
     lastDate = occDate;
   }
   const timeLabel = resolvedTime ? ` at ${formatHHMMForDisplay(resolvedTime)}` : '';
   const kindLabel = resolvedKind === 'schedule' ? 'schedule' : 'social';
+  const hostNote = budget.hosting ? ` · ~$${budget.cost} hosting groceries` : '';
   const reply = weeks > 1
-    ? `Added ✓ ${trimmedTitle}${timeLabel} (${kindLabel}), weekly for ${weeks} weeks starting ${date} (through ${lastDate})`
-    : `Added ✓ ${trimmedTitle} (${date}${timeLabel}, ${kindLabel})`;
+    ? `Added ✓ ${trimmedTitle}${timeLabel} (${kindLabel}${hostNote}), weekly for ${weeks} weeks starting ${date} (through ${lastDate})`
+    : `Added ✓ ${trimmedTitle} (${date}${timeLabel}, ${kindLabel}${hostNote})`;
   return { monthPlanEvents, reply };
 }
 

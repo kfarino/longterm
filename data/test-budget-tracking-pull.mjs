@@ -260,12 +260,23 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
 // cycleStart filter (see the "leaked from a prior cycle" test below).
 const CYCLE_START = new Date('2026-07-01');
+
+test('categoryName: McCall\'s counts as Restaurants & Bars (not Groceries)', () => {
+  assert.equal(
+    categoryName({ merchant: "McCall's Meat & Fish", category: 'Groceries' }),
+    'Restaurants & Bars',
+  );
+  assert.equal(
+    categoryName({ merchant: 'Whole Foods', category: 'Groceries' }),
+    'Groceries',
+  );
+});
 
 test('detectJointRefunds finds a genuine merchant refund (positive amount, original spend category, joint card)', () => {
   const refunds = detectJointRefunds([

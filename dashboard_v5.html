@@ -694,6 +694,27 @@ function renderTravelSummary(travel) {
    ═══════════════════════════════ */
 const TIER_MIDPOINT = { cheap: 25, mid: 75, high: 150 };
 const TIER_RANK = { cheap: 0, mid: 1, high: 2 };
+// Keep identical to scripts/dining-recommendation.mjs HOSTING_GROCERY_COST /
+// looksLikeHosting / effectivePlanEventCost (deliberate duplication).
+const HOSTING_GROCERY_COST = 75;
+function looksLikeHosting(title) {
+  const t = String(title || '').toLowerCase();
+  if (!/\b(dinner|lunch|brunch|bbq|cookout|pizza|party|drinks|hang|breakfast)\b/.test(t)) return false;
+  if (/\bat home\b/.test(t)) return true;
+  if (/\bat\b|@/.test(t)) return false;
+  if (/\bin\b/.test(t)) return false;
+  if (/bowl|concert|theatre|theater|cinema|\bshow\b|festival/.test(t)) return false;
+  return true;
+}
+function effectivePlanEventCost(ev) {
+  const name = ev?.name || ev?.title || '';
+  const explicit = typeof ev?.cost === 'number' && !Number.isNaN(ev.cost) ? ev.cost : null;
+  if (ev?.hosting === true || (ev?.kind === 'family' && looksLikeHosting(name) && (explicit === null || explicit === 0))) {
+    return explicit && explicit > 0 ? explicit : HOSTING_GROCERY_COST;
+  }
+  if (explicit !== null) return explicit;
+  return TIER_MIDPOINT[ev?.tier] || TIER_MIDPOINT.mid;
+}
 const RESTAURANTS_HISTORICAL_SHARE = 0.24;
 const RECENT_VISIT_EXCLUSION_DAYS = 10;
 const TIER_SYMBOL = { cheap: '$', mid: '$$', high: '$$$' };
@@ -826,7 +847,7 @@ function planRemainingMonth(diningRoutine, budgetPacing, today, events, favorite
 
       const budgetEvents = dayEvents.filter(isBudgetPlanEvent);
       for (const ev of budgetEvents) {
-        const cost = typeof ev.cost === 'number' && !Number.isNaN(ev.cost) ? ev.cost : (TIER_MIDPOINT[ev.tier] || TIER_MIDPOINT.mid);
+        const cost = effectivePlanEventCost(ev);
         socialBudget -= cost;
         projectedSpend += cost;
         resolvedSlots.push({ date: dISO, isLive: false, ...ev, cost });

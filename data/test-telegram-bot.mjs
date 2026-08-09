@@ -1081,7 +1081,24 @@ await asyncTest('add_family_event: friend dinner classifies as family (Month Pla
   });
   const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
   assert.equal(result.monthPlanEvents.events['2026-08-14'][0].kind, 'family');
+  assert.equal(result.monthPlanEvents.events['2026-08-14'][0].cost, 75);
+  assert.equal(result.monthPlanEvents.events['2026-08-14'][0].hosting, true);
   assert.ok(result.sentReplies[0].includes('social'));
+  assert.ok(result.sentReplies[0].includes('hosting groceries'));
+});
+
+await asyncTest('add_family_event: outing dinner stays $0 (not hosting groceries)', async () => {
+  const dir = path.join(tmpRoot, 'family-event-outing-dinner');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot add Free Press Dinner in Santa Monica on 2026-08-20' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_family_event', input: { date: '2026-08-20', title: 'Free Press Dinner in Santa Monica' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.monthPlanEvents.events['2026-08-20'][0].kind, 'family');
+  assert.equal(result.monthPlanEvents.events['2026-08-20'][0].cost, 0);
+  assert.equal(result.monthPlanEvents.events['2026-08-20'][0].hosting, undefined);
 });
 
 await asyncTest('add_family_event: ambiguous title asks instead of guessing kind', async () => {
