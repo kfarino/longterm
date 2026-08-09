@@ -569,9 +569,16 @@ function renderCategoryDrilldown(categories, drillId) {
 // calendar doesn't plan other spend categories — so it's presented as a
 // floor ("known so far"), not a full month projection.
 function renderSpendTracker(label, tracker, drillId, plannedSpend) {
+  const cycleRange = formatCycleRange(tracker.cycleStart, tracker.cycleDays);
+  const balanceLine = formatCardBalanceLine(tracker.cardBalances);
+  const metaBits = [cycleRange ? `Cycle: ${cycleRange}` : null, balanceLine].filter(Boolean);
+  const metaHtml = metaBits.length
+    ? `<div class="goal-note" style="margin-top:6px">${metaBits.join(' · ')}</div>`
+    : '';
   if (!tracker.weeks || !tracker.weeks.length) {
     return `<div class="panel">
       <div class="ptitle">${label} <span style="font-size:12px;font-weight:400;color:var(--sub)">Target: ${fmt(tracker.target)}/mo</span></div>
+      ${metaHtml}
       <div class="callout">No weeks logged yet this cycle.</div>
     </div>`;
   }
@@ -598,6 +605,7 @@ function renderSpendTracker(label, tracker, drillId, plannedSpend) {
       </div>
       <div class="goal-bar"><div class="goal-fill" style="width:${actualPct}%;background:${barColor}"></div>${plannedSegment}</div>
       <div class="goal-note">${note}</div>
+      ${metaHtml}
     </div>
     <div class="tr exp-toggle" onclick="toggleDrilldown('${drillId}')" style="cursor:pointer;margin-top:10px">
       <span class="tl">Spend by category</span><span class="tv">›</span>
@@ -713,6 +721,31 @@ function cycleEndDate(cycleStartISO, cycleDays) {
   const end = new Date(start);
   end.setDate(end.getDate() + cycleDays - 1);
   return end;
+}
+
+function localDateFromISO(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function formatCycleRange(cycleStartISO, cycleDays) {
+  if (!cycleStartISO || !cycleDays) return null;
+  const start = localDateFromISO(cycleStartISO);
+  const end = cycleEndDate(cycleStartISO, cycleDays);
+  const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${startStr} – ${endStr}`;
+}
+
+/** Credit-card balances from Monarch are typically negative (amount owed). */
+function formatCardBalanceLine(cardBalances) {
+  const rows = cardBalances || [];
+  if (!rows.length) return null;
+  const totalOwed = rows.reduce((s, r) => s + Math.abs(Number(r.balance) || 0), 0);
+  if (rows.length === 1) {
+    return `Card balance: ${fmt(totalOwed)} owed`;
+  }
+  return `Card balances: ${fmt(totalOwed)} owed total (${rows.length} cards)`;
 }
 
 // Decides what happens on every remaining day of the current cycle. Fixed

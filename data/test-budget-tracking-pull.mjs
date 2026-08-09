@@ -260,7 +260,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -324,6 +324,20 @@ test('detectJointRefunds skips one-offs marked reassignTo exclude (Hanna reimbur
     txn({ id: 'pay1', date: '2026-08-06', amount: 338.3, merchant: 'Barclays - Cards', category: 'Transfer' }),
   ], JOINT_LABELS, new Set(), CYCLE_START);
   assert.equal(refunds.length, 0);
+});
+
+test('cardBalancesForLabels matches mapped display names and keeps Monarch signed balances', () => {
+  const accounts = [
+    { displayName: 'CREDIT CARD (...8387)', balance: -412.5 },
+    { displayName: 'CREDIT CARD (...3939)', currentBalance: -100 },
+    { displayName: ' More Mastercard (...9054)', balance: -2000 },
+    { displayName: 'TOTAL CHECKING (...4299)', balance: 500 },
+  ];
+  const hanna = cardBalancesForLabels(accounts, ['CREDIT CARD (...8387)']);
+  assert.deepEqual(hanna, [{ label: 'CREDIT CARD (...8387)', balance: -412.5 }]);
+  const joint = cardBalancesForLabels(accounts, [' More Mastercard (...9054)']);
+  assert.equal(joint[0].balance, -2000);
+  assert.deepEqual(cardBalancesForLabels(accounts, ['CREDIT CARD (...9999)']), []);
 });
 
 console.log('All budget-tracking-pull tests passed.');

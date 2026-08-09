@@ -202,6 +202,33 @@ async function fetchTransactions(client, startDate, endDate, limit) {
   return all;
 }
 
+function extractAccounts(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.accounts)) return payload.accounts;
+  if (Array.isArray(payload?.data?.accounts)) return payload.data.accounts;
+  throw new Error('Could not find an accounts array in Monarch MCP response');
+}
+
+async function fetchAccounts(client) {
+  const payload = await client.callTool('get_accounts', {});
+  return extractAccounts(payload);
+}
+
+/** Match mapped spend-card labels to live Monarch balances (credit cards are typically negative = amount owed). */
+export function cardBalancesForLabels(accounts, labels) {
+  const wanted = new Set(labels || []);
+  if (!wanted.size) return [];
+  const out = [];
+  for (const a of accounts || []) {
+    const label = a.displayName || a.name || '';
+    if (!wanted.has(label)) continue;
+    const balance = Number(a.balance ?? a.currentBalance ?? a.displayBalance ?? a.amount);
+    if (!Number.isFinite(balance)) continue;
+    out.push({ label, balance: Math.round(balance * 100) / 100 });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
 // Monarch/Plaid's own categorization is sometimes just wrong or too generic
 // for this household's budget tracking (e.g. a restaurant tagged as a bare
 // "Credit Card Payment", or an AI-subscription merchant Monarch doesn't
@@ -650,6 +677,7 @@ async function main() {
   try {
     await client.initialize();
     const transactions = await fetchTransactions(client, startDate, endDate, args.limit);
+    const accounts = await fetchAccounts(client);
 
     const travelCategories = new Set(tracking.mapping.travelCategoryNames.map((c) => c.toLowerCase()));
     const jointLabels = new Set(tracking.mapping.jointAccountLabels || []);
@@ -827,6 +855,7 @@ async function main() {
       tracking.personal[ownerId].cycleStart = isoDate(personalCycleStart);
       tracking.personal[ownerId].cycleDays = daysInMonth(today);
       tracking.personal[ownerId].source = 'monarch';
+      tracking.personal[ownerId].cardBalances = cardBalancesForLabels(accounts, personalLabelsByOwner[ownerId]);
     }
     if (jointLabels.size > 0) {
       tracking.joint.weeks = bucketsToWeeks(jointBuckets, cycleStart);
@@ -835,6 +864,7 @@ async function main() {
       tracking.joint.source = 'monarch';
       tracking.joint.cycleStart = isoDate(cycleStart);
       tracking.joint.cycleDays = 30;
+      tracking.joint.cardBalances = cardBalancesForLabels(accounts, [...jointLabels]);
     }
     // Reset every actively-tracked trip (not just ones this run matched) so a
     // trip excluded from matching this time doesn't keep a stale
