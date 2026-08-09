@@ -268,8 +268,8 @@ function categoryName(transaction) {
 // charge Hanna reimbursed personally, or the reimbursement transfer itself).
 const TRACKER_REASSIGNMENTS = [
   { merchantMatch: 'sora', date: '2026-08-01', reassignTo: 'joint', note: 'Lunch Kevin covered — a joint/family expense, per Kevin 2026-08-02.' },
-  { merchantMatch: 'blue mercury', date: '2026-07-28', reassignTo: 'exclude', note: 'Hanna reimbursed personally (with Locanda); remove from joint. Per Hanna 2026-08-09.' },
-  { merchantMatch: 'locanda portofino', date: '2026-07-30', reassignTo: 'exclude', note: 'Hanna reimbursed personally (with Blue Mercury); remove from joint. Per Hanna 2026-08-09.' },
+  { merchantMatch: 'blue mercury', date: '2026-07-28', reassignTo: 'hanna', note: 'Hanna reimbursed via personal payment; counts on Hanna personal (not joint). Per Hanna 2026-08-09.' },
+  { merchantMatch: 'locanda portofino', date: '2026-07-30', reassignTo: 'hanna', note: 'Hanna reimbursed via personal payment; counts on Hanna personal (not joint). Per Hanna 2026-08-09.' },
   { merchantMatch: 'barclays - cards', date: '2026-08-06', reassignTo: 'exclude', note: 'Hanna personal payment netting Blue Mercury + Locanda — not a merchant refund. Per Hanna 2026-08-09.' },
 ];
 
@@ -801,7 +801,13 @@ async function main() {
 
       if (personalOwnerId && personalState[personalOwnerId]) {
         const state = personalState[personalOwnerId];
-        const b = weekBucket(txnDate, personalCycleStart);
+        let b = weekBucket(txnDate, personalCycleStart);
+        // One-off reassignments from the joint card can land a few days before
+        // the personal calendar-month cycle (e.g. Jul 28–30 charges moved to
+        // Hanna personal while personal cycle starts Aug 1). Still count them
+        // on the current personal panel — fold into week 0 — so they aren't
+        // dropped entirely after leaving joint.
+        if (b < 0 && reassignment && reassignment.reassignTo === personalOwnerId) b = 0;
         if (b >= 0) {
           state.buckets.set(b, Math.round(((state.buckets.get(b) || 0) + amount) * 100) / 100);
           state.categoryTotals.set(catDisplay, Math.round(((state.categoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);

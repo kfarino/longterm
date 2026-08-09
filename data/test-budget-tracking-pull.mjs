@@ -312,9 +312,9 @@ test('travelNetSpend: Monarch spend (negative) becomes positive trip actual; cre
   assert.equal(travelNetSpend(0), 0);
 });
 
-test('trackerReassignment: Hanna reimbursed Blue Mercury / Locanda / covering transfer are excluded', () => {
-  assert.equal(trackerReassignment(txn({ merchant: 'Blue Mercury', date: '2026-07-28', amount: -137.19 })).reassignTo, 'exclude');
-  assert.equal(trackerReassignment(txn({ merchant: 'Locanda Portofino', date: '2026-07-30', amount: -201.11 })).reassignTo, 'exclude');
+test('trackerReassignment: Blue Mercury / Locanda go to Hanna personal; covering transfer excluded', () => {
+  assert.equal(trackerReassignment(txn({ merchant: 'Blue Mercury', date: '2026-07-28', amount: -137.19 })).reassignTo, 'hanna');
+  assert.equal(trackerReassignment(txn({ merchant: 'Locanda Portofino', date: '2026-07-30', amount: -201.11 })).reassignTo, 'hanna');
   assert.equal(trackerReassignment(txn({ merchant: 'Barclays - Cards', date: '2026-08-06', amount: 338.3 })).reassignTo, 'exclude');
   assert.equal(trackerReassignment(txn({ merchant: 'Blue Mercury', date: '2026-07-29', amount: -10 })), null);
 });
