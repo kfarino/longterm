@@ -1029,8 +1029,11 @@ function recommendForSlot(slot, favorites, recentDiningActivity, lowKeyHangIdeas
 function buildEventChip(dISO, slot, key) {
   const name = slot.isLive ? (slot.picks[0] || '—') : slot.name;
   const tierSymbol = slot.tier && slot.tier !== 'low-key' ? ` · ${TIER_SYMBOL[slot.tier] || ''}` : '';
+  const costLabel = (!slot.isLive && typeof slot.cost === 'number' && slot.cost > 0 && !/\$\d/.test(String(name || '')))
+    ? ` · ${fmt(slot.cost)}`
+    : '';
   const cls = (slot.isLive ? ' cal-ai-accent' : '') + (slot.tier === 'low-key' ? ' cal-lowkey' : '');
-  return `<div class="cal-event-chip${cls}"><span>${name}${tierSymbol}</span></div>`;
+  return `<div class="cal-event-chip${cls}"><span>${name}${tierSymbol}${costLabel}</span></div>`;
 }
 
 // Cheap, pure re-derivation of the Month Plan's remaining-cycle dining
