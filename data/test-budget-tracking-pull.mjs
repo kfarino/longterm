@@ -260,7 +260,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -304,6 +304,26 @@ test('detectJointRefunds excludes a refund dated before cycleStart (leaked from 
     txn({ id: 'old1', date: '2026-06-15', amount: 25, merchant: 'Amazon', category: 'Shopping' }),
   ], JOINT_LABELS, new Set(), CYCLE_START);
   assert.equal(refunds.length, 0, 'a refund dated before cycleStart must not leak into this cycle\'s refunds');
+});
+
+test('travelNetSpend: Monarch spend (negative) becomes positive trip actual; credit reduces it', () => {
+  assert.equal(travelNetSpend(-1637.83), 1637.83);
+  assert.equal(travelNetSpend(1617.83), -1617.83);
+  assert.equal(travelNetSpend(0), 0);
+});
+
+test('trackerReassignment: Hanna reimbursed Blue Mercury / Locanda / covering transfer are excluded', () => {
+  assert.equal(trackerReassignment(txn({ merchant: 'Blue Mercury', date: '2026-07-28', amount: -137.19 })).reassignTo, 'exclude');
+  assert.equal(trackerReassignment(txn({ merchant: 'Locanda Portofino', date: '2026-07-30', amount: -201.11 })).reassignTo, 'exclude');
+  assert.equal(trackerReassignment(txn({ merchant: 'Barclays - Cards', date: '2026-08-06', amount: 338.3 })).reassignTo, 'exclude');
+  assert.equal(trackerReassignment(txn({ merchant: 'Blue Mercury', date: '2026-07-29', amount: -10 })), null);
+});
+
+test('detectJointRefunds skips one-offs marked reassignTo exclude (Hanna reimbursement transfer)', () => {
+  const refunds = detectJointRefunds([
+    txn({ id: 'pay1', date: '2026-08-06', amount: 338.3, merchant: 'Barclays - Cards', category: 'Transfer' }),
+  ], JOINT_LABELS, new Set(), CYCLE_START);
+  assert.equal(refunds.length, 0);
 });
 
 console.log('All budget-tracking-pull tests passed.');

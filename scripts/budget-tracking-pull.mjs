@@ -236,13 +236,26 @@ function categoryName(transaction) {
 // merchant substring + the exact transaction date, so a different charge
 // from the same merchant on a different day still routes normally. Add/
 // remove entries here by hand as one-offs come up; expected to stay short.
+// reassignTo: "joint" | ownerId | "exclude"
+// "exclude" = drop from joint/personal spend AND from joint refunds (e.g. a
+// charge Hanna reimbursed personally, or the reimbursement transfer itself).
 const TRACKER_REASSIGNMENTS = [
   { merchantMatch: 'sora', date: '2026-08-01', reassignTo: 'joint', note: 'Lunch Kevin covered — a joint/family expense, per Kevin 2026-08-02.' },
+  { merchantMatch: 'blue mercury', date: '2026-07-28', reassignTo: 'exclude', note: 'Hanna reimbursed personally (with Locanda); remove from joint. Per Hanna 2026-08-09.' },
+  { merchantMatch: 'locanda portofino', date: '2026-07-30', reassignTo: 'exclude', note: 'Hanna reimbursed personally (with Blue Mercury); remove from joint. Per Hanna 2026-08-09.' },
+  { merchantMatch: 'barclays - cards', date: '2026-08-06', reassignTo: 'exclude', note: 'Hanna personal payment netting Blue Mercury + Locanda — not a merchant refund. Per Hanna 2026-08-09.' },
 ];
 
-function trackerReassignment(transaction) {
+export function trackerReassignment(transaction) {
   const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
   return TRACKER_REASSIGNMENTS.find((r) => merchant.includes(r.merchantMatch) && transaction.date === r.date) || null;
+}
+
+/** Monarch: spend is negative, credits positive. Trip actual is net spend (credits reduce it). */
+export function travelNetSpend(rawAmount) {
+  const n = Number(rawAmount);
+  if (!Number.isFinite(n) || n === 0) return 0;
+  return Math.round((-n) * 100) / 100;
 }
 
 // get_transactions (compact shape) exposes only a display-name string for the
@@ -302,17 +315,18 @@ function matchFavorite(merchant, favorites) {
 // that isn't the card's own statement payment ("Credit Card Payment"
 // category — Barclays/Chase paying off the balance, not a merchant
 // crediting money back — confirmed against real Monarch data) or travel
-// (already excluded from the joint budget entirely, same as travel spend —
-// travel refunds would need to reduce a trip's actual instead, out of scope
-// here). spendAmount() deliberately zeroes out any non-negative amount, so
-// this is a separate pass, not part of the main spend-processing loop.
-// cycleStart (2026-08-05): the main spend-processing loop only counts
+// (travel credits reduce the matched trip's actual in the main loop instead —
+// see travelNetSpend). spendAmount() deliberately zeroes out any non-negative
+// amount, so this is a separate pass, not part of the main spend-processing
+// loop. cycleStart (2026-08-05): the main spend-processing loop only counts
 // transactions within the current joint cycle (weekBucket's `b >= 0` guard),
 // but the fetched transaction window can start up to ~24 days earlier than
 // cycleStart (it's min(cycleStart, personalCycleStart), and personalCycleStart
 // is always the 1st of the month while cycleStart is the 25th) — without this
 // filter a refund from the tail end of the PRIOR cycle would leak into "this
 // cycle"'s refunds list. Any transaction dated before cycleStart is skipped.
+// Excluded reassignments (2026-08-09): one-offs marked reassignTo "exclude"
+// (e.g. a personal reimbursement transfer) are skipped here too.
 export function detectJointRefunds(transactions, jointLabels, travelCategoryNames, cycleStart) {
   const refunds = [];
   for (const txn of transactions) {
@@ -321,6 +335,7 @@ export function detectJointRefunds(transactions, jointLabels, travelCategoryName
     if (new Date(txn.date) < cycleStart) continue;
     const acct = accountLabel(txn);
     if (!jointLabels.has(acct)) continue;
+    if (trackerReassignment(txn)?.reassignTo === 'exclude') continue;
     const catDisplay = categoryName(txn) || 'Uncategorized';
     const cat = catDisplay.toLowerCase();
     if (cat === 'credit card payment') continue;
@@ -700,36 +715,51 @@ async function main() {
     const unmatched = [];
 
     for (const txn of transactions) {
-      const amount = spendAmount(txn);
-      if (amount === 0) continue;
       const acct = accountLabel(txn);
       const catDisplay = categoryName(txn) || 'Uncategorized';
       const cat = catDisplay.toLowerCase();
       const txnDate = new Date(txn.date);
-      const summary = { date: txn.date, merchant: txn.merchant || txn.plaidName || '', amount: Math.round(amount * 100) / 100 };
+      const reassignment = trackerReassignment(txn);
 
       if (travelCategories.has(cat)) {
+        // Net spend toward the trip: Monarch spend is negative, credits
+        // positive — travelNetSpend flips the sign so a Lufthansa credit
+        // reduces Christmas Zagreb (etc.) instead of vanishing (found live
+        // 2026-08-09: +$1,617.83 Lufthansa credit was previously dropped
+        // because spendAmount() only keeps debits).
+        const net = travelNetSpend(txn.amount);
+        if (net === 0) continue;
+        const summary = {
+          date: txn.date,
+          merchant: txn.merchant || txn.plaidName || '',
+          amount: Math.abs(net),
+          ...(net < 0 ? { type: 'credit' } : {}),
+        };
         // If more than one trip's window contains this charge, don't guess —
         // flag it for manual review instead of risking silent misattribution.
         const candidates = trips.filter((t) => txnDate >= t.bookingStart && txnDate <= t.end);
         if (candidates.length === 1) {
           const bucket = tripActuals.get(candidates[0].id);
-          bucket.actual = Math.round((bucket.actual + amount) * 100) / 100;
+          bucket.actual = Math.round((bucket.actual + net) * 100) / 100;
           bucket.transactions.push(summary);
         } else if (candidates.length > 1) {
           unmatched.push({ ...summary, ambiguousBetween: candidates.map((t) => t.id) });
         } else {
           unmatched.push(summary);
         }
-        continue; // travel spend never counts toward joint/personal totals
+        continue; // travel never counts toward joint/personal totals
       }
+
+      const amount = spendAmount(txn);
+      if (amount === 0) continue;
+      if (reassignment?.reassignTo === 'exclude') continue;
+      const summary = { date: txn.date, merchant: txn.merchant || txn.plaidName || '', amount: Math.round(amount * 100) / 100 };
 
       // The fetch window starts at the EARLIER of the two cycles (see
       // fetchStart above), so it can include days before the joint cycle's
       // own start. Guarding on `b >= 0` makes week buckets and category
       // totals agree. A reassignment overrides which tracker a charge
       // counts toward (reassignTo: "joint" or an owner id for personal).
-      const reassignment = trackerReassignment(txn);
       let personalOwnerId = null;
       let routeToJoint = false;
       if (reassignment) {
