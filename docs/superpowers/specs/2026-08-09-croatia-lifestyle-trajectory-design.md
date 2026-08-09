@@ -4,12 +4,13 @@
 
 ## Goal
 
-Add a fourth **Hanna scenario** on the Trajectory tab — **Croatia** — that models moving to Croatia as an alternate lifestyle path. When selected, it **overwrites normal phase routing** from **2027 onward**, uses Croatia living costs and savings rules, and **skips the sabbatical**. The existing Croatia **home-purchase slider** remains so the household can test what they can afford and when (possibly later, e.g. when inheritance is accessible).
+Add a fourth **Hanna scenario** on the Trajectory tab — **Croatia** — that models moving to Croatia as an alternate lifestyle path. When selected, it **overwrites normal phase routing** from **2027 onward** and uses Croatia living costs and savings rules. The **sabbatical slider stays** (same control as base path); in the Croatia lifestyle the sabbatical is framed as a different trip (e.g. South America or Asia rather than Europe) — cost/timing still via the existing sabbatical sliders. The existing Croatia **home-purchase slider** also remains so the household can test what they can afford and when (possibly later, e.g. when inheritance is accessible).
 
 ## Non-goals (v1)
 
 - Mid-year 2027 split (full years from 2027; no July partial-year math)
 - Combining Croatia lifestyle with LexiCo Fail/Neutral/Success in one run (Croatia replaces that axis while active)
+- Separate sabbatical UI for Croatia (reuse existing sabbatical cost/year sliders; only copy/framing differs)
 - Modeling LA property value / home-equity growth on the chart
 - Vacancy, property-management fees, or tax detail on the LA rental beyond a flat net surplus
 - Changing Planner spend trackers or live Monarch pulls
@@ -34,7 +35,7 @@ On Trajectory → **Hanna scenario** button row:
 | Fail / Neutral / Success | Unchanged LexiCo paths (Success still injects go payout) |
 | **Croatia** | Lifestyle path below; Fail/Neutral/Success inactive while this is selected |
 
-When Croatia is selected, chart foot / note should state: lifestyle from 2027 · no sabbatical · home purchase still via Croatia budget slider.
+When Croatia is selected, chart foot / note should state: lifestyle from 2027 · sabbatical still applies (different destination framing, e.g. SA/Asia) · home purchase still via Croatia budget slider.
 
 ## Croatia lifestyle economics (from 2027, full years)
 
@@ -71,7 +72,7 @@ monthlySurplus = KevinIncome + 1500 - 9000
 
 | Event | Croatia scenario |
 |-------|------------------|
-| Sabbatical | **Skipped** |
+| Sabbatical (`sabbaticalK` / `sabbaticalYear`) | **Keep the sliders** — same mechanics as base path (liquid draw in that year). Framing/copy when Croatia is selected: sabbatical is a different kind of year away (e.g. South America or Asia), not a European add-on to Croatia living. Defaults may stay as today; user adjusts cost/year to taste. |
 | Croatia home purchase (`croatiaK` / `croatiaYear`) | **Slider remains**; use to explore affordability / timing (may move later toward inheritance access) |
 | Hanna Success / go payout | **N/A** while Croatia scenario is selected |
 
@@ -84,7 +85,8 @@ Hand-maintained in `goals.json` (only place these numbers are typed), e.g.:
   "croatia": {
     "label": "Croatia",
     "startYear": 2027,
-    "skipSabbatical": true,
+    "skipSabbatical": false,
+    "sabbaticalFraming": "Alternate sabbatical (e.g. South America or Asia) — same sliders as base path",
     "income": {
       "Kevin": null,
       "LA rental surplus": 1500
@@ -114,7 +116,7 @@ In `computeProjection` (and any mirrored note/copy):
 1. If `hannaScenario !== 'croatia'` → existing behavior.  
 2. If `hannaScenario === 'croatia'`:  
    - For `yr < 2027`: same as Neutral base (phase routing + contributions).  
-   - For `yr >= 2027`: use Croatia lifestyle allocations (Kevin capped by surplus; Hanna 0); **do not** apply sabbatical year draw; **do** apply Croatia home draw if that year/amount is set on the sliders.  
+   - For `yr >= 2027`: use Croatia lifestyle allocations (Kevin capped by surplus; Hanna 0); **still apply** sabbatical year draw when that year hits (same slider values); **do** apply Croatia home draw if that year/amount is set on the sliders.  
 3. Growth rates unchanged (same sliders).
 
 ## Phases tab / goal-plan narrative
@@ -127,7 +129,7 @@ In `computeProjection` (and any mirrored note/copy):
 
 - [ ] Fourth Hanna scenario button **Croatia** on Trajectory  
 - [ ] Selecting it changes the chart from 2027 (full years)  
-- [ ] No sabbatical draw under Croatia  
+- [ ] Sabbatical slider still applies under Croatia (copy/framing notes alternate destination; same draw mechanics)  
 - [ ] Croatia home slider still works  
 - [ ] Kevin contributions ≤ monthly surplus; Hanna contributions 0  
 - [ ] Economics (1.5k LA surplus, 3k rent, 6k budget) live in `goals.json`, not hardcoded only in HTML  
