@@ -240,6 +240,9 @@ export function cardBalancesForLabels(accounts, labels) {
 // automatically from one source of truth.
 const MERCHANT_CATEGORY_OVERRIDES = [
   { match: 'r+d', category: 'Restaurants & Bars' },
+  // Farmers-market produce billed under the Sprout LA hospitality parent
+  // name — groceries, not dining (Kevin/Hanna 2026-08-09).
+  { match: 'sprout', category: 'Groceries' },
   { match: 'anthropic', category: 'Subscriptions' },
   { match: 'eleven labs', category: 'Subscriptions' },
   { match: 'elevenlabs', category: 'Subscriptions' },
@@ -526,6 +529,32 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
     const legacyKey = `${txn.date}|${merchant}|${roundedAmount}|${account}`;
     if (legacyByKey.has(legacyKey)) {
       if (id) legacyByKey.get(legacyKey).id = id;
+      continue;
+    }
+
+    // Pending → posted can mint a *new* Monarch id while keeping the same
+    // merchant/amount and shifting the date by a day (found live: Sprout LA
+    // $28.75 on 2026-08-02 and again on 2026-08-03, two ids → Month Plan
+    // calendar showed the farmers-market charge twice). Collapse into the
+    // earlier-dated entry and adopt the newer id so later pulls update in place.
+    const pendingPosted = [...byId.values(), ...legacyByKey.values()].find((entry) => {
+      if (!entry || entry.merchant !== merchant || entry.account !== account) return false;
+      if (Math.abs(entry.amount - roundedAmount) > 0.009) return false;
+      if (id && entry.id && entry.id === id) return false;
+      const days = Math.abs((new Date(`${entry.date}T12:00:00`) - new Date(`${txn.date}T12:00:00`)) / 86400000);
+      return days > 0 && days <= 2;
+    });
+    if (pendingPosted) {
+      pendingPosted.date = pendingPosted.date < txn.date ? pendingPosted.date : txn.date;
+      pendingPosted.amount = roundedAmount;
+      pendingPosted.merchant = merchant;
+      pendingPosted.account = account;
+      pendingPosted.matchedPlace = matchFavorite(merchant, raw)?.name ?? null;
+      if (id) {
+        if (pendingPosted.id && byId.get(pendingPosted.id) === pendingPosted) byId.delete(pendingPosted.id);
+        pendingPosted.id = id;
+        byId.set(id, pendingPosted);
+      }
       continue;
     }
 

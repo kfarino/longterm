@@ -89,6 +89,29 @@ test('a transaction whose DATE shifts between pulls (pending auth-date vs. poste
   assert.equal(matches[0].date, '2026-07-30', 'should keep the earlier (pending/auth) date, not the later posted/settled date');
 });
 
+test('pending→posted with a NEW Monarch id (same merchant/amount, date ±2 days) collapses to one calendar entry', () => {
+  // Sprout LA 2026-08-09: farmers-market charge showed twice on Month Plan
+  // because Monarch minted a new id on post (Aug 2 pending id vs Aug 3 posted id).
+  const dir = path.join(tmpRoot, 'new-id-date-shift');
+  const { rawPath, outPath } = writeFixture(dir);
+  const today = new Date('2026-08-09T00:00:00Z');
+
+  refreshFavoritePlaces(rawPath, outPath, [
+    txn({ id: 'pending-id', date: '2026-08-02', amount: -28.75, merchant: 'Test Ghost Kitchen' }),
+  ], today, JOINT_LABELS);
+
+  refreshFavoritePlaces(rawPath, outPath, [
+    txn({ id: 'posted-id', date: '2026-08-03', amount: -28.75, merchant: 'Test Ghost Kitchen' }),
+  ], today, JOINT_LABELS);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const matches = result.recentDiningActivity.filter((a) => a.merchant === 'Test Ghost Kitchen');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].date, '2026-08-02');
+  assert.equal(matches[0].id, 'posted-id');
+  assert.equal(matches[0].amount, 28.75);
+});
+
 test('the earlier date is kept even if the earlier-dated observation arrives SECOND (pull order should not matter)', () => {
   const dir = path.join(tmpRoot, 'date-shift-reverse-order');
   const { rawPath, outPath } = writeFixture(dir);
@@ -260,12 +283,17 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
 // cycleStart filter (see the "leaked from a prior cycle" test below).
 const CYCLE_START = new Date('2026-07-01');
+
+test('categoryName: Sprout LA is Groceries (farmers market billed under hospitality parent)', () => {
+  assert.equal(categoryName({ merchant: 'Sprout LA', category: 'Restaurants & Bars' }), 'Groceries');
+  assert.equal(categoryName({ merchant: 'Whole Foods', category: 'Groceries' }), 'Groceries');
+});
 
 test('detectJointRefunds finds a genuine merchant refund (positive amount, original spend category, joint card)', () => {
   const refunds = detectJointRefunds([
