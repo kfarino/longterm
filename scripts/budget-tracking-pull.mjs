@@ -240,8 +240,6 @@ export function cardBalancesForLabels(accounts, labels) {
 // automatically from one source of truth.
 const MERCHANT_CATEGORY_OVERRIDES = [
   { match: 'r+d', category: 'Restaurants & Bars' },
-  // Fancy butcher — treat as eating-out, not groceries (Kevin/Hanna 2026-08-09).
-  { match: "mccall", category: 'Restaurants & Bars' },
   { match: 'anthropic', category: 'Subscriptions' },
   { match: 'eleven labs', category: 'Subscriptions' },
   { match: 'elevenlabs', category: 'Subscriptions' },
