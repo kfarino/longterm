@@ -184,13 +184,32 @@
     "liquidRate": 0.02,
     "croatiaK": 0,
     "incomeStepYear": 2028,
+    "kevin300kYr": 2028,
     "sabbaticalK": 0,
     "sabbaticalYear": 2035,
     "croatiaYear": 2030,
     "partnerScenario": "neutral",
+    "hannaScenario": "neutral",
     "goPayoutYear": 2032,
     "goPayout": 0,
     "annualRetirementContribution": 46000
+  },
+  "lifestyleScenarios": {
+    "croatia": {
+      "label": "Croatia",
+      "startYear": 2027,
+      "sabbaticalFraming": "Alternate sabbatical (e.g. South America or Asia) — same cost/year sliders as base path",
+      "income": {
+        "Kevin": null,
+        "LA rental surplus": 1500
+      },
+      "expenses": {
+        "Croatia rent": 3000,
+        "Living budget (incl. personals)": 6000
+      },
+      "baseKevinBrokerageLabel": "Kevin brokerage",
+      "notes": "Example Croatia lifestyle path for Trajectory."
+    }
   },
   "diningRoutine": [
     {

@@ -74,6 +74,7 @@ const DATA = {
   decisions: goals.decisions,
   travel: goals.travel,
   chart: goals.chart,
+  lifestyleScenarios: goals.lifestyleScenarios || {},
   favoritePlaces,
   todos: { items: todos.items || [], weeklyGoals: todos.weeklyGoals || [] },
   diningRoutine: goals.diningRoutine || [],

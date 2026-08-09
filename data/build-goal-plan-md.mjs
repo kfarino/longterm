@@ -184,6 +184,26 @@ ${goals.familyPlanning?.note || ''}
 
 ---
 
+## Lifestyle scenarios (Trajectory alternate paths)
+
+${(() => {
+  const cro = goals.lifestyleScenarios?.croatia;
+  if (!cro) return '*None defined.*';
+  const kevinIncome = cro.income?.Kevin ?? goals.phases[0]?.income?.Kevin ?? 0;
+  const la = cro.income?.['LA rental surplus'] ?? 0;
+  const rent = cro.expenses?.['Croatia rent'] ?? 0;
+  const living = cro.expenses?.['Living budget (incl. personals)'] ?? 0;
+  const surplus = kevinIncome + la - rent - living;
+  return `### Croatia (from ${cro.startYear})
+- Inflows: Kevin income ${fmt(kevinIncome)}/mo + LA rental surplus ${fmt(la)}/mo
+- Outflows: Croatia rent ${fmt(rent)} + living budget ${fmt(living)} (= ${fmt(rent + living)} burn)
+- **Monthly surplus ceiling: ${fmt(surplus)}** — Kevin brokerage capped at min(Phase-1 Kevin brokerage, surplus); Hanna savings $0
+- Sabbatical: ${cro.sabbaticalFraming || 'same sliders as base path'}
+- ${cro.notes || ''}`;
+})()}
+
+---
+
 ## Career Path
 
 ${careerSection || '*No career options listed.*'}

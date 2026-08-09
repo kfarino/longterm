@@ -1832,19 +1832,57 @@ function phaseContribution(phase, bucket) {
   return phase.allocation.filter(a => a.bucket === bucket).reduce((sum,a) => sum + a.amount, 0);
 }
 
+// Croatia lifestyle (Trajectory alternate): surplus = Kevin income + LA rental − rent − living budget.
+// Cap order: Kevin brokerage first (min of Phase-1 Kevin brokerage + surplus), then retirement with remainder.
+function croatiaLifestyle() {
+  return D.lifestyleScenarios?.croatia || null;
+}
+function croatiaMonthlySurplus() {
+  const ls = croatiaLifestyle();
+  if (!ls) return 0;
+  const kevinIncome = Number(ls.income?.Kevin ?? D.phases[0]?.income?.Kevin) || 0;
+  const la = Number(ls.income?.['LA rental surplus']) || 0;
+  const rent = Number(ls.expenses?.['Croatia rent']) || 0;
+  const living = Number(ls.expenses?.['Living budget (incl. personals)']) || 0;
+  return kevinIncome + la - rent - living;
+}
+function croatiaContributions(annualRetContrib) {
+  const ls = croatiaLifestyle();
+  const surplus = Math.max(0, croatiaMonthlySurplus());
+  const label = ls?.baseKevinBrokerageLabel || 'Kevin brokerage';
+  const baseKevinBrok = Number(
+    (D.phases[0]?.allocation || []).find(a => a.label === label)?.amount
+  ) || 0;
+  const brokMonthly = Math.min(baseKevinBrok, surplus);
+  const remaining = Math.max(0, surplus - brokMonthly);
+  const retMonthly = Math.min(annualRetContrib / 12, remaining);
+  return { brokMonthly, retMonthly, liqMonthly: 0, surplus };
+}
+
 function computeProjection(g, lr, cr, kv, sb, sabbaticalYear, croatiaYear, hannaScenario) {
   const all = []; for (let y=2026;y<=2050;y++) all.push(y);
   let ret=sumOwnerBucket(D.assets.retirement);
   let brok=sumOwnerBucket(D.assets.brokerage);
   let liq=sumOwnerBucket(D.assets.cash);
+  const cro = croatiaLifestyle();
+  const croStart = cro?.startYear ?? 2027;
+  const croatiaOn = hannaScenario === 'croatia' && cro;
+  const croMonthly = croatiaOn ? croatiaContributions(D.chart.annualRetirementContribution) : null;
   const rA=[], bA=[], lA=[];
   for (let i=0;i<all.length;i++) {
     const yr=all[i], mo=yr===2026?6:12;
     const ph = phaseForYear(yr, kv);
     const phase = D.phases[ph-1];
-    const retContrib  = ph < D.phases.length ? D.chart.annualRetirementContribution * (mo/12) : 0;
-    const brokContrib = phaseContribution(phase, 'brokerage') * mo;
-    const liqContrib  = phaseContribution(phase, 'liquid') * mo;
+    let retContrib, brokContrib, liqContrib;
+    if (croatiaOn && yr >= croStart) {
+      retContrib  = croMonthly.retMonthly * mo;
+      brokContrib = croMonthly.brokMonthly * mo;
+      liqContrib  = croMonthly.liqMonthly * mo;
+    } else {
+      retContrib  = ph < D.phases.length ? D.chart.annualRetirementContribution * (mo/12) : 0;
+      brokContrib = phaseContribution(phase, 'brokerage') * mo;
+      liqContrib  = phaseContribution(phase, 'liquid') * mo;
+    }
     ret  = ret  * (1+g)    + retContrib;
     brok = brok * (1+g)    + brokContrib;
     liq  = liq  * (1+lr)   + liqContrib;
@@ -1861,6 +1899,9 @@ function computeProjection(g, lr, cr, kv, sb, sabbaticalYear, croatiaYear, hanna
 }
 
 function renderTrajectory() {
+  const kvYr = D.chart.kevin300kYr || D.chart.incomeStepYear || 2027;
+  if (!D.chart.kevin300kYr) D.chart.kevin300kYr = kvYr;
+  if (!D.chart.hannaScenario) D.chart.hannaScenario = 'neutral';
   $('sub-trajectory').innerHTML = `
     <div class="content">
       <div class="slabel">Net worth trajectory</div>
@@ -1876,12 +1917,14 @@ function renderTrajectory() {
           <div><div class="ctrl-label" title="Applies to Liquid/Cash only — deliberately separate from Growth rate">Liquid/Cash rate</div><div class="ctrl-row"><input type="range" id="sl-lr" min="0" max="5" step="0.5" value="${D.chart.liquidRate*100}"><span class="ctrl-val" id="lb-lr">${(D.chart.liquidRate*100).toFixed(1)}%</span></div></div>
           <div><div class="ctrl-label">Hanna scenario</div><div class="scn-row" id="scn-row">
             <button class="scn-btn" data-v="fail">Fail</button>
-            <button class="scn-btn active" data-v="neutral">Neutral</button>
+            <button class="scn-btn" data-v="neutral">Neutral</button>
             <button class="scn-btn" data-v="go">Success</button>
-          </div></div>
+            <button class="scn-btn" data-v="croatia">Croatia</button>
+          </div>
+          <div class="ctrl-note" id="croatia-lifestyle-note" style="display:none;font-size:12px;color:var(--sub);margin-top:6px;max-width:42rem;line-height:1.35"></div></div>
           <div><div class="ctrl-label">Croatia budget</div><div class="ctrl-row"><input type="range" id="sl-c" min="400" max="1200" step="50" value="${D.chart.croatiaK}"><span class="ctrl-val" id="lb-c">$${D.chart.croatiaK}K</span></div></div>
-          <div><div class="ctrl-label">Kevin $300K year</div><div class="ctrl-row"><input type="range" id="sl-k" min="2027" max="2030" step="1" value="${D.chart.kevin300kYr}"><span class="ctrl-val" id="lb-k">${D.chart.kevin300kYr}</span></div></div>
-          <div><div class="ctrl-label">Sabbatical cost</div><div class="ctrl-row"><input type="range" id="sl-s" min="80" max="250" step="10" value="${D.chart.sabbaticalK}"><span class="ctrl-val" id="lb-s">$${D.chart.sabbaticalK}K</span></div></div>
+          <div><div class="ctrl-label">Kevin $300K year</div><div class="ctrl-row"><input type="range" id="sl-k" min="2027" max="2030" step="1" value="${kvYr}"><span class="ctrl-val" id="lb-k">${kvYr}</span></div></div>
+          <div><div class="ctrl-label" id="lb-sabbatical-title">Sabbatical cost</div><div class="ctrl-row"><input type="range" id="sl-s" min="80" max="250" step="10" value="${D.chart.sabbaticalK}"><span class="ctrl-val" id="lb-s">$${D.chart.sabbaticalK}K</span></div></div>
         </div>
         <div class="chart-legend">
           <div class="leg"><div class="leg-line" style="background:rgba(26,39,68,.6);border-top:2px dashed rgba(26,39,68,.5)"></div>Total net worth</div>
@@ -1978,6 +2021,7 @@ function initChart() {
   });
 
   updateStats(proj);
+  syncScenarioUI();
 
   ['sl-g','sl-lr','sl-c','sl-k','sl-s'].forEach(id=>{
     const el=$(id); if(!el)return;
@@ -1988,9 +2032,39 @@ function initChart() {
       document.querySelectorAll('#scn-row .scn-btn').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       D.chart.hannaScenario = btn.dataset.v;
+      syncScenarioUI();
       refreshChart();
     });
   });
+}
+
+function syncScenarioUI() {
+  const scn = D.chart.hannaScenario || 'neutral';
+  document.querySelectorAll('#scn-row .scn-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.v === scn);
+  });
+  const note = $('croatia-lifestyle-note');
+  const sabTitle = $('lb-sabbatical-title');
+  const cro = croatiaLifestyle();
+  if (note) {
+    if (scn === 'croatia' && cro) {
+      const c = croatiaContributions(D.chart.annualRetirementContribution);
+      const fmt = n => '$' + Math.round(n).toLocaleString();
+      note.style.display = 'block';
+      note.textContent =
+        `Croatia lifestyle from ${cro.startYear}: LA rental + living burn from goals · surplus ${fmt(c.surplus)}/mo ` +
+        `(Kevin brokerage ${fmt(c.brokMonthly)}, retirement ${fmt(c.retMonthly)}, Hanna $0). ` +
+        `Sabbatical still applies (${cro.sabbaticalFraming || 'alternate destination'}) · home purchase via Croatia budget slider.`;
+    } else {
+      note.style.display = 'none';
+      note.textContent = '';
+    }
+  }
+  if (sabTitle) {
+    sabTitle.textContent = scn === 'croatia'
+      ? 'Sabbatical cost (e.g. SA / Asia)'
+      : 'Sabbatical cost';
+  }
 }
 
 function refreshChart() {
