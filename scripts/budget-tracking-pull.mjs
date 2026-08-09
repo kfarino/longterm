@@ -636,6 +636,21 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
         visitStats,
       };
     }
+    // Hand planningCost (e.g. Terra/Terroni ~$150) when Monarch has no visits yet —
+    // surfaces on the Dining tab and Month Plan cost math. Tier stays mid so
+    // the place remains eligible for mid routine slots; avgSpend carries the budget.
+    if (typeof f.planningCost === 'number' && f.planningCost > 0) {
+      return {
+        ...f,
+        observed: {
+          tier: 'mid',
+          avgSpend: f.planningCost,
+          visitCount: 0,
+          lastVisited: null,
+        },
+        visitStats,
+      };
+    }
     return { ...f, observed: null, visitStats };
   });
 

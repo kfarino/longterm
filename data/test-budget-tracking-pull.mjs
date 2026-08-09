@@ -157,6 +157,27 @@ test('a charge reassigned to joint (Sora on Kevin personal) lands on Month Plan 
   assert.equal(matches[0].includeOnMonthPlan, true);
 });
 
+test('planningCost becomes observed avgSpend when a favorite has no visit history', () => {
+  const dir = path.join(tmpRoot, 'planning-cost');
+  fs.mkdirSync(dir, { recursive: true });
+  const rawPath = path.join(dir, 'favorite_places_raw.json');
+  const outPath = path.join(dir, 'favorite_places.json');
+  fs.writeFileSync(rawPath, JSON.stringify([
+    { name: 'Terra Eataly', planningCost: 150, dinnerSpot: true },
+    { name: 'Tu Madre' },
+  ]));
+  const today = new Date('2026-08-09T00:00:00Z');
+
+  refreshFavoritePlaces(rawPath, outPath, [], today, JOINT_LABELS);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const terra = result.places.find((p) => p.name === 'Terra Eataly');
+  assert.equal(terra.observed.avgSpend, 150);
+  assert.equal(terra.observed.tier, 'mid');
+  const tuMadre = result.places.find((p) => p.name === 'Tu Madre');
+  assert.equal(tuMadre.observed, null);
+});
+
 test('the earlier date is kept even if the earlier-dated observation arrives SECOND (pull order should not matter)', () => {
   const dir = path.join(tmpRoot, 'date-shift-reverse-order');
   const { rawPath, outPath } = writeFixture(dir);
