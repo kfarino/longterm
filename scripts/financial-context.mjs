@@ -104,7 +104,15 @@ export function loadTransactionDetail(budgetTrackingPath) {
   }
   for (const trip of bt.travel?.trips || []) {
     for (const txn of trip.transactions || []) {
-      rows.push({ tracker: 'travel', group: trip.label, date: txn.date, merchant: txn.merchant, amount: txn.amount });
+      const isCredit = txn.type === 'credit' || Number(txn.amount) < 0;
+      rows.push({
+        tracker: 'travel',
+        group: trip.label,
+        date: txn.date,
+        merchant: txn.merchant,
+        amount: isCredit ? -Math.abs(Number(txn.amount) || 0) : Number(txn.amount) || 0,
+        ...(isCredit ? { type: 'credit' } : {}),
+      });
     }
   }
   for (const txn of bt.travel?.unmatched || []) {

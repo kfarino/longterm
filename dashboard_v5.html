@@ -620,7 +620,17 @@ function renderTravelSummary(travel) {
     const barColor = t.budgetedAmount != null && t.actual > t.budgetedAmount ? 'var(--red)' : 'var(--gold)';
     const num = t.budgetedAmount != null ? `${fmt(t.actual)} / ${fmt(t.budgetedAmount)}` : `${fmt(t.actual)} · already paid`;
     const txRows = (t.transactions && t.transactions.length)
-      ? t.transactions.map((tx) => trHTML(`${tx.date} · ${tx.merchant}`, fmt(tx.amount))).join('')
+      ? t.transactions.map((tx) => {
+          const isCredit = tx.type === 'credit' || Number(tx.amount) < 0;
+          const abs = Math.abs(Number(tx.amount) || 0);
+          // Credits store abs amount + type:"credit" from the pull; show a
+          // real minus so debit vs credit is obvious in the drill-down.
+          return trHTML(
+            `${tx.date} · ${tx.merchant}`,
+            isCredit ? `−${fmt(abs)}` : fmt(abs),
+            isCredit ? 'neg' : '',
+          );
+        }).join('')
       : `<div class="callout">No transactions logged yet.</div>`;
     return `
       <div class="goal">
