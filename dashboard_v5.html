@@ -861,25 +861,39 @@ function planRemainingMonth(diningRoutine, budgetPacing, today, events, favorite
     const cost = TIER_MIDPOINT[routineEntry.tier] || 0;
     const willBeLowKey = routineEntry.dynamic && socialBudget < cost;
 
-    const rec = willBeLowKey
+    let rec = willBeLowKey
       ? recommendForSlot({ tier: 'low-key', dynamic: routineEntry.dynamic }, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames)
       : recommendForSlot({ tier: routineEntry.tier, dynamic: routineEntry.dynamic, requiresTag: routineEntry.requiresTag }, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames);
+
+    const pickName = rec.picks[0];
+    const fav = pickName && favorites ? favorites.find((f) => f.name === pickName) : null;
+    let pickCost = willBeLowKey ? 0 : (fav?.observed?.avgSpend
+      ?? (typeof fav?.planningCost === 'number' ? fav.planningCost : null)
+      ?? cost);
+
+    // A mid-slot suggestion with a high planningCost (e.g. Terra/Terroni ~$150)
+    // can still blow the remaining dining room — fall back to low-key.
+    if (routineEntry.dynamic && !willBeLowKey && pickCost > socialBudget) {
+      rec = recommendForSlot({ tier: 'low-key', dynamic: true }, favorites, recentDiningActivity, lowKeyHangIdeas, alreadyUsedNames);
+      pickCost = 0;
+    }
+
     if (rec.picks[0]) alreadyUsedNames.add(rec.picks[0]);
 
     if (!routineEntry.dynamic) {
-      fixedRoutineCost += cost;
-      socialBudget -= cost;
-      projectedSpend += cost;
-      resolvedSlots.push({ date: dISO, isLive: true, dynamic: false, tier: routineEntry.tier, picks: rec.picks, reasoning: rec.reasoning });
+      fixedRoutineCost += pickCost;
+      socialBudget -= pickCost;
+      projectedSpend += pickCost;
+      resolvedSlots.push({ date: dISO, isLive: true, dynamic: false, tier: routineEntry.tier, picks: rec.picks, reasoning: rec.reasoning, cost: pickCost });
       continue;
     }
 
-    if (willBeLowKey) {
-      resolvedSlots.push({ date: dISO, isLive: true, dynamic: true, tier: 'low-key', picks: rec.picks, reasoning: rec.reasoning });
+    if (pickCost === 0) {
+      resolvedSlots.push({ date: dISO, isLive: true, dynamic: true, tier: 'low-key', picks: rec.picks, reasoning: rec.reasoning, cost: 0 });
     } else {
-      socialBudget -= cost;
-      projectedSpend += cost;
-      resolvedSlots.push({ date: dISO, isLive: true, dynamic: true, tier: routineEntry.tier, picks: rec.picks, reasoning: rec.reasoning });
+      socialBudget -= pickCost;
+      projectedSpend += pickCost;
+      resolvedSlots.push({ date: dISO, isLive: true, dynamic: true, tier: routineEntry.tier, picks: rec.picks, reasoning: rec.reasoning, cost: pickCost });
     }
   }
 

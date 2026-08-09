@@ -200,8 +200,13 @@ function nextDateForDayOfWeek(dayOfWeek, from = new Date()) {
 function resolveEventFields(name, favorites, lowKeyHangIdeas) {
   const favorite = favorites.find((f) => f.name === name);
   if (favorite) {
-    const cost = favorite.observed ? favorite.observed.avgSpend : TIER_MIDPOINT.mid;
-    const tier = favorite.observed ? favorite.observed.tier : 'mid';
+    const cost = favorite.observed?.avgSpend
+      ?? (typeof favorite.planningCost === 'number' ? favorite.planningCost : null)
+      ?? TIER_MIDPOINT.mid;
+    const tier = favorite.observed?.tier
+      ?? (typeof favorite.planningCost === 'number'
+        ? (favorite.planningCost < 40 ? 'cheap' : favorite.planningCost <= 90 ? 'mid' : 'high')
+        : 'mid');
     return { source: 'manual', kind: 'dining', name, favoriteName: name, tier, cost };
   }
   if (lowKeyHangIdeas.includes(name)) {
