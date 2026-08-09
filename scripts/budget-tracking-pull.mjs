@@ -323,6 +323,34 @@ function daysInMonth(today) {
 
 const DINING_CATEGORY_NAMES = new Set(['restaurants & bars']);
 const DINING_LOOKBACK_DAYS = 90;
+// Delivery apps are household eating-out even when they land on a personal
+// card (e.g. Hanna DoorDash 2026-08-06) — Month Plan should show them.
+const DELIVERY_MERCHANT_MATCHES = ['doordash', 'uber eats', 'ubereats', 'grubhub', 'postmates', 'caviar'];
+
+function isDeliveryMerchant(merchant) {
+  const m = String(merchant || '').toLowerCase();
+  return DELIVERY_MERCHANT_MATCHES.some((needle) => m.includes(needle));
+}
+
+/** Joint-card dining, delivery on any household card, or one-off reassigned to joint. */
+export function countsTowardMonthPlanDining(txn, jointLabels, personalLabels = new Set()) {
+  const cat = categoryName(txn).toLowerCase();
+  if (!DINING_CATEGORY_NAMES.has(cat)) return false;
+  const account = accountLabel(txn);
+  const merchant = txn.merchant || txn.plaidName || '';
+  if (jointLabels.has(account)) return true;
+  if (isDeliveryMerchant(merchant) && personalLabels.has(account)) return true;
+  const reassignment = trackerReassignment(txn);
+  return !!(reassignment && reassignment.reassignTo === 'joint');
+}
+
+function monthPlanDiningAccountOk(entry, jointLabels, personalLabels = new Set()) {
+  if (jointLabels.has(entry.account)) return true;
+  if (!personalLabels.has(entry.account)) return false;
+  if (isDeliveryMerchant(entry.merchant)) return true;
+  // Personal-card charge that was explicitly included (reassigned to joint, etc.)
+  return entry.includeOnMonthPlan === true;
+}
 
 function matchFavorite(merchant, favorites) {
   const m = merchant.toLowerCase();
@@ -432,16 +460,11 @@ export function computeFavoritePlacesHistory(rawPath, historyPath, transactions,
 // already fetched this run — zero additional Monarch calls. Silently does
 // nothing if favorite_places_raw.json hasn't been synced yet (Task 2 of the
 // dining-recommendations plan) rather than erroring the whole pull.
-// Joint-only: the Month Plan calendar/dining recommendations are a JOINT
-// budget tool (Kevin & Hanna's shared dining/social plan), so recentDiningActivity
-// only ever reflects the joint card. Kevin's personal-card dining (e.g. a
-// solo Baltaire tab he ended up not even being out-of-pocket for) has no
-// bearing on the joint plan and shouldn't show on its calendar or skew its
-// recommendations/tier estimates. jointLabels also filters the EXISTING
-// stored array on every run (not just new entries) so a personal-card charge
-// recorded before this filter existed gets purged on the next run, not just
-// suppressed going forward.
-export function refreshFavoritePlaces(rawPath, outPath, transactions, today, jointLabels) {
+// Month Plan past chips: joint-card dining, plus delivery apps on personal
+// cards (DoorDash etc. — still household eating-out), plus charges
+// reassigned to joint (e.g. Sora on Kevin's card). jointLabels /
+// personalLabels also filter the EXISTING stored array on every run.
+export function refreshFavoritePlaces(rawPath, outPath, transactions, today, jointLabels, personalLabels = new Set()) {
   if (!fs.existsSync(rawPath)) return;
   let raw;
   let existing;
@@ -499,10 +522,8 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
   for (const txn of transactions) {
     const amount = spendAmount(txn);
     if (amount === 0) continue;
-    const cat = categoryName(txn).toLowerCase();
-    if (!DINING_CATEGORY_NAMES.has(cat)) continue;
+    if (!countsTowardMonthPlanDining(txn, jointLabels, personalLabels)) continue;
     const account = accountLabel(txn);
-    if (!jointLabels.has(account)) continue;
     const merchant = txn.merchant || txn.plaidName || '';
     const roundedAmount = Math.round(amount * 100) / 100;
     const id = txn.id || null;
@@ -566,6 +587,9 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
       amount: roundedAmount,
       matchedPlace: match ? match.name : null,
       account,
+      // Survives the account filter below when the charge lived on a personal
+      // card but still counts (delivery apps, or reassigned-to-joint).
+      includeOnMonthPlan: true,
     };
     newEntries.push(newEntry);
     if (id) byId.set(id, newEntry);
@@ -574,7 +598,7 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
   const cutoff = new Date(today);
   cutoff.setDate(cutoff.getDate() - DINING_LOOKBACK_DAYS);
   const recentDiningActivity = [...existing.recentDiningActivity, ...newEntries]
-    .filter((a) => new Date(a.date) >= cutoff && jointLabels.has(a.account))
+    .filter((a) => new Date(a.date) >= cutoff && monthPlanDiningAccountOk(a, jointLabels, personalLabels))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const places = raw.map((f) => {
@@ -921,7 +945,8 @@ async function main() {
 
     const favoriteRawPath = path.join(path.dirname(args.outputPath), 'favorite_places_raw.json');
     const favoritePlacesPath = path.join(path.dirname(args.outputPath), 'favorite_places.json');
-    refreshFavoritePlaces(favoriteRawPath, favoritePlacesPath, transactions, today, jointLabels);
+    const personalLabels = new Set(Object.values(personalLabelsByOwner).flat());
+    refreshFavoritePlaces(favoriteRawPath, favoritePlacesPath, transactions, today, jointLabels, personalLabels);
 
     writeJson(args.outputPath, tracking);
 

@@ -112,6 +112,51 @@ test('pending→posted with a NEW Monarch id (same merchant/amount, date ±2 day
   assert.equal(matches[0].amount, 28.75);
 });
 
+test('DoorDash on a personal card still lands on Month Plan dining activity', () => {
+  const dir = path.join(tmpRoot, 'doordash-personal');
+  const { rawPath, outPath } = writeFixture(dir);
+  const today = new Date('2026-08-09T00:00:00Z');
+  const personal = new Set(['CREDIT CARD (...8387)']);
+
+  refreshFavoritePlaces(rawPath, outPath, [
+    txn({
+      id: 'dd-1',
+      date: '2026-08-06',
+      amount: -48.95,
+      merchant: 'DoorDash',
+      account: 'CREDIT CARD (...8387)',
+    }),
+  ], today, JOINT_LABELS, personal);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const matches = result.recentDiningActivity.filter((a) => a.merchant === 'DoorDash');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].amount, 48.95);
+});
+
+test('a charge reassigned to joint (Sora on Kevin personal) lands on Month Plan dining activity', () => {
+  const dir = path.join(tmpRoot, 'sora-reassign');
+  const { rawPath, outPath } = writeFixture(dir);
+  const today = new Date('2026-08-09T00:00:00Z');
+  const personal = new Set(['CREDIT CARD (...3939)']);
+
+  refreshFavoritePlaces(rawPath, outPath, [
+    txn({
+      id: 'sora-1',
+      date: '2026-08-01',
+      amount: -240,
+      merchant: 'Sora',
+      account: 'CREDIT CARD (...3939)',
+    }),
+  ], today, JOINT_LABELS, personal);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const matches = result.recentDiningActivity.filter((a) => a.merchant === 'Sora');
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].amount, 240);
+  assert.equal(matches[0].includeOnMonthPlan, true);
+});
+
 test('the earlier date is kept even if the earlier-dated observation arrives SECOND (pull order should not matter)', () => {
   const dir = path.join(tmpRoot, 'date-shift-reverse-order');
   const { rawPath, outPath } = writeFixture(dir);
