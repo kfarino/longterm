@@ -238,6 +238,11 @@ export function cardBalancesForLabels(accounts, labels) {
 // caller — the main joint/Kevin-personal categorization loop and
 // refreshFavoritePlaces()'s separate dining-detection pass — benefits
 // automatically from one source of truth.
+//
+// Durable overrides also live in data/transaction_overrides.json (amountRules
+// for pending→posted tip corrections Chase already shows, categoryRules,
+// reassignments). Code defaults below still apply; the JSON file wins on
+// matching amountRules / adds extra category+reassignment rows.
 const MERCHANT_CATEGORY_OVERRIDES = [
   { match: 'r+d', category: 'Restaurants & Bars' },
   // Farmers-market produce billed under the Sprout LA hospitality parent
@@ -250,25 +255,6 @@ const MERCHANT_CATEGORY_OVERRIDES = [
   { match: 'xai', category: 'Subscriptions' },
 ];
 
-export function categoryName(transaction) {
-  const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
-  const override = MERCHANT_CATEGORY_OVERRIDES.find((o) => merchant.includes(o.match));
-  if (override) return override.category;
-  if (typeof transaction.category === 'string') return transaction.category;
-  return transaction.category?.name || '';
-}
-
-// One-off tracker reassignments (2026-08-02) — a specific charge that landed
-// on a card its normal per-card routing wouldn't reflect (e.g. a family
-// lunch Kevin covered on his own personal card, which should count against
-// the joint budget, not his personal allowance). Deliberately NOT a standing
-// merchant rule like MERCHANT_CATEGORY_OVERRIDES above — matched by
-// merchant substring + the exact transaction date, so a different charge
-// from the same merchant on a different day still routes normally. Add/
-// remove entries here by hand as one-offs come up; expected to stay short.
-// reassignTo: "joint" | ownerId | "exclude"
-// "exclude" = drop from joint/personal spend AND from joint refunds (e.g. a
-// charge Hanna reimbursed personally, or the reimbursement transfer itself).
 const TRACKER_REASSIGNMENTS = [
   { merchantMatch: 'sora', date: '2026-08-01', reassignTo: 'joint', note: 'Lunch Kevin covered — a joint/family expense, per Kevin 2026-08-02.' },
   { merchantMatch: 'blue mercury', date: '2026-07-28', reassignTo: 'hanna', note: 'Hanna reimbursed via personal payment; counts on Hanna personal (not joint). Per Hanna 2026-08-09.' },
@@ -276,9 +262,67 @@ const TRACKER_REASSIGNMENTS = [
   { merchantMatch: 'barclays - cards', date: '2026-08-06', reassignTo: 'exclude', note: 'Hanna personal payment netting Blue Mercury + Locanda — not a merchant refund. Per Hanna 2026-08-09.' },
 ];
 
-export function trackerReassignment(transaction) {
-  const merchant = (transaction.merchant || transaction.plaidName || '').toLowerCase();
+function overridesPath() {
+  return path.join(repoRoot, 'data', 'transaction_overrides.json');
+}
+
+export function loadTransactionOverrides(filePath = overridesPath()) {
+  if (!fs.existsSync(filePath)) {
+    return { categoryRules: [], reassignments: [], amountRules: [] };
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    return {
+      categoryRules: raw.categoryRules || [],
+      reassignments: raw.reassignments || [],
+      amountRules: raw.amountRules || [],
+    };
+  } catch {
+    return { categoryRules: [], reassignments: [], amountRules: [] };
+  }
+}
+
+/** Compact Monarch shape uses a string; verbose uses { name }. */
+export function merchantName(transaction) {
+  if (typeof transaction?.merchant === 'string') return transaction.merchant;
+  if (transaction?.merchant?.name) return transaction.merchant.name;
+  return transaction?.plaidName || '';
+}
+
+export function categoryName(transaction, overrides = null) {
+  const rules = overrides || loadTransactionOverrides();
+  const merchant = merchantName(transaction).toLowerCase();
+  const fromFile = (rules.categoryRules || []).find((o) => merchant.includes(String(o.merchantMatch || '').toLowerCase()));
+  if (fromFile?.category) return fromFile.category;
+  const fromCode = MERCHANT_CATEGORY_OVERRIDES.find((o) => merchant.includes(o.match));
+  if (fromCode) return fromCode.category;
+  if (typeof transaction.category === 'string') return transaction.category;
+  return transaction.category?.name || '';
+}
+
+export function trackerReassignment(transaction, overrides = null) {
+  const rules = overrides || loadTransactionOverrides();
+  const merchant = merchantName(transaction).toLowerCase();
+  const fromFile = (rules.reassignments || []).find(
+    (r) => merchant.includes(String(r.merchantMatch || '').toLowerCase()) && transaction.date === r.date,
+  );
+  if (fromFile) return fromFile;
   return TRACKER_REASSIGNMENTS.find((r) => merchant.includes(r.merchantMatch) && transaction.date === r.date) || null;
+}
+
+/** Absolute spend dollars. amountRules override Monarch when Chase already posted a tip Monarch still shows as pending. */
+export function spendAmount(transaction, overrides = null) {
+  const rules = overrides || loadTransactionOverrides();
+  const merchant = merchantName(transaction).toLowerCase();
+  const rule = (rules.amountRules || []).find(
+    (r) => merchant.includes(String(r.merchantMatch || '').toLowerCase()) && transaction.date === r.date,
+  );
+  if (rule && Number.isFinite(Number(rule.amount))) {
+    return Math.round(Math.abs(Number(rule.amount)) * 100) / 100;
+  }
+  const value = Number(transaction.amount);
+  if (!Number.isFinite(value) || value >= 0) return 0; // only negative (debit) amounts are spend
+  return Math.abs(value);
 }
 
 /** Monarch: spend is negative, credits positive. Trip actual is net spend (credits reduce it). */
@@ -293,12 +337,6 @@ export function travelNetSpend(rawAmount) {
 function accountLabel(transaction) {
   if (typeof transaction.account === 'string') return transaction.account;
   return transaction.account?.displayName || transaction.account?.name || '';
-}
-
-function spendAmount(transaction) {
-  const value = Number(transaction.amount);
-  if (!Number.isFinite(value) || value >= 0) return 0; // only negative (debit) amounts are spend
-  return Math.abs(value);
 }
 
 // Most recent 25th-of-month on or before `today` — the Barclays statement-period
@@ -436,7 +474,7 @@ export function computeFavoritePlacesHistory(rawPath, historyPath, transactions,
     if (!DINING_CATEGORY_NAMES.has(cat)) continue;
     const account = accountLabel(txn);
     if (!jointLabels.has(account)) continue;
-    const merchant = txn.merchant || txn.plaidName || '';
+    const merchant = merchantName(txn);
     const match = matchFavorite(merchant, raw);
     if (!match) continue;
     const roundedAmount = Math.round(amount * 100) / 100;
@@ -524,7 +562,7 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
     if (amount === 0) continue;
     if (!countsTowardMonthPlanDining(txn, jointLabels, personalLabels)) continue;
     const account = accountLabel(txn);
-    const merchant = txn.merchant || txn.plaidName || '';
+    const merchant = merchantName(txn);
     const roundedAmount = Math.round(amount * 100) / 100;
     const id = txn.id || null;
 

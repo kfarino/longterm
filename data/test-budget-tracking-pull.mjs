@@ -349,7 +349,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -357,8 +357,27 @@ import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesFo
 const CYCLE_START = new Date('2026-07-01');
 
 test('categoryName: Sprout LA is Groceries (farmers market billed under hospitality parent)', () => {
-  assert.equal(categoryName({ merchant: 'Sprout LA', category: 'Restaurants & Bars' }), 'Groceries');
-  assert.equal(categoryName({ merchant: 'Whole Foods', category: 'Groceries' }), 'Groceries');
+  const empty = { categoryRules: [], reassignments: [], amountRules: [] };
+  assert.equal(categoryName({ merchant: 'Sprout LA', category: 'Restaurants & Bars' }, empty), 'Groceries');
+  assert.equal(categoryName({ merchant: 'Whole Foods', category: 'Groceries' }, empty), 'Groceries');
+});
+
+test('spendAmount: amountRules override pending Monarch amount (Chase tip already posted)', () => {
+  const txn = { merchant: 'R+D Kitchen', date: '2026-08-08', amount: -55.37 };
+  assert.equal(spendAmount(txn, { amountRules: [] }), 55.37);
+  assert.equal(
+    spendAmount(txn, {
+      amountRules: [{ merchantMatch: 'r+d', date: '2026-08-08', amount: 65.37 }],
+    }),
+    65.37,
+  );
+  assert.equal(
+    spendAmount(txn, {
+      amountRules: [{ merchantMatch: 'r+d', date: '2026-08-09', amount: 65.37 }],
+    }),
+    55.37,
+    'wrong date must not match',
+  );
 });
 
 test('detectJointRefunds finds a genuine merchant refund (positive amount, original spend category, joint card)', () => {
