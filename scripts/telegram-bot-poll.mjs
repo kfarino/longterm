@@ -696,7 +696,9 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         rawReplies.push(result.reply);
         if (result.needsClarification) stillNeedsClarification = result.reply;
       } else if (FINANCIAL_TOOL_NAMES.has(toolUse.name)) {
-        const result = impl(financialContext, toolUse.input);
+        // `now` so get_budget_status can say how many days are left in the
+        // cycle without reaching for the real clock (tests inject it).
+        const result = impl(financialContext, toolUse.input, now);
         rawReplies.push(result.reply);
       } else if (HEALTH_TOOL_NAMES.has(toolUse.name)) {
         // Read-only: answering a question about sleep, never shaping a plan.
@@ -797,7 +799,11 @@ A to-do sits on the shared Planner list until done. A reminder proactively pings
 "What reminders do we have" → list_reminders. Cancelling one before it fires → cancel_reminder. Never guess which one if several plausibly match — ask.
 Use delete_todo (not mark_done) when a to-do is no longer relevant rather than finished.
 
-## Money and the real financial plan
+## Money
+Budget and spending questions → get_budget_status. The household cares about **this month's spend**: what's logged, what's left, how many days are left, and whether that's on pace.
+Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.
+
+## Changing the real financial plan
 These tools REALLY change the plan, immediately — there is no review step.
 - A change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase) → update_phase_expense. Use the phases list in context to pick the right phaseId(s) and to see current expense labels for renaming.
 - There is no way to schedule a cost that changes on a future date. Set today's real current rate and expect to be told again when it actually changes.

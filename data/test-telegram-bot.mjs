@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-bot-test-'));
@@ -1243,7 +1243,7 @@ await asyncTest('a pre-existing routine override (from a prior session) is honor
 
 // --- Financial Q&A tools (Part C) — read-only over financialContext, only reachable via the LLM fallback ---
 
-await asyncTest('get_budget_status: reports joint/personal pace and travel actuals, no writes', async () => {
+await asyncTest('get_budget_status: reports monthly spend only — travel stays out unless asked', async () => {
   const dir = path.join(tmpRoot, 'financial-budget-status');
   const paths = writeFixture(dir, {
     updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot how are we pacing on budget?' })] },
@@ -1256,7 +1256,62 @@ await asyncTest('get_budget_status: reports joint/personal pace and travel actua
   assert.equal(result.monthPlanEventsChanged, false, 'a read-only financial tool must not change monthPlanEvents');
   assert.ok(result.sentReplies[0].includes('Joint:'), 'should report joint pace');
   assert.ok(result.sentReplies[0].includes('Kevin personal:'), 'should report personal pace');
-  assert.ok(result.sentReplies[0].includes('Test Trip'), 'should report the seeded travel trip');
+  // Was the opposite assertion until 2026-08-13. Travel was appended to every
+  // budget reply, so "what's our budget status?" came back with four trip
+  // budgets nobody asked about, burying the monthly numbers.
+  assert.ok(!result.sentReplies[0].includes('Test Trip'), 'travel must not be volunteered');
+  assert.ok(!result.sentReplies[0].includes('Travel:'), 'no travel section at all by default');
+});
+
+await asyncTest('get_budget_status: includeTravel adds the trips back when actually asked', async () => {
+  const dir = path.join(tmpRoot, 'financial-budget-status-travel');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot how are we doing on the trip budgets?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'get_budget_status', input: { includeTravel: true } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.ok(result.sentReplies[0].includes('Travel:'), 'an explicit travel ask still gets trips');
+  assert.ok(result.sentReplies[0].includes('Test Trip'));
+  assert.ok(result.sentReplies[0].includes('Joint:'), 'monthly spend still leads the reply');
+});
+
+// Hanna's actual follow-up to a budget reply was "so we have 1200 left to spend
+// and how many days" — the numbers were there but the answer wasn't, so it took
+// a second round-trip. Both now come back in the first reply.
+const budgetCtx = (overrides = {}) => ({
+  budgetStatus: {
+    joint: {
+      label: 'Joint', total: 3297, projected: 5205, target: 4500, variance: 705,
+      cycleStart: '2026-07-25', cycleDays: 30, ...overrides,
+    },
+    personal: {},
+    travel: [{ label: 'Test Trip', actual: 500, budgetedAmount: 1000 }],
+  },
+});
+
+test('get_budget_status: reports what is left and how many days are left', () => {
+  const { reply } = get_budget_status(budgetCtx(), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /\$1,203 left/, '4500 target - 3297 logged');
+  assert.match(reply, /12 days to go/, 'cycle started 7/25, runs 30 days, today is 8/12');
+});
+
+test('get_budget_status: says "over budget" rather than a negative amount left', () => {
+  const { reply } = get_budget_status(budgetCtx({ total: 5000 }), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /\$500 over budget/);
+  assert.doesNotMatch(reply, /-\$500 left/);
+});
+
+test('get_budget_status: omits the day count when the tracker has no cycle configured', () => {
+  const { reply } = get_budget_status(budgetCtx({ cycleStart: null }), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /\$1,203 left\./, 'still reports what is left');
+  assert.doesNotMatch(reply, /days to go/, 'better to omit than to state a made-up deadline');
+});
+
+test('get_budget_status: a finished cycle floors at 0 days rather than going negative', () => {
+  const { reply } = get_budget_status(budgetCtx(), {}, new Date('2026-09-30T12:00:00'));
+  assert.match(reply, /0 days to go/);
 });
 
 await asyncTest('get_savings_goals: reports each goal\'s current/target/percentage', async () => {

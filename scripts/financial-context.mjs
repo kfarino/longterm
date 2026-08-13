@@ -43,11 +43,23 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       target: withTarget.target,
       label: tracker.label || `${owner ? owner.displayName : ownerId} personal`,
       displayName: owner ? owner.displayName : ownerId,
+      // Passed through (not folded into computeTrackerPacing) so the pacing
+      // math stays byte-identical to the dashboard's inline copy — see the
+      // header comment and AGENTS.md §2. Consumers derive "how much is left
+      // and for how long" from these; the pace numbers are unchanged.
+      cycleStart: tracker.cycleStart || null,
+      cycleDays: tracker.cycleDays || null,
     };
   }
 
   return {
-    joint: { ...computeTrackerPacing(joint), target: joint.target, label: joint.label || 'Joint' },
+    joint: {
+      ...computeTrackerPacing(joint),
+      target: joint.target,
+      label: joint.label || 'Joint',
+      cycleStart: joint.cycleStart || null,
+      cycleDays: joint.cycleDays || null,
+    },
     personal,
     travel: bt.travel.trips.map((t) => ({ label: t.label, actual: t.actual, budgetedAmount: t.budgetedAmount })),
   };

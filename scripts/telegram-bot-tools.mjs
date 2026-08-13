@@ -607,24 +607,63 @@ export function cancel_reminder(reminders, { text, date }) {
 // does for ROUTINE_OVERRIDE_TOOL_NAMES/GOALS_TOOL_NAMES.
 export const REMINDER_TOOL_NAMES = new Set(['add_reminder', 'list_reminders', 'cancel_reminder']);
 
-// Read-only — reports joint/personal pace (on/over, and by how much) plus
-// travel trip actuals-vs-budgeted. financialContext.budgetStatus is
-// pre-computed by scripts/financial-context.mjs (loadBudgetStatus), the
-// same math the dashboard's Joint/personal trackers use.
-export function get_budget_status(financialContext) {
+/**
+ * Read-only — this month's spend pace for the joint and personal trackers.
+ *
+ * Travel is OFF by default (2026-08-13). It used to be appended to every reply,
+ * so "what's our budget status?" came back with four trip budgets nobody asked
+ * about, burying the monthly numbers that were actually the question. Pass
+ * `includeTravel` when the user genuinely asks about trips.
+ *
+ * Each line also reports what's left and how many days are left to spend it —
+ * the thing people ask as an immediate follow-up ("so we have $1,200 left and
+ * how many days?"), which previously took a second round-trip to answer.
+ *
+ * financialContext.budgetStatus is pre-computed by financial-context.mjs
+ * (loadBudgetStatus), the same math the dashboard's trackers use.
+ */
+export function get_budget_status(financialContext, input = {}, now = new Date()) {
   const { joint, personal, travel } = financialContext.budgetStatus;
   const paceLine = (label, t) => {
     if (!t) return `${label}: no data yet.`;
     const pace = t.variance > 0 ? 'over pace' : 'on pace';
-    return `${label}: ${fmtMoney(t.total)} logged, projected ${fmtMoney(t.projected)} vs ${fmtMoney(t.target)} target (${pace}, ${t.variance >= 0 ? '+' : ''}${fmtMoney(t.variance)}).`;
+    const left = t.target - t.total;
+    const days = cycleDaysRemaining(t, now);
+    const leftLabel = left >= 0
+      ? `${fmtMoney(left)} left`
+      : `${fmtMoney(Math.abs(left))} over budget`;
+    const daysLabel = days == null ? '' : ` with ${days} day${days === 1 ? '' : 's'} to go`;
+    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}. Projected ${fmtMoney(t.projected)} (${pace}, ${t.variance >= 0 ? '+' : ''}${fmtMoney(t.variance)}).`;
   };
   const personalLines = Object.values(personal || {})
     .map((p) => paceLine(p.label || p.displayName || 'Personal', p))
     .join('\n');
-  const travelLines = (travel || []).length
-    ? travel.map((t) => `${t.label}: ${fmtMoney(t.actual)}${t.budgetedAmount != null ? ` / ${fmtMoney(t.budgetedAmount)}` : ' (already paid)'}`).join('\n')
-    : 'No active trips.';
-  return { reply: `${paceLine(joint?.label || 'Joint', joint)}${personalLines ? `\n${personalLines}` : ''}\n\nTravel:\n${travelLines}` };
+
+  let reply = `${paceLine(joint?.label || 'Joint', joint)}${personalLines ? `\n${personalLines}` : ''}`;
+
+  if (input?.includeTravel) {
+    const travelLines = (travel || []).length
+      ? travel.map((t) => `${t.label}: ${fmtMoney(t.actual)}${t.budgetedAmount != null ? ` / ${fmtMoney(t.budgetedAmount)}` : ' (already paid)'}`).join('\n')
+      : 'No active trips.';
+    reply += `\n\nTravel:\n${travelLines}`;
+  }
+  return { reply };
+}
+
+/**
+ * Whole days left in a tracker's own cycle. Joint and personal run on
+ * independent clocks (see CLAUDE.md), so this is per-tracker rather than a
+ * single household month. Returns null when the tracker has no cycle
+ * configured — better to omit the phrase than to state a made-up deadline.
+ */
+function cycleDaysRemaining(tracker, now) {
+  if (!tracker?.cycleStart || !tracker?.cycleDays) return null;
+  const start = new Date(`${tracker.cycleStart}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const elapsedDays = Math.floor((now - start) / 86400000);
+  const remaining = tracker.cycleDays - elapsedDays;
+  if (!Number.isFinite(remaining)) return null;
+  return Math.max(0, remaining);
 }
 
 // Read-only — reports every savings goal's progress percentage.
@@ -893,8 +932,16 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_budget_status',
-    description: 'Report joint and Kevin-personal budget pace this cycle (logged/projected vs target, on or over pace), plus travel trip actuals vs budgeted.',
-    input_schema: { type: 'object', properties: {} },
+    description: "Report this cycle's monthly spend: joint and each person's personal budget — logged so far, how much is left, how many days are left, projected total vs target, and whether that's on or over pace. This is the default answer to any budget/spending question. It does NOT include travel unless you ask for it.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        includeTravel: {
+          type: 'boolean',
+          description: 'Set true ONLY when the user explicitly asks about travel, trips, vacations, or a named trip (Boston, Zagreb, Europe, South America). Adds each trip\'s spend vs its budget. Leave it out for any ordinary budget or spending question — trip budgets are long-horizon and bury the monthly numbers people actually asked for.',
+        },
+      },
+    },
   },
   {
     name: 'get_health_status',
@@ -1007,7 +1054,7 @@ export const TOOL_IMPL = {
   get_dining_plan: (monthPlanEvents, args, diningContext) => get_dining_plan(monthPlanEvents, { occasion: args.occasion }, diningContext),
   set_dinner_plan: (monthPlanEvents, args, diningContext) => set_dinner_plan(monthPlanEvents, { occasion: args.occasion, date: args.date, pick: args.pick, time: args.time, durationHours: args.durationHours }, diningContext),
   remove_event: (monthPlanEvents, args, diningContext) => remove_event(monthPlanEvents, { occasion: args.occasion, date: args.date, title: args.title }, diningContext),
-  get_budget_status: (financialContext) => get_budget_status(financialContext),
+  get_budget_status: (financialContext, args, now) => get_budget_status(financialContext, { includeTravel: args?.includeTravel }, now),
   get_health_status: (healthContext) => get_health_status(healthContext),
   get_savings_goals: (financialContext) => get_savings_goals(financialContext),
   get_decisions: (financialContext) => get_decisions(financialContext),
