@@ -157,30 +157,116 @@ test('isGoogleAuthFailure catches invalid_grant / revoked refresh tokens', () =>
   assert.equal(isGoogleAuthFailure(new Error('Calendar API 503')), false);
 });
 
-await asyncTest('runCalendarSyncStep pauses after invalid_grant and stays quiet on later calls', async () => {
+// These tests previously asserted the opposite — that sync must NEVER retry
+// while the pause file exists, and must never re-log. That is exactly how
+// Google Calendar sync stayed dead for three days while the bot kept confirming
+// events: the pause was checked before every attempt and cleared only after a
+// success, so it could not expire, and the one log line scrolled away. The
+// contract now is: back off, but always come back, and always be audible.
+const AUTH_ERROR = 'Google token refresh failed: 400 { "error": "invalid_grant", "error_description": "Token has been expired or revoked." }';
+
+function pauseHarness() {
   const dir = tmpDir();
   const envPath = path.join(dir, 'google-calendar.env');
   const pausePath = path.join(dir, 'auth-pause.json');
   const logPath = path.join(dir, 'poll.log');
+  const monthPlanEventsPath = path.join(dir, 'month_plan_events.json');
   fs.writeFileSync(envPath, 'GOOGLE_CLIENT_ID=x\n');
-  let calls = 0;
-  const syncFn = async () => {
-    calls += 1;
-    throw new Error('Google token refresh failed: 400 { "error": "invalid_grant", "error_description": "Token has been expired or revoked." }');
-  };
+  fs.writeFileSync(monthPlanEventsPath, JSON.stringify({ events: {} }));
+  const alerts = [];
+  const alertFn = async (text) => { alerts.push(text); };
+  return { dir, envPath, pausePath, logPath, monthPlanEventsPath, alerts, alertFn };
+}
 
-  const first = await runCalendarSyncStep({ envPath, authPausePath: pausePath, logPath, syncFn });
+await asyncTest('runCalendarSyncStep backs off after invalid_grant but retries once the backoff expires', async () => {
+  const h = pauseHarness();
+  let calls = 0;
+  const syncFn = async () => { calls += 1; throw new Error(AUTH_ERROR); };
+  const base = { envPath: h.envPath, authPausePath: h.pausePath, logPath: h.logPath, monthPlanEventsPath: h.monthPlanEventsPath, syncFn, alertFn: h.alertFn };
+
+  const t0 = new Date('2026-08-12T00:00:00Z');
+  const first = await runCalendarSyncStep({ ...base, now: t0 });
   assert.equal(first.paused, true);
   assert.equal(calls, 1);
-  assert.ok(fs.existsSync(pausePath));
-  const log1 = fs.readFileSync(logPath, 'utf8');
-  assert.match(log1, /PAUSED \(auth\)/);
 
-  const second = await runCalendarSyncStep({ envPath, authPausePath: pausePath, logPath, syncFn });
-  assert.equal(second.paused, true);
-  assert.equal(calls, 1, 'must not retry Google while the pause file exists');
-  const log2 = fs.readFileSync(logPath, 'utf8');
-  assert.equal((log2.match(/PAUSED \(auth\)/g) || []).length, 1, 'must not re-log the pause on every poll iteration');
+  // Still inside the 6h backoff — suppressed, but not silent.
+  const during = await runCalendarSyncStep({ ...base, now: new Date('2026-08-12T03:00:00Z') });
+  assert.equal(during.paused, true);
+  assert.equal(calls, 1, 'must not hammer Google while backing off');
+  assert.match(fs.readFileSync(h.logPath, 'utf8'), /calendar sync paused until/);
+
+  // Past the 6h backoff — must try again rather than stay dead forever.
+  await runCalendarSyncStep({ ...base, now: new Date('2026-08-12T07:00:00Z') });
+  assert.equal(calls, 2, 'must retry Google once the backoff has expired');
+
+  const pause = JSON.parse(fs.readFileSync(h.pausePath, 'utf8'));
+  assert.equal(pause.failureCount, 2);
+  assert.equal(pause.at, t0.toISOString(), 'outage start time is preserved across re-arms');
+});
+
+await asyncTest('a recovered token clears the pause with no manual file deletion', async () => {
+  const h = pauseHarness();
+  let shouldFail = true;
+  const syncFn = async () => {
+    if (shouldFail) throw new Error(AUTH_ERROR);
+    return { created: 3, updated: 0, deleted: 0 };
+  };
+  const base = { envPath: h.envPath, authPausePath: h.pausePath, logPath: h.logPath, monthPlanEventsPath: h.monthPlanEventsPath, syncFn, alertFn: h.alertFn };
+
+  await runCalendarSyncStep({ ...base, now: new Date('2026-08-12T00:00:00Z') });
+  assert.ok(fs.existsSync(h.pausePath), 'paused after the auth failure');
+
+  shouldFail = false;
+  const recovered = await runCalendarSyncStep({ ...base, now: new Date('2026-08-12T07:00:00Z') });
+  assert.equal(recovered.created, 3);
+  assert.equal(fs.existsSync(h.pausePath), false, 'a successful sync clears the pause by itself');
+  assert.match(fs.readFileSync(h.logPath, 'utf8'), /RECOVERED/);
+});
+
+await asyncTest('a legacy pause file with no retryAfter is treated as expired, not permanent', async () => {
+  const h = pauseHarness();
+  // Exactly the shape left on disk by the pre-backoff code.
+  fs.writeFileSync(h.pausePath, JSON.stringify({ at: '2026-08-09T19:58:16.341Z', reason: 'Google token refresh failed: invalid_grant' }));
+  let calls = 0;
+  const syncFn = async () => { calls += 1; return { created: 0, updated: 0, deleted: 0 }; };
+
+  const result = await runCalendarSyncStep({
+    envPath: h.envPath, authPausePath: h.pausePath, logPath: h.logPath,
+    monthPlanEventsPath: h.monthPlanEventsPath, syncFn, alertFn: h.alertFn,
+    now: new Date('2026-08-12T00:00:00Z'),
+  });
+  assert.equal(calls, 1, 'a stale latch must not block sync forever');
+  assert.equal(result.skipped, undefined);
+  assert.equal(fs.existsSync(h.pausePath), false);
+});
+
+await asyncTest('the humans are told once, then at most daily, while sync stays down', async () => {
+  const h = pauseHarness();
+  const syncFn = async () => { throw new Error(AUTH_ERROR); };
+  const base = { envPath: h.envPath, authPausePath: h.pausePath, logPath: h.logPath, monthPlanEventsPath: h.monthPlanEventsPath, syncFn, alertFn: h.alertFn };
+
+  await runCalendarSyncStep({ ...base, now: new Date('2026-08-12T00:00:00Z') });
+  assert.equal(h.alerts.length, 1, 'alerts on the first failure');
+  assert.match(h.alerts[0], /--reauth-only/, 'tells the user the command that actually fixes it');
+
+  await runCalendarSyncStep({ ...base, now: new Date('2026-08-12T03:00:00Z') });
+  assert.equal(h.alerts.length, 1, 'does not re-alert on every iteration');
+
+  await runCalendarSyncStep({ ...base, now: new Date('2026-08-13T04:00:00Z') });
+  assert.equal(h.alerts.length, 2, 're-alerts after a day so a silent outage cannot persist');
+});
+
+await asyncTest('a failing alert never fails the sync step', async () => {
+  const h = pauseHarness();
+  const syncFn = async () => { throw new Error(AUTH_ERROR); };
+  const result = await runCalendarSyncStep({
+    envPath: h.envPath, authPausePath: h.pausePath, logPath: h.logPath,
+    monthPlanEventsPath: h.monthPlanEventsPath, syncFn,
+    alertFn: async () => { throw new Error('telegram down'); },
+    now: new Date('2026-08-12T00:00:00Z'),
+  });
+  assert.equal(result.paused, true);
+  assert.match(fs.readFileSync(h.logPath, 'utf8'), /alert FAILED to send/);
 });
 
 console.log('All telegram-poll-loop tests passed.');

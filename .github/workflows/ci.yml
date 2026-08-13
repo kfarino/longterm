@@ -26,7 +26,8 @@ jobs:
           node-version: '20'
       - name: Seed fictional examples
         run: npm run seed
-      - name: Budget-tracking unit tests
-        run: node data/test-budget-tracking-pull.mjs
-      - name: Dining recommendation unit tests
-        run: node data/test-dining-recommendation.mjs
+      # Every data/test-*.mjs suite, not a hand-picked two. The bot and
+      # calendar-sync suites went unrun for months, which is how a test
+      # asserting that a broken sync should stay silent stayed green.
+      - name: Unit tests
+        run: npm test

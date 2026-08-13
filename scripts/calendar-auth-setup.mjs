@@ -3,12 +3,21 @@
 // token, creates the dedicated "Family Planner" Google Calendar, and saves
 // credentials to ~/.longterm/google-calendar.env (same outside-the-repo
 // convention as telegram.env / monarch.env).
+//
+// `--reauth-only` is the re-run mode, and it exists because the first-run path
+// is destructive on a second run: it unconditionally POSTs a *new* "Family
+// Planner" calendar and rewrites GOOGLE_CALENDAR_ID to point at it. Doing that
+// to recover from an expired refresh token would strand every already-synced
+// event on the old calendar, invalidate every googleEventId in
+// calendar-sync-state.json, and leave both phones subscribed to a calendar the
+// bot no longer writes to. Re-auth must replace credentials ONLY.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
-import { googleCalendarEnvPath } from './longterm-paths.mjs';
+import { googleCalendarEnvPath, calendarSyncAuthPausePath } from './longterm-paths.mjs';
+import { readLocalEnv, clearCalendarAuthPause } from './calendar-sync.mjs';
 
 const REDIRECT_PORT = 51823;
 const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/oauth2callback`;
@@ -72,12 +81,56 @@ function writeEnvFile(envPath, values) {
   fs.writeFileSync(envPath, `${body}\n`, 'utf8');
 }
 
+/**
+ * Credentials-only env update: everything the existing file holds survives,
+ * and only the three OAuth fields are replaced. Exported (and pure) because
+ * the property that matters — GOOGLE_CALENDAR_ID is never rewritten — is the
+ * one whose violation would silently orphan every synced event, so it is
+ * worth a test that doesn't need a browser consent flow to run.
+ */
+export function buildReauthEnv(existing, { clientId, clientSecret, refreshToken }) {
+  if (!existing?.GOOGLE_CALENDAR_ID) throw new Error('Refusing to build a re-auth env without an existing GOOGLE_CALENDAR_ID to preserve.');
+  if (!clientId || !clientSecret || !refreshToken) throw new Error('Re-auth needs clientId, clientSecret and refreshToken.');
+  return {
+    ...existing,
+    GOOGLE_CLIENT_ID: clientId,
+    GOOGLE_CLIENT_SECRET: clientSecret,
+    GOOGLE_REFRESH_TOKEN: refreshToken,
+  };
+}
+
 async function main() {
-  const envPath = process.argv[2] || DEFAULT_ENV_PATH;
-  console.log('Google Calendar one-time setup');
-  console.log('Create an OAuth client (type: Desktop app) in a Google Cloud project with the Calendar API enabled, then paste its values below.');
-  const clientId = await prompt('Client ID: ');
-  const clientSecret = await prompt('Client secret: ');
+  const argv = process.argv.slice(2);
+  const reauthOnly = argv.includes('--reauth-only');
+  const envPath = argv.find((a) => !a.startsWith('--')) || DEFAULT_ENV_PATH;
+
+  // In re-auth mode the existing env is the source of truth for everything
+  // except the credentials — read it up front so a missing file fails here,
+  // before we've sent the user through a browser consent flow for nothing.
+  let existing = {};
+  if (reauthOnly) {
+    if (!fs.existsSync(envPath)) {
+      throw new Error(`--reauth-only needs an existing env file to preserve, and ${envPath} does not exist. Run without the flag for first-time setup.`);
+    }
+    existing = readLocalEnv(envPath);
+    if (!existing.GOOGLE_CALENDAR_ID) {
+      throw new Error(`${envPath} has no GOOGLE_CALENDAR_ID to preserve — refusing to re-auth against an unknown calendar. Fix the env file or run first-time setup.`);
+    }
+    console.log('Google Calendar re-auth (credentials only)');
+    console.log(`Keeping calendar id: ${existing.GOOGLE_CALENDAR_ID}`);
+    console.log(`Keeping read calendars: ${existing.GOOGLE_READ_CALENDAR_IDS || '(none configured)'}`);
+    console.log('No new calendar will be created.\n');
+  } else {
+    console.log('Google Calendar one-time setup');
+    console.log('Create an OAuth client (type: Desktop app) in a Google Cloud project with the Calendar API enabled, then paste its values below.');
+  }
+
+  // Same OAuth client as before is the normal case on re-auth, so offer the
+  // stored values as the default — the thing that actually expired is the
+  // refresh token, not the client.
+  const clientId = (await prompt(existing.GOOGLE_CLIENT_ID ? 'Client ID [Enter to keep existing]: ' : 'Client ID: ')) || existing.GOOGLE_CLIENT_ID || '';
+  const clientSecret = (await prompt(existing.GOOGLE_CLIENT_SECRET ? 'Client secret [Enter to keep existing]: ' : 'Client secret: ')) || existing.GOOGLE_CLIENT_SECRET || '';
+  if (!clientId || !clientSecret) throw new Error('Client ID and client secret are both required.');
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.searchParams.set('client_id', clientId);
@@ -95,6 +148,25 @@ async function main() {
   const tokens = await exchangeCodeForTokens({ clientId, clientSecret, code });
   if (!tokens.refresh_token) {
     throw new Error('No refresh_token in response — Google only issues one on first consent for a given client+account. Revoke prior access at https://myaccount.google.com/permissions and re-run.');
+  }
+
+  if (reauthOnly) {
+    writeEnvFile(envPath, buildReauthEnv(existing, {
+      clientId,
+      clientSecret,
+      refreshToken: tokens.refresh_token,
+    }));
+    // Re-auth has to un-pause. Before this existed, the pause file was a
+    // one-way latch: runCalendarSyncStep checks it *before* attempting a sync
+    // and only clears it *after* one succeeds, so a paused sync could never
+    // retry itself back to health no matter how many times you re-authed.
+    const pausePath = calendarSyncAuthPausePath();
+    const wasPaused = fs.existsSync(pausePath);
+    clearCalendarAuthPause(pausePath);
+    console.log(`\nDone. Refreshed credentials in ${envPath}`);
+    console.log(`Calendar id preserved: ${existing.GOOGLE_CALENDAR_ID}`);
+    console.log(wasPaused ? 'Cleared the calendar-sync auth pause — sync resumes on the next poll iteration.' : 'No auth pause was set.');
+    return;
   }
 
   const calendar = await createFamilyPlannerCalendar(tokens.access_token);

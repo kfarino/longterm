@@ -14,11 +14,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
-import { runSync as runCalendarSync, isGoogleAuthFailure, readCalendarAuthPause, writeCalendarAuthPause, clearCalendarAuthPause } from './calendar-sync.mjs';
+import {
+  runSync as runCalendarSync,
+  isGoogleAuthFailure,
+  readCalendarAuthPause,
+  writeCalendarAuthPause,
+  clearCalendarAuthPause,
+  isCalendarAuthPauseActive,
+  recordCalendarAuthPauseAlert,
+} from './calendar-sync.mjs';
+import { shouldAlertForPause, buildPauseAlertText, countUnsyncedEvents, pauseAgeHours } from './calendar-sync-alerts.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { googleCalendarEnvPath, telegramEnvPath, telegramPollLogPath, calendarSyncAuthPausePath } from './longterm-paths.mjs';
 
@@ -49,6 +58,7 @@ function parseArgs(argv) {
     conversationLogPath: path.join(repoDataDir, 'telegram-conversation-log.jsonl'),
     goalsChangelogPath: path.join(repoDataDir, 'goals-changelog.jsonl'),
     pendingClarificationsPath: path.join(repoDataDir, 'telegram-pending-clarifications.json'),
+    messageAttemptsPath: path.join(repoDataDir, 'telegram-message-attempts.json'),
     updatesFixture: null,
     dryRun: false,
     once: false,
@@ -385,17 +395,23 @@ async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, rem
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      // Sonnet, not Haiku, for tool SELECTION specifically (2026-08-12). This
+      // one call picks among ~23 tools with overlapping trigger conditions
+      // (add_todo vs add_reminder, get_dining_plan vs set_dinner_plan,
+      // update_phase_expense vs log_decision) and is where "the bot can't do
+      // simple things" was actually being decided. The cheap rephrase pass
+      // (naturalizeBatch) stays on Haiku — it has one easy job.
+      model: 'claude-sonnet-5',
+      max_tokens: 1024,
       // Explicitly disabled (2026-08-06) -- see telegram-bot-recap.mjs's own
       // comment on this same fix: claude-sonnet-5 defaults extended thinking
       // on, and tool selection here doesn't need it; left enabled, thinking
       // can consume the whole token budget and leave neither a tool_use nor
       // a text block, degrading every such message to the generic helpText
-      // fallback instead of a real reply.
+      // fallback instead of a real reply. Load-bearing on this model.
       thinking: { type: 'disabled' },
       tools: TOOL_DEFS,
-      system: 'You manage a shared household to-do list, weekly goals, dining plan (family_dinner=Wed, date_night=Fri, weekend_social=Sat by default — see the current dining routine below, since these can be rescheduled), one-off events via add_family_event (kind family=social/spend on Month Plan; kind schedule=appointments Google-Cal-only — classify from the title and pass kind; if ambiguous ask instead of guessing), can answer financial questions (budget pace, savings goals, open decisions), can report what\'s on Kevin\'s and Hanna\'s Google calendars via get_calendar_events (Hanna\'s calendar is shared into Kevin\'s Google account and is already wired for reading — when Hanna asks about her schedule / "my schedule," or Kevin asks about hers, call get_calendar_events; never say you lack access to Hanna\'s calendar; Kevin\'s work calendar is deliberately excluded), and can directly edit the real long-term financial plan (goals.json) over Telegram. The user\'s message is below, along with the current state, today\'s date, and (when available) the last few exchanges in the group — use that recent conversation to resolve references like "that," "it," or unstated context in a follow-up (e.g. if the prior exchange set a specific dining plan and this message says "actually make it 6pm," apply the time to that same plan). Decide which tool (if any) to call. If the message is a question you can answer from the current state without changing anything, call the relevant read-only tool (list_todos, get_dining_plan, get_budget_status, get_savings_goals, get_decisions, get_calendar_events, get_upcoming_shows, search_transactions, list_reminders) and answer conversationally in your final text — do not fabricate data not present in the provided state. If the message asks about upcoming shows, concerts, or comedy nights, call get_upcoming_shows — it checks the household\'s followed venues, not a general search. If asked whether a specific charge/merchant is included in a budget, or for a category\'s individual line items (not just its total), call search_transactions rather than guessing from the aggregate pace numbers alone — it only covers the current cycle, so say so if that is relevant to the answer. Dining plans have two distinct states: a live suggestion (nothing stored, recomputed every time) and a confirmed pick (stored, and eventually pushed to the shared Google Calendar). Only call set_dinner_plan when the user is explicitly confirming or booking a specific choice — never just because they asked what the plan or suggestion is, which is get_dining_plan\'s job. If they mention a time (e.g. "5pm", "7:30") or duration (e.g. "for an hour"), pass them as set_dinner_plan\'s time/durationHours arguments so the Calendar event lands on the right slot instead of a default all-day/2-hour one. For anything that is not one of the 3 dining occasions — an appointment, school event, trip note, dinner with friends, any other one-off — call add_family_event instead, resolving any relative day they gave ("tomorrow", "Thursday", "next Friday") into an explicit YYYY-MM-DD using today\'s date as the anchor; pass kind \"family\" for social/spend plans (shows on Month Plan) or kind \"schedule\" for appointments/logistics (Google Cal only); only pass its time argument if they gave an unambiguous one (explicit AM/PM or 24-hour), since a general event has no "always evening" assumption to fall back on; if they mention it repeats weekly, pass recurrenceWeeks. If they want to reschedule which weekday a routine occasion falls on (e.g. "let\'s move family dinner to Thursdays"), call set_routine_day — this only changes future scheduling, not any already-confirmed plan. Use delete_todo (not mark_done) when the user says a to-do is no longer relevant rather than finished. If the user says "remind me..." or otherwise asks for a reminder, call add_reminder — never add_todo. A to-do sits on the shared Planner list until done; a reminder proactively pings the group once, on its date, and never appears on the Planner list. Use list_reminders for "what reminders do we have" and cancel_reminder to cancel one before it fires (never guess which one if more than one plausibly matches — ask instead, same as remove_event). Use remove_event to cancel a dining plan (by occasion) or a family event (by date, plus a title if more than one event is on that date) — never guess which event they mean if it\'s ambiguous; ask instead. If the message clearly asks for more than one distinct thing (e.g. "add milk to the list and what\'s the budget status"), call more than one tool in this same turn rather than only handling the first. If the message describes a financial/family-planning change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase), call update_phase_expense directly — this REALLY changes the plan, immediately, not a note for later review; use the phases list in context to pick the right phaseId(s) and see current expense labels for renaming. There is no way to store a cost that changes on a future date as a schedule — just set today\'s real current rate, and expect to be asked again when it actually changes. If the ask is narrative rather than a dollar figure (an open question, a decision to track), call log_decision instead. Never just apologize that you can\'t do something financial — one of these two tools almost always applies, and a reasonable default (today\'s date as anchor, a default duration, an existing label) should be used rather than asked about. The one exception: if something you genuinely cannot proceed without is simply absent from the message — no dollar amount at all for a cost change, no way to tell which of several candidates is meant, no indication which phase a change applies to — don\'t guess at it. Reply with a short, specific question naming exactly what\'s missing, and don\'t call any tool yet; you\'ll get the answer as a follow-up message with this same context attached, so you can complete the action then. This is the exception, not the default — most messages have enough to act on immediately. When you reply after taking a real action, only state what you actually did — never invent or promise a review process, notification, or follow-up mechanism that doesn\'t exist; the change already happened, full stop.',
+      system: BOT_SYSTEM_PROMPT,
       messages: [
         { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nCurrent reminders:\n${JSON.stringify(reminders.items.filter((r) => !r.sent), null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; expenses shows current monthly figures):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
       ],
@@ -560,7 +576,7 @@ async function naturalizeBatch({ apiKey, items, rephraseClient }) {
   }
 }
 
-async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient }) {
+async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient, authPausePath }) {
   const rawText = message.text || '';
   const text = stripMention(rawText, botUsername);
 
@@ -619,6 +635,10 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     let newReminders = reminders;
     const rawReplies = [];
     let stillNeedsClarification = null;
+    // Set when a tool wrote to the Month Plan, i.e. when this turn is about to
+    // claim something reached the calendar. runOnce uses it to actually check
+    // before saying so, instead of reporting success for an in-memory mutation.
+    let touchedCalendar = false;
 
     for (const toolUse of toolUses) {
       if (toolUse.name === 'get_calendar_events') {
@@ -627,6 +647,10 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
       }
       if (toolUse.name === 'get_upcoming_shows') {
         rawReplies.push(await getUpcomingShowsReply(toolUse.input, { apiKey, venuesToFollowPath, upcomingShowsCachePath, showsClient }));
+        continue;
+      }
+      if (toolUse.name === 'get_sync_status') {
+        rawReplies.push(syncStatusReply({ authPausePath, monthPlanEvents: newMonthPlanEvents, now }));
         continue;
       }
       const impl = TOOL_IMPL[toolUse.name];
@@ -643,11 +667,13 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         newMonthPlanEvents = result.monthPlanEvents;
         rawReplies.push(result.reply);
         if (result.needsClarification) stillNeedsClarification = result.reply;
+        else touchedCalendar = true;
       } else if (FAMILY_EVENT_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(newMonthPlanEvents, toolUse.input);
         newMonthPlanEvents = result.monthPlanEvents;
         rawReplies.push(result.reply);
         if (result.needsClarification) stillNeedsClarification = result.reply;
+        else touchedCalendar = true;
       } else if (ROUTINE_OVERRIDE_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(newRoutineOverrides, toolUse.input);
         newRoutineOverrides = result.overrides;
@@ -678,10 +704,16 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         // Thursday recap lets health change a suggestion.
         const result = impl(healthContext);
         rawReplies.push(result.reply);
-      } else {
+      } else if (TODO_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(newTodos, toolUse.input, owner);
         newTodos = result.todos;
         rawReplies.push(result.reply);
+      } else {
+        // Previously the todos branch was the unconditional `else`, so a newly
+        // added tool that anyone forgot to put in a name-set would be called
+        // with the to-do list as its state and quietly corrupt it. Unroutable
+        // is a bug to record, not a to-do to write.
+        appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: `unrouted_tool:${toolUse.name}` });
       }
     }
 
@@ -699,10 +731,11 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders,
         reply: rawReplies.join('\n'),
         pendingClarification: { question: stillNeedsClarification, originalText: livePending ? livePending.originalText : rawText, askedAt: now.toISOString() },
+        touchedCalendar,
       };
     }
 
-    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, reply: rawReplies.join('\n'), pendingClarification: null };
+    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, reply: rawReplies.join('\n'), pendingClarification: null, touchedCalendar };
   } catch (err) {
     appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: `llm_error:${err.message}` });
     return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: livePending };
@@ -716,6 +749,154 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
 function helpText(rawText) {
   const heard = rawText ? ` (heard: "${rawText}")` : '';
   return `Couldn't process that${heard} — try \`new: <title>\`, \`<n> done\`, \`<n> +<count>\`, \`list\`, or ask a question.`;
+}
+
+// Sectioned rather than one long paragraph (2026-08-12). Same rules as before,
+// same wording where the wording was load-bearing — but tool selection happens
+// across ~23 tools, and an undifferentiated wall of prose gave every rule equal
+// weight, which showed up as the bot picking plausible-but-wrong tools and
+// missing the second half of two-part asks. The truthfulness rule is first
+// because it is the one that must never lose.
+const BOT_SYSTEM_PROMPT = `You manage a shared household's to-do list, weekly goals, dining plan, calendar events, and long-term financial plan, over Telegram, for Kevin and Hanna.
+
+## The rule that outranks everything else
+When you reply after taking a real action, state ONLY what actually happened. Never invent or promise a review process, notification, sync, or follow-up mechanism that doesn't exist — your edits are real and immediate, full stop.
+Never explain a failure you have not verified. If someone says an event is missing from their calendar, isn't showing up, or that you didn't really add it: call get_sync_status and report what it says. Do NOT guess at causes like calendar visibility settings, app refresh, or a stale event id, and do not re-add an event that is already on the plan to "fix" it.
+Do not fabricate data that isn't in the state provided below.
+
+## Reading the message
+Today's date, the current state, and the last few exchanges in the group are provided below. Use that recent conversation to resolve references like "that," "it," or unstated context in a follow-up — e.g. if the prior exchange set a dining plan and this message says "actually make it 6pm," apply the time to that same plan.
+If the message clearly asks for more than one distinct thing ("add milk to the list and what's the budget status"), call more than one tool in this same turn rather than handling only the first.
+
+## Questions (change nothing)
+If the message is a question answerable from current state, call the relevant read-only tool and answer conversationally: list_todos, get_dining_plan, get_budget_status, get_savings_goals, get_decisions, get_calendar_events, get_upcoming_shows, search_transactions, list_reminders, get_sync_status.
+- Shows, concerts, comedy nights → get_upcoming_shows (it checks the household's followed venues, not a general search).
+- Whether a specific charge/merchant is in a budget, or a category's individual line items → search_transactions, not a guess from aggregate pace numbers. It only covers the current cycle; say so when that matters.
+- Anyone's schedule, "my schedule," "what's on the calendar" → get_calendar_events. Hanna's calendar IS readable (shared into Kevin's Google account). Never claim you lack access to it. Kevin's work calendar is deliberately excluded.
+
+## Dining (3 routine occasions: family_dinner, date_night, weekend_social)
+Defaults are Wed/Fri/Sat respectively, but see the dining routine in context — they can be rescheduled.
+A dining plan has two states: a live suggestion (nothing stored, recomputed each time) and a confirmed pick (stored, pushed to Google Calendar).
+- Asked what the plan or suggestion is → get_dining_plan.
+- Explicitly confirming or booking a specific choice → set_dinner_plan. Only then.
+- If they give a time ("5pm", "7:30") or duration ("for an hour"), pass time/durationHours so the calendar event lands on the right slot instead of a default 2-hour block.
+- Moving which weekday a routine occasion falls on ("move family dinner to Thursdays") → set_routine_day. Future scheduling only; it does not touch an already-confirmed plan.
+
+## One-off events (anything that is not one of the 3 dining occasions)
+An appointment, school event, trip note, dinner with friends, poker night, any other one-off → add_family_event.
+- Resolve relative days ("tomorrow", "Thursday", "next Friday") into an explicit YYYY-MM-DD using today's date as the anchor.
+- kind "family" = social/spend (shows on the Month Plan). kind "schedule" = appointments/logistics (Google Calendar only). Classify from the title and pass kind; if genuinely ambiguous, ask.
+- Only pass time if they gave an unambiguous one (explicit AM/PM, or 24-hour). A general event has no "always evening" assumption to fall back on.
+- If they gave a time range ("7-11"), pass the start as time and the length as durationHours.
+- If it repeats weekly, pass recurrenceWeeks.
+- Cancelling a dining plan (by occasion) or a family event (by date, plus title if more than one that day) → remove_event. Never guess which event if ambiguous — ask.
+
+## Reminders vs to-dos
+"Remind me..." or any request for a reminder → add_reminder, never add_todo.
+A to-do sits on the shared Planner list until done. A reminder proactively pings the group once, on its date, and never appears on the Planner list.
+"What reminders do we have" → list_reminders. Cancelling one before it fires → cancel_reminder. Never guess which one if several plausibly match — ask.
+Use delete_todo (not mark_done) when a to-do is no longer relevant rather than finished.
+
+## Money and the real financial plan
+These tools REALLY change the plan, immediately — there is no review step.
+- A change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase) → update_phase_expense. Use the phases list in context to pick the right phaseId(s) and to see current expense labels for renaming.
+- There is no way to schedule a cost that changes on a future date. Set today's real current rate and expect to be told again when it actually changes.
+- A narrative ask instead of a dollar figure (an open question, a decision to track) → log_decision.
+Never simply apologize that you can't do something financial — one of these two almost always applies.
+
+## Defaults, and the one time to ask instead
+Prefer a reasonable default over a question: today's date as anchor, a default duration, an existing label.
+Ask only when something you genuinely cannot proceed without is absent — no dollar amount at all for a cost change, no way to tell which of several candidates is meant, no indication which phase applies. Then reply with a short, specific question naming exactly what is missing and call no tool; the answer arrives as a follow-up message with this same context attached, so you can finish the action then.
+This is the exception, not the default. Most messages have enough to act on immediately.`;
+
+// How many times one Telegram message may crash dispatch before the batch is
+// allowed to move past it. Three is enough to ride out a transient API blip
+// while still bounding the damage from a genuinely unprocessable message.
+const MAX_MESSAGE_ATTEMPTS = 3;
+
+function bumpMessageAttempts(attemptsPath, updateId) {
+  if (!attemptsPath) return 1;
+  let counts = {};
+  try {
+    counts = JSON.parse(fs.readFileSync(attemptsPath, 'utf8'));
+  } catch {
+    counts = {};
+  }
+  const next = (Number(counts[updateId]) || 0) + 1;
+  counts[updateId] = next;
+  // Only the recent tail matters; this file is bookkeeping, not history.
+  const keys = Object.keys(counts).sort((a, b) => Number(a) - Number(b));
+  if (keys.length > 50) for (const k of keys.slice(0, keys.length - 50)) delete counts[k];
+  try {
+    writeJson(attemptsPath, counts);
+  } catch {
+    // Bookkeeping must never be the reason a message fails to process.
+  }
+  return next;
+}
+
+/**
+ * Answers "why isn't it on my calendar?" with facts instead of a guess.
+ *
+ * This tool exists because of a real exchange: told an event wasn't showing up,
+ * the bot invented two explanations in a row (check the calendar is visible; a
+ * stale event id) while the actual cause — expired Google auth, sync paused for
+ * three days — was sitting in a file it never read.
+ */
+export function syncStatusReply({ authPausePath, monthPlanEvents, now = new Date() }) {
+  const pause = readCalendarAuthPause(authPausePath);
+  const unsynced = countUnsyncedEvents(monthPlanEvents);
+  const backlog = unsynced > 0
+    ? ` ${unsynced} saved event${unsynced === 1 ? '' : 's'} ${unsynced === 1 ? 'has' : 'have'} not reached Google yet.`
+    : ' Everything saved has reached Google.';
+
+  if (!pause) {
+    return `Google Calendar sync is working.${backlog}`;
+  }
+  const hours = pauseAgeHours(pause, now);
+  const downFor = hours >= 24 ? `${Math.round(hours / 24)} day(s)` : `${hours} hour(s)`;
+  return [
+    `Google Calendar sync is DOWN (auth expired, down for ${downFor}).${backlog}`,
+    'Anything I add is saved to the Month Plan but is not reaching your calendars.',
+    'Fix on the desktop: node scripts/calendar-auth-setup.mjs --reauth-only',
+  ].join(' ');
+}
+
+/**
+ * Sync right now, for a turn that just wrote an event, so the reply can be
+ * about reality. Returns a coarse status rather than the raw result — the
+ * reply only needs to know which of three true things to say.
+ *
+ * Never throws: a calendar problem must not cost the user their reply.
+ */
+async function syncNowForReply(args) {
+  const syncStep = args.calendarSyncStepFn || runCalendarSyncStep;
+  try {
+    const result = await syncStep({ ...args, logPath: args.logPath || telegramPollLogPath() });
+    if (result?.paused) return { state: 'down' };
+    if (result?.skipped && result?.error) return { state: 'failed' };
+    if (result?.skipped) return { state: 'unconfigured' };
+    return { state: 'synced' };
+  } catch (err) {
+    return { state: 'failed', error: err?.message || String(err) };
+  }
+}
+
+/**
+ * The honest trailing line. `synced` and `unconfigured` add nothing — the
+ * former because the tool's own "Added ✓" is now backed by a real write, the
+ * latter because a household that never set up Calendar doesn't need to hear
+ * about it on every event.
+ */
+export function calendarCaveatText(status) {
+  if (!status) return null;
+  if (status.state === 'down') {
+    return '⚠️ Saved to the Month Plan, but Google Calendar sync is down right now — this will NOT show up on your calendar until that is fixed. I have flagged it.';
+  }
+  if (status.state === 'failed') {
+    return '⚠️ Saved to the Month Plan, but the sync to Google Calendar did not go through just now. I will retry automatically.';
+  }
+  return null;
 }
 
 export async function runOnce(opts) {
@@ -769,6 +950,7 @@ export async function runOnce(opts) {
   const sentReplies = [];
   const processedTexts = [];
   let lastMessageId = null;
+  let touchedCalendar = false;
 
   for (const update of updatesResponse.result) {
     const updateId = update.update_id;
@@ -788,8 +970,9 @@ export async function runOnce(opts) {
 
     try {
       const result = await dispatchMessage({
-        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient,
+        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient, authPausePath: args.authPausePath || CALENDAR_AUTH_PAUSE_PATH,
       });
+      if (result.touchedCalendar) touchedCalendar = true;
       todos = result.todos;
       monthPlanEvents = result.monthPlanEvents;
       // set_routine_day mutates the overrides object in place and
@@ -819,8 +1002,27 @@ export async function runOnce(opts) {
       appendJsonl(args.conversationLogPath, conversationEntry);
       recentConversation = [...recentConversation, conversationEntry].slice(-6);
     } catch (err) {
-      // Leave the offset before this message so it's retried next run —
-      // a failure here must not silently skip a real user message.
+      // Leave the offset before this message so it's retried next run — a
+      // failure here must not silently skip a real user message.
+      //
+      // But "retry forever" is its own failure: this catch used to discard
+      // `err` entirely and break, so a message that reliably threw would block
+      // every later message indefinitely with no trace anywhere. Record it,
+      // and after MAX_MESSAGE_ATTEMPTS give up on that one message and let the
+      // batch move past it, rather than wedging the whole bot on it.
+      const attempts = bumpMessageAttempts(args.messageAttemptsPath, updateId);
+      appendJsonl(args.unparsedPath, {
+        at: new Date().toISOString(),
+        text: message.text || '',
+        reason: `dispatch_error:${err?.message || err}`,
+        updateId,
+        attempts,
+      });
+      if (attempts >= MAX_MESSAGE_ATTEMPTS) {
+        appendPollLog(args.logPath || telegramPollLogPath(), `giving up on update ${updateId} after ${attempts} failed attempts: ${err?.message || err}`);
+        maxSafeUpdateId = updateId; // advance past the poison message
+        continue;
+      }
       break;
     }
   }
@@ -836,10 +1038,33 @@ export async function runOnce(opts) {
   // exactly one message (unambiguous); with several, a combined reply isn't
   // "in response to" any one of them specifically, so it's posted as a
   // fresh message instead.
+  // Persisted BEFORE the reply is composed, because the calendar sync below
+  // reads this file — and because a reply that says an event is on the
+  // calendar has to be a statement about something that actually happened.
+  // Previously this write came after the send, and sync ran later still, in
+  // the loop; there was no ordering in which "Added ✓" could have been checked.
+  const monthPlanEventsChanged = JSON.stringify(monthPlanEvents) !== monthPlanEventsSnapshot;
+  if (monthPlanEventsChanged && !args.dryRun) {
+    writeJson(args.monthPlanEventsPath, monthPlanEvents);
+  }
+
+  // Only for turns that actually wrote an event — a budget question shouldn't
+  // pay for a Calendar round-trip.
+  let calendarStatus = null;
+  if (touchedCalendar && monthPlanEventsChanged && !args.dryRun) {
+    calendarStatus = await syncNowForReply(args);
+  }
+
   let combinedReply = null;
   if (sentReplies.length) {
     const items = sentReplies.map((rawReply, i) => ({ userText: processedTexts[i], rawReply }));
     combinedReply = await naturalizeBatch({ apiKey, items, rephraseClient: args.rephraseClient });
+    // Appended AFTER naturalizeBatch on purpose: that step rewrites replies
+    // through an LLM, and a caveat about a broken integration is exactly the
+    // kind of hedge a "make this sound natural" pass likes to smooth away.
+    // This sentence has to survive verbatim.
+    const caveat = calendarCaveatText(calendarStatus);
+    if (caveat) combinedReply = `${combinedReply}\n\n${caveat}`;
   }
 
   // `args.telegramClient || !args.updatesFixture` mirrors every other
@@ -867,15 +1092,10 @@ export async function runOnce(opts) {
     if (fs.existsSync(buildScript)) spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });
   }
 
-  // No build-data.mjs regen for month_plan_events.json — unlike todos.json,
-  // it's never bundled into data.js; the dashboard reads it live via
-  // dashboard-server.mjs's API instead (see Part 2's design). The dashboard
-  // server and this poller both write with the same atomic temp-file-then-
-  // rename pattern and neither depends on the other running.
-  const monthPlanEventsChanged = JSON.stringify(monthPlanEvents) !== monthPlanEventsSnapshot;
-  if (monthPlanEventsChanged && !args.dryRun) {
-    writeJson(args.monthPlanEventsPath, monthPlanEvents);
-  }
+  // (month_plan_events.json is written earlier, before the reply is composed —
+  // see the sync-verified reply block above. No build-data.mjs regen for it:
+  // unlike todos.json it's never bundled into data.js; the dashboard reads it
+  // live via dashboard-server.mjs's API instead.)
 
   // Read live by the dashboard too (see dashboard-server.mjs's own
   // /api/dining-routine-overrides route) so a bot-side reschedule shows up
@@ -970,7 +1190,9 @@ export async function runPollLoop(opts = {}) {
       appendPollLog(logPath, `iteration ${iteration} ERROR: ${err.message || err}`);
     }
     try {
-      const calResult = await calendarSyncFn();
+      // runOnceOpts carries the telegram env path / injected clients, which the
+      // sync step needs so a pause can actually reach the group chat.
+      const calResult = await calendarSyncFn({ ...runOnceOpts, logPath });
       if (!calResult.skipped) {
         appendPollLog(logPath, `iteration ${iteration} calendar sync: +${calResult.created} ~${calResult.updated} -${calResult.deleted}`);
       }
@@ -990,37 +1212,87 @@ export async function runPollLoop(opts = {}) {
 // file yet), and never lets a Calendar API problem fail the poll itself —
 // to-dos/dining are the poll's job and must keep working either way.
 //
-// invalid_grant / revoked refresh tokens are sticky: we write a pause file
-// under ~/.longterm/ and skip further sync attempts (no console.error spam
-// every ~25s that flashes a node.exe window). Re-auth via
-// calendar-auth-setup.mjs, then delete the pause file (or just succeed once).
+// invalid_grant / revoked refresh tokens back off rather than stopping dead: we
+// write a pause file under ~/.longterm/ carrying a `retryAfter`, so we're not
+// hammering Google every ~25s (which flashed a node.exe window), but sync still
+// retries on an escalating 6h/12h/24h schedule and heals itself the moment the
+// token works again. The previous version checked the pause *before* every
+// attempt and cleared it only *after* a success, which made it unreachable by
+// construction — sync stayed dead for three days and told nobody.
+//
+// Two things must therefore always happen on a pause: it must expire, and it
+// must be audible (Telegram alert on first failure, then at most daily).
 export async function runCalendarSyncStep(opts = {}) {
   const envPath = opts.envPath || CALENDAR_ENV_PATH;
   const pausePath = opts.authPausePath || CALENDAR_AUTH_PAUSE_PATH;
   const logPath = opts.logPath || telegramPollLogPath();
   const syncFn = opts.syncFn || (() => runCalendarSync({}));
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const alertFn = opts.alertFn || defaultPauseAlert;
 
   if (!fs.existsSync(envPath)) return { skipped: true };
-  if (readCalendarAuthPause(pausePath)) {
-    return { skipped: true, paused: true };
+
+  const existingPause = readCalendarAuthPause(pausePath);
+  if (isCalendarAuthPauseActive(existingPause, now)) {
+    // Logged every time, not once ever. The single "PAUSED" line the old code
+    // wrote scrolled out of a log that appends a heartbeat every 25 seconds,
+    // so "is sync working?" had no answer anywhere.
+    appendPollLog(logPath, `calendar sync paused until ${existingPause.retryAfter} (auth): ${existingPause.reason}`);
+    await maybeAlertPaused({ pause: existingPause, pausePath, logPath, alertFn, now, opts });
+    return { skipped: true, paused: true, retryAfter: existingPause.retryAfter };
   }
+
   try {
     const result = await syncFn();
+    if (existingPause) appendPollLog(logPath, 'calendar sync RECOVERED — auth working again, pause cleared');
     clearCalendarAuthPause(pausePath);
     return result;
   } catch (err) {
     const message = err?.message || String(err);
     if (isGoogleAuthFailure(err)) {
-      const alreadyPaused = !!readCalendarAuthPause(pausePath);
-      writeCalendarAuthPause(pausePath, message);
-      if (!alreadyPaused) {
-        appendPollLog(logPath, `calendar sync PAUSED (auth): ${message} — re-auth with node scripts/calendar-auth-setup.mjs then delete ${pausePath}`);
-      }
-      return { skipped: true, paused: true, error: message };
+      const pause = writeCalendarAuthPause(pausePath, message, { now, previous: existingPause });
+      appendPollLog(logPath, `calendar sync PAUSED (auth, failure #${pause.failureCount}, retry after ${pause.retryAfter}): ${message} — fix with: node scripts/calendar-auth-setup.mjs --reauth-only`);
+      await maybeAlertPaused({ pause, pausePath, logPath, alertFn, now, opts });
+      return { skipped: true, paused: true, error: message, retryAfter: pause.retryAfter };
     }
     appendPollLog(logPath, `calendar sync ERROR: ${message}`);
     return { skipped: true, error: message };
   }
+}
+
+// A failure to alert must never fail the poll, and must never fail the sync
+// step either — same containment rule the sync step itself lives under.
+async function maybeAlertPaused({ pause, pausePath, logPath, alertFn, now, opts }) {
+  if (!shouldAlertForPause(pause, now)) return;
+  try {
+    const monthPlanDoc = readMonthPlanForAlert(opts.monthPlanEventsPath);
+    const text = buildPauseAlertText(pause, { unsyncedCount: countUnsyncedEvents(monthPlanDoc), now });
+    await alertFn(text, opts);
+    recordCalendarAuthPauseAlert(pausePath, now);
+    appendPollLog(logPath, 'calendar sync pause alert sent to Telegram');
+  } catch (err) {
+    appendPollLog(logPath, `calendar sync pause alert FAILED to send: ${err?.message || err}`);
+  }
+}
+
+function readMonthPlanForAlert(monthPlanEventsPath) {
+  const target = monthPlanEventsPath || path.join(repoDataDir, 'month_plan_events.json');
+  try {
+    return JSON.parse(fs.readFileSync(target, 'utf8'));
+  } catch {
+    return { events: {} };
+  }
+}
+
+// Resolves the bot token the same way runOnce does (the telegram env file),
+// rather than process.env — the scheduled task doesn't export these.
+async function defaultPauseAlert(text, opts = {}) {
+  const envValues = opts.updatesFixture ? {} : readLocalEnv(opts.envPath || telegramEnvPath());
+  const token = opts.token || envValues.TELEGRAM_BOT_TOKEN;
+  const chatId = opts.groupChatId || envValues.TELEGRAM_GROUP_CHAT_ID;
+  if (!token || !chatId) throw new Error('no telegram token/chat id available for pause alert');
+  const client = opts.telegramClient || callTelegram;
+  await client(token, 'sendMessage', { chat_id: chatId, text });
 }
 
 async function main() {

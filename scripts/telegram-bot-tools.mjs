@@ -370,21 +370,53 @@ export function add_family_event(monthPlanEvents, { date, title, time, recurrenc
   const recurrenceId = weeks > 1 ? `${date}|${trimmedTitle.toLowerCase()}` : null;
   const budget = familyEventBudgetFields(trimmedTitle, resolvedKind);
   let lastDate = date;
+  let added = 0;
+  let duplicates = 0;
   for (let w = 0; w < weeks; w += 1) {
     const d = new Date(`${date}T00:00:00`);
     d.setDate(d.getDate() + w * 7);
     const occDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const event = { source: 'manual', kind: resolvedKind, name: trimmedTitle, ...budget, time: resolvedTime, ...(resolvedDuration ? { durationHours: resolvedDuration } : {}), ...(recurrenceId ? { recurrenceId } : {}) };
+    // Appending unconditionally used to mean an event could be stored twice —
+    // which is what happened when the model re-called this tool after being
+    // told the event wasn't showing up. Re-asking for something already on the
+    // plan should be a no-op, not a second calendar entry.
+    if (isDuplicateEvent(monthPlanEvents.events[occDate], event)) {
+      duplicates += 1;
+      lastDate = occDate;
+      continue;
+    }
     monthPlanEvents.events[occDate] = [...(monthPlanEvents.events[occDate] || []), event];
     lastDate = occDate;
+    added += 1;
   }
   const timeLabel = resolvedTime ? ` at ${formatHHMMForDisplay(resolvedTime)}` : '';
   const kindLabel = resolvedKind === 'schedule' ? 'schedule' : 'social';
   const hostNote = budget.hosting ? ` · ~$${budget.cost} hosting groceries` : '';
+  if (added === 0) {
+    return {
+      monthPlanEvents,
+      reply: `Already on the plan — ${trimmedTitle} (${date}${timeLabel}). Nothing added.`,
+      duplicate: true,
+    };
+  }
+  const dupeNote = duplicates > 0 ? ` (${duplicates} already on the plan, skipped)` : '';
   const reply = weeks > 1
-    ? `Added ✓ ${trimmedTitle}${timeLabel} (${kindLabel}${hostNote}), weekly for ${weeks} weeks starting ${date} (through ${lastDate})`
+    ? `Added ✓ ${trimmedTitle}${timeLabel} (${kindLabel}${hostNote}), weekly for ${weeks} weeks starting ${date} (through ${lastDate})${dupeNote}`
     : `Added ✓ ${trimmedTitle} (${date}${timeLabel}, ${kindLabel}${hostNote})`;
   return { monthPlanEvents, reply };
+}
+
+/**
+ * Same thing, already planned? Name + time is the identity that matters —
+ * kind/cost can legitimately differ (a re-add that reclassifies), and matching
+ * on the whole object would let a trivial field difference create a duplicate.
+ */
+function isDuplicateEvent(existingList, event) {
+  if (!Array.isArray(existingList)) return false;
+  const name = String(event.name || '').trim().toLowerCase();
+  return existingList.some((e) => String(e?.name || '').trim().toLowerCase() === name
+    && (e?.time || null) === (event.time || null));
 }
 
 // Cancels a dining plan or family event. Occasion resolves like
@@ -690,6 +722,11 @@ export function get_health_status(healthContext) {
 // already does for FINANCIAL_TOOL_NAMES.
 export const HEALTH_TOOL_NAMES = new Set(['get_health_status']);
 
+// Explicit rather than "whatever didn't match another set" — dispatch used to
+// fall through to the todos branch for any unclassified tool, which would hand
+// a brand-new tool the to-do list as its state and silently mangle it.
+export const TODO_TOOL_NAMES = new Set(['add_todo', 'mark_done', 'delete_todo', 'log_weekly_goal_count', 'list_todos']);
+
 // Tool names whose implementation writes to monthPlanEvents directly by an
 // explicit date, with no diningContext/occasion involved — a third distinct
 // call shape from DINING_TOOL_NAMES's (monthPlanEvents, args, diningContext).
@@ -906,6 +943,11 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'get_sync_status',
+    description: "Report whether the Month Plan is actually reaching Google Calendar right now, and how many saved events have not synced. Call this ANY time someone says an event is missing from their calendar, isn't showing up, or that you didn't really add something. Never speculate about why an event is missing (calendar visibility, app refresh, a stale event id) — check with this tool and report what it says. Read-only.",
+    input_schema: { type: 'object', properties: {} },
+  },
+  {
     name: 'add_reminder',
     description: 'Set a one-off reminder that proactively pings the household Telegram group on a specific date (day-level only -- no specific time-of-day support). Use this, and never add_todo, whenever the user says "remind me..." or asks for a reminder: a to-do sits on the shared Planner list until done, a reminder proactively announces itself once on its date and never appears on the Planner list.',
     input_schema: {
@@ -940,7 +982,9 @@ export const TOOL_DEFS = [
 // here, it needs a live Google Calendar API call (via
 // scripts/calendar-read.mjs), not a pure in-memory transform, so
 // telegram-bot-poll.mjs's dispatch handles it as a special case before
-// falling through to the TOOL_IMPL lookup below.
+// falling through to the TOOL_IMPL lookup below. get_sync_status is the same:
+// it reads the auth-pause file on disk, which this module deliberately cannot
+// do (no fs import — every tool here is a pure transform).
 
 // Tool names whose implementation operates on monthPlanEvents + a read-only
 // diningContext bundle, not on todos + owner — telegram-bot-poll.mjs's

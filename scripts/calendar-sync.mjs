@@ -41,7 +41,7 @@ function parseArgs(argv) {
   return args;
 }
 
-function readLocalEnv(filePath) {
+export function readLocalEnv(filePath) {
   const values = {};
   if (!fs.existsSync(filePath)) throw new Error(`Missing env file: ${filePath}`);
   for (const line of fs.readFileSync(filePath, 'utf8').split(/\r?\n/)) {
@@ -353,12 +353,60 @@ export function readCalendarAuthPause(pausePath) {
   }
 }
 
-export function writeCalendarAuthPause(pausePath, reason) {
-  fs.mkdirSync(path.dirname(pausePath), { recursive: true });
-  fs.writeFileSync(pausePath, `${JSON.stringify({
-    at: new Date().toISOString(),
+// Escalating waits between retries after an auth failure. The point of the
+// pause is only to stop hammering Google (and flashing a node.exe window)
+// every ~25 seconds — it was never meant to disable sync permanently.
+const AUTH_RETRY_BACKOFF_MS = [6 * 60 * 60 * 1000, 12 * 60 * 60 * 1000, 24 * 60 * 60 * 1000];
+
+export function authRetryBackoffMs(failureCount) {
+  const idx = Math.min(Math.max(failureCount, 1), AUTH_RETRY_BACKOFF_MS.length) - 1;
+  return AUTH_RETRY_BACKOFF_MS[idx];
+}
+
+/**
+ * Whether a pause should still suppress a sync attempt.
+ *
+ * A pause record with no `retryAfter` is a pre-backoff (legacy) file, and is
+ * deliberately treated as EXPIRED rather than active: the original design had
+ * no way out at all — the pause was checked before every attempt and cleared
+ * only after a success, so once written it could never retry itself back to
+ * health. Reading legacy files as expired lets an existing stale pause heal on
+ * the first run of this code instead of needing a manual delete.
+ */
+export function isCalendarAuthPauseActive(pause, now = new Date()) {
+  if (!pause) return false;
+  if (!pause.retryAfter) return false;
+  const retryAt = Date.parse(pause.retryAfter);
+  if (Number.isNaN(retryAt)) return false;
+  return now.getTime() < retryAt;
+}
+
+export function writeCalendarAuthPause(pausePath, reason, opts = {}) {
+  const now = opts.now instanceof Date ? opts.now : new Date();
+  const previous = opts.previous !== undefined ? opts.previous : readCalendarAuthPause(pausePath);
+  const failureCount = (Number(previous?.failureCount) || 0) + 1;
+  const record = {
+    // `at` is when the outage STARTED (preserved across re-arms) — that's what
+    // "how long has this been broken" questions actually want.
+    at: previous?.at || now.toISOString(),
+    lastFailureAt: now.toISOString(),
     reason: String(reason || 'Google auth failed'),
-  }, null, 2)}\n`, 'utf8');
+    failureCount,
+    retryAfter: new Date(now.getTime() + authRetryBackoffMs(failureCount)).toISOString(),
+    lastAlertAt: previous?.lastAlertAt || null,
+  };
+  fs.mkdirSync(path.dirname(pausePath), { recursive: true });
+  fs.writeFileSync(pausePath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  return record;
+}
+
+/** Stamps that we've told the humans, so alerts don't repeat every retry. */
+export function recordCalendarAuthPauseAlert(pausePath, now = new Date()) {
+  const pause = readCalendarAuthPause(pausePath);
+  if (!pause) return null;
+  const record = { ...pause, lastAlertAt: now.toISOString() };
+  fs.writeFileSync(pausePath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  return record;
 }
 
 export function clearCalendarAuthPause(pausePath) {

@@ -108,6 +108,40 @@ Monarch MCP runs from `~/.longterm/monarch-mcp-venv` (signed Python), **not**
 Oura refresh tokens are **single-use** — always persist the new refresh token
 after a refresh or the next pull breaks.
 
+### A dead integration that still reports success
+The worst one so far, and the reason several rules below exist. Google auth
+expired; calendar sync wrote a pause file, logged one line, and **skipped every
+subsequent attempt** — the pause was checked *before* each try and cleared only
+*after* a success, so it could never retry itself back to health. Sync stayed
+dead for three days while the bot kept replying "Added ✓" to every event,
+because the local `month_plan_events.json` write really did succeed. Nothing in
+the reply path could see Google at all. Rules that follow from it:
+
+- **A confirmation must describe a verified write.** "Added ✓" for an event is a
+  claim that it reached Google Calendar — so sync runs *before* the reply is
+  composed, and the reply reflects what actually happened (`syncNowForReply` /
+  `calendarCaveatText` in `telegram-bot-poll.mjs`). Never report success for an
+  in-memory mutation.
+- **A broken integration alerts, it does not just log.** One line in a log that
+  appends a heartbeat every 25 seconds is not a notification. Pause →
+  Telegram message on first failure, then at most daily
+  (`calendar-sync-alerts.mjs`).
+- **A pause must expire.** Back off (6h/12h/24h), never latch. A retry that can
+  only happen after a success that can only happen after a retry is a deadlock.
+  A pause record with no `retryAfter` is read as *expired*, so stale files heal.
+- **Never speculate about why something is missing.** Asked why the event wasn't
+  on the calendar, the bot invented "check the calendar is visible" and "a stale
+  event id" — both wrong — and re-added the event, creating a duplicate. There
+  is a `get_sync_status` tool that reads real state; the system prompt requires
+  calling it instead of guessing.
+- **Re-auth with `--reauth-only`.** Plain `node scripts/calendar-auth-setup.mjs`
+  unconditionally creates a *new* "Family Planner" calendar and rewrites
+  `GOOGLE_CALENDAR_ID`, stranding every synced event on the old one and pointing
+  both phones at a dead calendar.
+- **Google OAuth "Testing" mode expires refresh tokens every 7 days.** Minted
+  Aug 2, dead Aug 9. The consent screen must stay **In production**; if auth
+  starts failing weekly again, check publishing status before debugging code.
+
 ### Telegram / Calendar
 - Hanna's calendar is readable via Kevin's OAuth (`GOOGLE_READ_CALENDAR_IDS`) —
   never tell her the bot lacks access to her schedule.
@@ -115,6 +149,8 @@ after a refresh or the next pull breaks.
 - Dining: `set_dinner_plan` only on explicit confirm; questions → `get_dining_plan`.
 - Direct `goals.json` edits by the bot are real and immediate — never invent a
   "pending review" step that doesn't exist.
+- `add_family_event` dedupes on name + date + time. A repeat ask is a no-op, not
+  a second calendar entry.
 
 ---
 
@@ -136,12 +172,17 @@ after a refresh or the next pull breaks.
 npm run seed          # examples → data/ (never overwrites existing)
 npm run build         # data.js + goal-plan md
 npm run dev           # dashboard-server on 127.0.0.1
+npm test              # every data/test-*.mjs suite (also what CI runs)
+npm test -- calendar  # just the suites whose filename matches "calendar"
 node scripts/budget-tracking-pull.mjs
 node scripts/networth-pull.mjs
-node data/test-telegram-bot.mjs
-node data/test-budget-tracking-pull.mjs
-# plus other data/test-*.mjs suites as present
+node scripts/calendar-auth-setup.mjs --reauth-only   # refresh Google creds only
 ```
+
+Add new suites as `data/test-*.mjs` — the runner picks them up by filename, so
+nothing needs registering. CI runs `npm test` in full; for years it ran two
+hand-listed suites, which is how a test asserting a broken sync should stay
+silent went unnoticed.
 
 Scheduled Monarch pull: Windows task `LongtermDailyPull` (~09:30).
 
