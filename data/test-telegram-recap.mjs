@@ -150,6 +150,64 @@ await asyncTest('bundle includes budgetLineItems: every joint-tracker charge ove
   assert.equal(capturedBundle.budgetLineItems[0].amount, 489.26);
 });
 
+// The recap used to report a projected cycle total -- where spending lands if
+// nothing changes, which is a forecast of failure rather than a plan. Replaced
+// 2026-08-13 by the weekly rate that still hits the target, and only once the
+// cycle is half over.
+await asyncTest('bundle includes budgetGuidance past the cycle midpoint: the weekly rate that still hits target', async () => {
+  const dir = path.join(tmpRoot, 'budget-guidance');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        // SUNDAY is 2026-08-02 in this suite; a 7/15 start puts us 18 days into
+        // a 30-day cycle -- past halfway, so advice is due. $4,500 spent of a
+        // $5,500 target with 12 days left is well over pace.
+        cycleStart: '2026-07-15',
+        cycleDays: 30,
+        weeks: [{ actual: 4500, days: 18 }],
+        categories: [],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+
+  const g = capturedBundle.budgetGuidance;
+  assert.ok(g, 'guidance should be present past the midpoint');
+  assert.equal(g.pastHalfway, true);
+  assert.ok(g.requiredWeekly > 0, 'a weekly allowance for the rest of the cycle');
+  assert.ok(g.currentWeekly > g.requiredWeekly, 'overspending here, so the ask is to slow down');
+  assert.equal(g.daysRemaining, 12);
+});
+
+await asyncTest('budgetGuidance is null before the cycle midpoint, so the recap gives no advice', async () => {
+  const dir = path.join(tmpRoot, 'budget-guidance-early');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-07-30', // 3 days in on SUNDAY -- far too early
+        cycleDays: 30,
+        weeks: [{ actual: 3000, days: 3 }],
+        categories: [],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+
+  assert.equal(capturedBundle.budgetGuidance.pastHalfway, false, 'the prompt reads this as "say nothing yet"');
+});
+
 await asyncTest('bundle includes budgetRefunds: every joint-tracker refund this cycle, and refunds are excluded from budgetLineItems', async () => {
   const dir = path.join(tmpRoot, 'budget-refunds');
   const paths = writeFixture(dir, {

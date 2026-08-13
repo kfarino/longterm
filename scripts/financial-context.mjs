@@ -23,6 +23,55 @@ export function computeTrackerPacing(tracker) {
   return { total, projected, variance };
 }
 
+/**
+ * "How do we still hit the target?" — the forward-looking counterpart to
+ * computeTrackerPacing's backward-looking projection.
+ *
+ * computeTrackerPacing answers "where do we land if nothing changes", which is
+ * a forecast of failure, not a plan: it extrapolates the daily average and has
+ * no relationship to the goal. This answers the actual question — what rate
+ * gets us to target from here, and how far that is from the current rate.
+ *
+ * Expressed WEEKLY, not daily: the household reads this in a recap that lands
+ * twice a week, so a weekly allowance is the unit they can act on.
+ *
+ * Deliberately separate from computeTrackerPacing, which is a byte-for-byte
+ * duplicate of the dashboard's inline math and must not drift (AGENTS.md §2).
+ *
+ * Returns null when the tracker has no cycle configured — a made-up deadline is
+ * worse than no advice.
+ */
+export function budgetGuidance(tracker, now = new Date()) {
+  if (!tracker || !tracker.cycleStart || !tracker.cycleDays) return null;
+  const start = new Date(`${tracker.cycleStart}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+
+  const cycleDays = tracker.cycleDays;
+  const rawElapsed = Math.floor((now - start) / 86400000);
+  const daysElapsed = Math.min(Math.max(rawElapsed, 1), cycleDays);
+  const daysRemaining = Math.max(0, cycleDays - rawElapsed);
+  const remaining = tracker.target - tracker.total;
+
+  const currentWeekly = (tracker.total / daysElapsed) * 7;
+  // Null once the cycle is over — there is no "rest of the cycle" to pace.
+  const requiredWeekly = daysRemaining > 0 ? (remaining / daysRemaining) * 7 : null;
+
+  return {
+    daysElapsed,
+    daysRemaining,
+    remaining,
+    currentWeekly,
+    requiredWeekly,
+    // Advice only past the midpoint (Kevin, 2026-08-13): earlier than that a
+    // few days of noise reads as a trend, and there is still plenty of runway,
+    // so corrective advice is premature and becomes background noise.
+    pastHalfway: rawElapsed >= cycleDays / 2,
+    // Based on the actionable comparison, not the old projection: can we keep
+    // spending the way we have been and still land on target?
+    onTrack: requiredWeekly == null ? remaining >= 0 : requiredWeekly >= currentWeekly,
+  };
+}
+
 // Reads budget_tracking.json + goals.json's phase-derived target (same
 // "target is derived from the current phase's expense line, never a
 // separately hand-typed number" rule build-data.mjs already enforces) and

@@ -1297,6 +1297,45 @@ test('get_budget_status: reports what is left and how many days are left', () =>
   assert.match(reply, /12 days to go/, 'cycle started 7/25, runs 30 days, today is 8/12');
 });
 
+// The projection said "you'll land at $5,205" -- a forecast of failure with no
+// relationship to the goal. Replaced 2026-08-13 with the rate that still hits
+// the target, weekly (the recap carrying it lands twice a week) and only past
+// the cycle midpoint (before that, noise reads as a trend).
+test('get_budget_status: past halfway and off track, says what weekly rate hits the target', () => {
+  const { reply } = get_budget_status(budgetCtx(), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /hold to about \$702\/wk/, '$1,203 left over 12 days = ~$702/wk');
+  assert.match(reply, /running \$1,282\/wk/, '$3,297 over 18 elapsed days = ~$1,282/wk');
+  assert.match(reply, /trim about \$580\/wk/);
+  assert.doesNotMatch(reply, /Projected/, 'the passive projection is gone');
+});
+
+test('get_budget_status: before the cycle midpoint, gives no advice at all', () => {
+  // Day 7 of 30 -- same overspend, but too early for it to mean anything.
+  const { reply } = get_budget_status(budgetCtx(), {}, new Date('2026-08-01T12:00:00'));
+  assert.match(reply, /\$1,203 left with 23 days to go\./, 'still reports the figures');
+  assert.doesNotMatch(reply, /hold to about/, 'no corrective advice before halfway');
+  assert.doesNotMatch(reply, /trim/);
+});
+
+test('get_budget_status: on track past halfway says so instead of prescribing a cut', () => {
+  const { reply } = get_budget_status(budgetCtx({ total: 1500 }), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /on track/);
+  assert.doesNotMatch(reply, /trim/);
+});
+
+test('get_budget_status: already over target says so rather than suggesting a rate', () => {
+  const { reply } = get_budget_status(budgetCtx({ total: 5000 }), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /\$500 over budget/);
+  assert.match(reply, /Already past target/);
+  assert.doesNotMatch(reply, /\/wk/, 'no weekly allowance when there is none left');
+});
+
+test('get_budget_status: a finished cycle gives no forward advice', () => {
+  const { reply } = get_budget_status(budgetCtx(), {}, new Date('2026-09-30T12:00:00'));
+  assert.match(reply, /0 days to go/);
+  assert.doesNotMatch(reply, /hold to about/, 'no rest of cycle to pace');
+});
+
 test('get_budget_status: says "over budget" rather than a negative amount left', () => {
   const { reply } = get_budget_status(budgetCtx({ total: 5000 }), {}, new Date('2026-08-12T12:00:00'));
   assert.match(reply, /\$500 over budget/);

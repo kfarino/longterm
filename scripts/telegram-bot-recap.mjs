@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { get_dining_plan, listOpenItems } from './telegram-bot-tools.mjs';
-import { loadFinancialContext } from './financial-context.mjs';
+import { loadFinancialContext, budgetGuidance } from './financial-context.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { telegramEnvPath } from './longterm-paths.mjs';
@@ -245,6 +245,10 @@ function diningSummary(monthPlanEvents, diningContext, now = null) {
 function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now, healthContext, healthAffectsPlans }) {
   return {
     budgetStatus: financialContext.budgetStatus,
+    // Forward-looking "what rate still hits the target", weekly because this
+    // recap is what carries it. Null before the cycle's midpoint, which is the
+    // signal to the prompt that it's too early to give corrective advice.
+    budgetGuidance: budgetGuidance(financialContext.budgetStatus?.joint, now),
     budgetLineItems: budgetLineItemsOver100(financialContext),
     budgetRefunds: budgetRefundsThisCycle(financialContext),
     decisions: financialContext.decisions,
@@ -260,7 +264,11 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
 
 const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly four labeled sections in this order: "Budget:", "Todos:", "Planning:", "Health:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
 
-Budget: report the joint tracker's pace using real dollar figures (amount logged so far, projected cycle total, target — e.g. "$1,270 logged, projected $5,442 vs a $5,500 target", from budgetStatus.joint), then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
+Budget: report the joint tracker using real dollar figures from budgetStatus.joint — amount logged so far, the target, and what's left (target minus logged). Do NOT report a projected cycle total; a projection of where spending lands if nothing changes is not what the household wants to know.
+
+What they want is how to still hit the target. When budgetGuidance is present (it is null before the cycle is half over, and null is the signal to give no advice at all — just report the figures above), state it in weekly terms: budgetGuidance.requiredWeekly is what they can spend per week from here to land on target, budgetGuidance.currentWeekly is what they have actually been running, and budgetGuidance.daysRemaining is how long is left. If onTrack is true, say so plainly and briefly. If it is false, say what to hold to per week and roughly how much that means trimming (currentWeekly minus requiredWeekly). If remaining is negative they are already past target for the cycle — say that plainly rather than suggesting a rate. Keep this to a line or two; it is guidance, not a lecture, and never invent a number that is not in budgetGuidance.
+
+Then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
 
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 

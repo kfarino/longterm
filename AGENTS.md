@@ -98,8 +98,13 @@ or hide spend — see `detectJointRefunds` tests.
 
 ### File:// and dual math
 Dashboard may load `data.js` via script tag; live Month Plan / ratings use
-`dashboard-server.mjs`. `financial-context.mjs` deliberately duplicates
-dashboard pacing math — change one, update the other (or tests will lie).
+`dashboard-server.mjs`. `financial-context.mjs`'s **`computeTrackerPacing`**
+deliberately duplicates dashboard pacing math — change one, update the other
+(or tests will lie). `budgetGuidance` in the same file is **not** part of that
+duplication: it is the bot's forward-looking "what weekly rate still hits the
+target", has no dashboard counterpart, and derives from passed-through
+`cycleStart`/`cycleDays` rather than altering the pacing function. Keep new
+derived figures out of `computeTrackerPacing` for that reason.
 
 ### Secrets and Windows
 Monarch MCP runs from `~/.longterm/monarch-mcp-venv` (signed Python), **not**

@@ -20,6 +20,9 @@
 // different inputs. telegram-bot-poll.mjs's dispatch branches on which
 // shape a given tool name expects.
 import { slotForOccasion, recommendForSlot, TIER_MIDPOINT, familyEventBudgetFields } from './dining-recommendation.mjs';
+// Pure function; financial-context.mjs does no work at import time, so this
+// keeps the tools module's "no fs of its own" property intact.
+import { budgetGuidance } from './financial-context.mjs';
 
 // Financial Q&A tools (get_budget_status/get_savings_goals/get_decisions,
 // added 2026-07-31) are read-only over a financialContext bundle (see
@@ -626,14 +629,13 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
   const { joint, personal, travel } = financialContext.budgetStatus;
   const paceLine = (label, t) => {
     if (!t) return `${label}: no data yet.`;
-    const pace = t.variance > 0 ? 'over pace' : 'on pace';
     const left = t.target - t.total;
-    const days = cycleDaysRemaining(t, now);
+    const g = budgetGuidance(t, now);
     const leftLabel = left >= 0
       ? `${fmtMoney(left)} left`
       : `${fmtMoney(Math.abs(left))} over budget`;
-    const daysLabel = days == null ? '' : ` with ${days} day${days === 1 ? '' : 's'} to go`;
-    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}. Projected ${fmtMoney(t.projected)} (${pace}, ${t.variance >= 0 ? '+' : ''}${fmtMoney(t.variance)}).`;
+    const daysLabel = g ? ` with ${g.daysRemaining} day${g.daysRemaining === 1 ? '' : 's'} to go` : '';
+    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${guidanceSentence(g)}`;
   };
   const personalLines = Object.values(personal || {})
     .map((p) => paceLine(p.label || p.displayName || 'Personal', p))
@@ -651,19 +653,25 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
 }
 
 /**
- * Whole days left in a tracker's own cycle. Joint and personal run on
- * independent clocks (see CLAUDE.md), so this is per-tracker rather than a
- * single household month. Returns null when the tracker has no cycle
- * configured — better to omit the phrase than to state a made-up deadline.
+ * The "so how do we hit it" half of a budget line, or '' when it isn't useful.
+ *
+ * Silent before the cycle's midpoint (Kevin, 2026-08-13): early on, a few days
+ * of noise reads as a trend and there's still runway, so corrective advice is
+ * premature. Past halfway it's actionable, and it's phrased weekly because the
+ * recap that carries it lands twice a week.
+ *
+ * Replaces the old projection line, which extrapolated the daily average to a
+ * cycle total — a forecast with no relationship to the goal. "You'll land at
+ * $5,205" doesn't tell anyone what to do; "hold to $700/wk" does.
  */
-function cycleDaysRemaining(tracker, now) {
-  if (!tracker?.cycleStart || !tracker?.cycleDays) return null;
-  const start = new Date(`${tracker.cycleStart}T00:00:00`);
-  if (Number.isNaN(start.getTime())) return null;
-  const elapsedDays = Math.floor((now - start) / 86400000);
-  const remaining = tracker.cycleDays - elapsedDays;
-  if (!Number.isFinite(remaining)) return null;
-  return Math.max(0, remaining);
+function guidanceSentence(g) {
+  if (!g || !g.pastHalfway || g.daysRemaining === 0) return '';
+  if (g.remaining < 0) return ' Already past target for this cycle.';
+  const required = fmtMoney(g.requiredWeekly);
+  const current = fmtMoney(g.currentWeekly);
+  if (g.onTrack) return ` That's about ${required}/wk from here and you've been running ${current}/wk — on track.`;
+  const trim = fmtMoney(g.currentWeekly - g.requiredWeekly);
+  return ` To hit it, hold to about ${required}/wk from here — you've been running ${current}/wk, so trim about ${trim}/wk.`;
 }
 
 // Read-only — reports every savings goal's progress percentage.
