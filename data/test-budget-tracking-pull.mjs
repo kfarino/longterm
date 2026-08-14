@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { refreshFavoritePlaces, computeFavoritePlacesHistory } from '../scripts/budget-tracking-pull.mjs';
+import { refreshFavoritePlaces, computeFavoritePlacesHistory, collapsePendingPostedDiningDuplicates } from '../scripts/budget-tracking-pull.mjs';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-tracking-pull-test-'));
 
@@ -155,6 +155,85 @@ test('a charge reassigned to joint (Sora on Kevin personal) lands on Month Plan 
   assert.equal(matches.length, 1);
   assert.equal(matches[0].amount, 240);
   assert.equal(matches[0].includeOnMonthPlan, true);
+});
+
+test('same-day pending→posted with a NEW Monarch id collapses to one calendar entry', () => {
+  // DoorDash / Mendocino 2026-08-13: Monarch minted a second id on post without
+  // shifting the calendar date — old days > 0 gate left both on Month Plan.
+  const dir = path.join(tmpRoot, 'same-day-new-id');
+  const { rawPath, outPath } = writeFixture(dir);
+  const today = new Date('2026-08-13T00:00:00Z');
+
+  refreshFavoritePlaces(rawPath, outPath, [
+    txn({ id: 'pending-same', date: '2026-08-11', amount: -39.24, merchant: 'Mendocino Farms' }),
+  ], today, JOINT_LABELS);
+
+  refreshFavoritePlaces(rawPath, outPath, [
+    txn({ id: 'posted-same', date: '2026-08-11', amount: -39.24, merchant: 'Mendocino Farms' }),
+  ], today, JOINT_LABELS);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const matches = result.recentDiningActivity.filter((a) => a.merchant === 'Mendocino Farms');
+  assert.equal(matches.length, 1, 'same-day new Monarch id must collapse');
+  assert.equal(matches[0].id, 'posted-same');
+  assert.equal(matches[0].amount, 39.24);
+});
+
+test('end-of-pass heal collapses seed + two Monarch ids already in recentDiningActivity', () => {
+  const dir = path.join(tmpRoot, 'heal-existing-dupes');
+  const account = 'CREDIT CARD (...8387)';
+  const { rawPath, outPath } = writeFixture(dir, [
+    {
+      id: 'seed-hanna-2026-08-06-DoorDash-48.95',
+      date: '2026-08-06',
+      merchant: 'DoorDash',
+      amount: 48.95,
+      matchedPlace: null,
+      account,
+      includeOnMonthPlan: true,
+    },
+    {
+      id: 'id-a',
+      date: '2026-08-06',
+      merchant: 'DoorDash',
+      amount: 48.95,
+      matchedPlace: null,
+      account,
+      includeOnMonthPlan: true,
+    },
+    {
+      id: 'id-b',
+      date: '2026-08-06',
+      merchant: 'DoorDash',
+      amount: 48.95,
+      matchedPlace: null,
+      account,
+      includeOnMonthPlan: true,
+    },
+  ]);
+  const today = new Date('2026-08-13T00:00:00Z');
+  const personal = new Set([account]);
+
+  // No new transactions — heal must still collapse orphans left from prior pulls.
+  refreshFavoritePlaces(rawPath, outPath, [], today, JOINT_LABELS, personal);
+
+  const result = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  const matches = result.recentDiningActivity.filter((a) => a.merchant === 'DoorDash');
+  assert.equal(matches.length, 1, 'seed + two Monarch ids must heal to one');
+  assert.ok(!String(matches[0].id).startsWith('seed-'), 'prefer a real Monarch id over seed');
+  assert.equal(matches[0].amount, 48.95);
+});
+
+test('collapsePendingPostedDiningDuplicates unit: seed+ids and distinct amounts', () => {
+  const account = ' More Mastercard (...9054)';
+  const collapsed = collapsePendingPostedDiningDuplicates([
+    { id: 'seed-x', date: '2026-08-11', merchant: 'Mendocino Farms', amount: 39.24, account },
+    { id: 'm1', date: '2026-08-11', merchant: 'Mendocino Farms', amount: 39.24, account },
+    { id: 'lunch', date: '2026-08-11', merchant: 'Tu Madre', amount: 54.69, account },
+    { id: 'dinner', date: '2026-08-11', merchant: 'Tu Madre', amount: 10.01, account },
+  ]);
+  assert.equal(collapsed.filter((e) => e.merchant === 'Mendocino Farms').length, 1);
+  assert.equal(collapsed.filter((e) => e.merchant === 'Tu Madre').length, 2);
 });
 
 test('planningCost becomes observed avgSpend when a favorite has no visit history', () => {
@@ -349,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -451,6 +530,39 @@ test('cardBalancesForLabels matches mapped display names and keeps Monarch signe
   const joint = cardBalancesForLabels(accounts, [' More Mastercard (...9054)']);
   assert.equal(joint[0].balance, -2000);
   assert.deepEqual(cardBalancesForLabels(accounts, ['CREDIT CARD (...9999)']), []);
+});
+
+test('applyManualCharges merges a not-yet-in-Monarch personal charge into week + category totals', () => {
+  const personalCycleStart = new Date('2026-08-01T12:00:00');
+  const personalState = {
+    kevin: {
+      buckets: new Map([[1, 167.75]]),
+      categoryTotals: new Map([['Shopping', 167.75]]),
+      categoryTransactions: new Map([['Shopping', [{ date: '2026-08-11', merchant: 'Alex Crane', amount: 167.75 }]]]),
+    },
+  };
+  applyManualCharges(personalState, [
+    { owner: 'kevin', date: '2026-08-13', merchant: 'RAM', amount: 79, category: 'Shopping' },
+  ], personalCycleStart);
+  assert.equal(personalState.kevin.buckets.get(1), 246.75);
+  assert.equal(personalState.kevin.categoryTotals.get('Shopping'), 246.75);
+  assert.equal(personalState.kevin.categoryTransactions.get('Shopping').length, 2);
+});
+
+test('applyManualCharges skips when Monarch already has the same date+merchant+amount', () => {
+  const personalCycleStart = new Date('2026-08-01T12:00:00');
+  const personalState = {
+    kevin: {
+      buckets: new Map([[1, 79]]),
+      categoryTotals: new Map([['Shopping', 79]]),
+      categoryTransactions: new Map([['Shopping', [{ date: '2026-08-13', merchant: 'RAM', amount: 79 }]]]),
+    },
+  };
+  applyManualCharges(personalState, [
+    { owner: 'kevin', date: '2026-08-13', merchant: 'RAM', amount: 79, category: 'Shopping' },
+  ], personalCycleStart);
+  assert.equal(personalState.kevin.buckets.get(1), 79);
+  assert.equal(personalState.kevin.categoryTransactions.get('Shopping').length, 1);
 });
 
 console.log('All budget-tracking-pull tests passed.');

@@ -241,8 +241,9 @@ export function cardBalancesForLabels(accounts, labels) {
 //
 // Durable overrides also live in data/transaction_overrides.json (amountRules
 // for pending→posted tip corrections Chase already shows, categoryRules,
-// reassignments). Code defaults below still apply; the JSON file wins on
-// matching amountRules / adds extra category+reassignment rows.
+// reassignments, manualCharges for not-yet-in-Monarch personal spend). Code
+// defaults below still apply; the JSON file wins on matching amountRules /
+// adds extra category+reassignment+manualCharge rows.
 const MERCHANT_CATEGORY_OVERRIDES = [
   { match: 'r+d', category: 'Restaurants & Bars' },
   // Farmers-market produce billed under the Sprout LA hospitality parent
@@ -268,7 +269,7 @@ function overridesPath() {
 
 export function loadTransactionOverrides(filePath = overridesPath()) {
   if (!fs.existsSync(filePath)) {
-    return { categoryRules: [], reassignments: [], amountRules: [] };
+    return { categoryRules: [], reassignments: [], amountRules: [], manualCharges: [] };
   }
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -276,9 +277,13 @@ export function loadTransactionOverrides(filePath = overridesPath()) {
       categoryRules: raw.categoryRules || [],
       reassignments: raw.reassignments || [],
       amountRules: raw.amountRules || [],
+      // Phantom / not-yet-in-Monarch spend that should still hit a personal
+      // tracker (e.g. cash/Venmo RAM buy). Merged after the Monarch loop;
+      // skipped when Monarch already has the same date+merchant+amount.
+      manualCharges: raw.manualCharges || [],
     };
   } catch {
-    return { categoryRules: [], reassignments: [], amountRules: [] };
+    return { categoryRules: [], reassignments: [], amountRules: [], manualCharges: [] };
   }
 }
 
@@ -287,6 +292,55 @@ export function merchantName(transaction) {
   if (typeof transaction?.merchant === 'string') return transaction.merchant;
   if (transaction?.merchant?.name) return transaction.merchant.name;
   return transaction?.plaidName || '';
+}
+
+/** Prefer a real Monarch id over a hand seed id when collapsing duplicates. */
+export function preferDiningActivityId(a, b) {
+  const aSeed = String(a || '').startsWith('seed-');
+  const bSeed = String(b || '').startsWith('seed-');
+  if (a && !aSeed && (!b || bSeed)) return a;
+  if (b && !bSeed && (!a || aSeed)) return b;
+  return b || a || null;
+}
+
+/**
+ * Same real charge can appear multiple times in recentDiningActivity when
+ * Monarch mints a new id on post (sometimes same calendar day) or a seed
+ * entry was added before Monarch caught up. Collapse by merchant+account+
+ * amount within ±2 days. Distinct same-day visits with different amounts
+ * (e.g. Tu Madre lunch + dinner) stay separate.
+ */
+export function diningActivityPendingPostedMatch(a, b) {
+  if (!a || !b) return false;
+  if (a.merchant !== b.merchant || a.account !== b.account) return false;
+  if (Math.abs(Number(a.amount) - Number(b.amount)) > 0.009) return false;
+  if (a.id && b.id && a.id === b.id) return false;
+  const days = Math.abs(
+    (new Date(`${a.date}T12:00:00`) - new Date(`${b.date}T12:00:00`)) / 86400000,
+  );
+  return days <= 2;
+}
+
+export function collapsePendingPostedDiningDuplicates(entries) {
+  const kept = [];
+  const sorted = [...entries].sort(
+    (a, b) => a.date.localeCompare(b.date) || String(a.id || '').localeCompare(String(b.id || '')),
+  );
+  for (const entry of sorted) {
+    const match = kept.find((e) => diningActivityPendingPostedMatch(e, entry));
+    if (!match) {
+      kept.push({ ...entry });
+      continue;
+    }
+    match.date = match.date < entry.date ? match.date : entry.date;
+    match.amount = Number(entry.amount);
+    match.merchant = entry.merchant || match.merchant;
+    match.account = entry.account || match.account;
+    if (entry.matchedPlace != null) match.matchedPlace = entry.matchedPlace;
+    if (entry.includeOnMonthPlan) match.includeOnMonthPlan = true;
+    match.id = preferDiningActivityId(match.id, entry.id);
+  }
+  return kept;
 }
 
 export function categoryName(transaction, overrides = null) {
@@ -323,6 +377,36 @@ export function spendAmount(transaction, overrides = null) {
   const value = Number(transaction.amount);
   if (!Number.isFinite(value) || value >= 0) return 0; // only negative (debit) amounts are spend
   return Math.abs(value);
+}
+
+/**
+ * Merge not-yet-in-Monarch personal charges into the per-owner accumulators.
+ * Skips when Monarch already logged the same date + merchant + amount on that
+ * owner (so a later pull that catches the real charge does not double-count).
+ */
+export function applyManualCharges(personalState, manualCharges, personalCycleStart) {
+  for (const charge of manualCharges || []) {
+    const ownerId = charge?.owner;
+    const state = ownerId && personalState[ownerId];
+    if (!state) continue;
+    const amount = Math.round(Math.abs(Number(charge.amount)) * 100) / 100;
+    if (!(amount > 0) || !charge.date || !charge.merchant) continue;
+    const catDisplay = charge.category || 'Uncategorized';
+    const summary = { date: charge.date, merchant: charge.merchant, amount };
+    const already = [...state.categoryTransactions.values()].flat().some(
+      (t) => t.date === summary.date
+        && String(t.merchant).toLowerCase() === String(summary.merchant).toLowerCase()
+        && Math.abs(Number(t.amount) - amount) < 0.01,
+    );
+    if (already) continue;
+    const txnDate = new Date(`${charge.date}T12:00:00`);
+    const b = weekBucket(txnDate, personalCycleStart);
+    if (b < 0) continue;
+    state.buckets.set(b, Math.round(((state.buckets.get(b) || 0) + amount) * 100) / 100);
+    state.categoryTotals.set(catDisplay, Math.round(((state.categoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
+    if (!state.categoryTransactions.has(catDisplay)) state.categoryTransactions.set(catDisplay, []);
+    state.categoryTransactions.get(catDisplay).push(summary);
+  }
 }
 
 /** Monarch: spend is negative, credits positive. Trip actual is net spend (credits reduce it). */
@@ -601,7 +685,9 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
       if (Math.abs(entry.amount - roundedAmount) > 0.009) return false;
       if (id && entry.id && entry.id === id) return false;
       const days = Math.abs((new Date(`${entry.date}T12:00:00`) - new Date(`${txn.date}T12:00:00`)) / 86400000);
-      return days > 0 && days <= 2;
+      // Include same-day (days === 0): Monarch sometimes mints a new id on
+      // post without shifting the calendar date (DoorDash ×3 / Mendocino ×2).
+      return days <= 2;
     });
     if (pendingPosted) {
       pendingPosted.date = pendingPosted.date < txn.date ? pendingPosted.date : txn.date;
@@ -611,8 +697,8 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
       pendingPosted.matchedPlace = matchFavorite(merchant, raw)?.name ?? null;
       if (id) {
         if (pendingPosted.id && byId.get(pendingPosted.id) === pendingPosted) byId.delete(pendingPosted.id);
-        pendingPosted.id = id;
-        byId.set(id, pendingPosted);
+        pendingPosted.id = preferDiningActivityId(pendingPosted.id, id);
+        byId.set(pendingPosted.id, pendingPosted);
       }
       continue;
     }
@@ -635,9 +721,13 @@ export function refreshFavoritePlaces(rawPath, outPath, transactions, today, joi
 
   const cutoff = new Date(today);
   cutoff.setDate(cutoff.getDate() - DINING_LOOKBACK_DAYS);
-  const recentDiningActivity = [...existing.recentDiningActivity, ...newEntries]
-    .filter((a) => new Date(a.date) >= cutoff && monthPlanDiningAccountOk(a, jointLabels, personalLabels))
-    .sort((a, b) => a.date.localeCompare(b.date));
+  // End-of-pass heal: collapse any seed+new-id / pending→posted duplicates
+  // already sitting in the accumulating array (same-day or ±2 days). Inline
+  // pendingPosted above only catches collisions against *incoming* txns.
+  const recentDiningActivity = collapsePendingPostedDiningDuplicates(
+    [...existing.recentDiningActivity, ...newEntries]
+      .filter((a) => new Date(a.date) >= cutoff && monthPlanDiningAccountOk(a, jointLabels, personalLabels)),
+  ).sort((a, b) => a.date.localeCompare(b.date) || String(a.id || '').localeCompare(String(b.id || '')));
 
   const places = raw.map((f) => {
     const visits = recentDiningActivity.filter((a) => a.matchedPlace === f.name);
@@ -931,6 +1021,9 @@ async function main() {
       }
       // Anything else (Ally, Vanguard, Trinet, Ascensus, etc.) isn't a spend card — ignored here.
     }
+
+    const overrides = loadTransactionOverrides();
+    applyManualCharges(personalState, overrides.manualCharges, personalCycleStart);
 
     const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
 
