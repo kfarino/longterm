@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer, writeJsonAtomic, ratePlace, rateVenue, readFavoritePlaces, liveNationPullConfigured } from '../scripts/dashboard-server.mjs';
+import { createServer, writeJsonAtomic, ratePlace, rateVenue, readFavoritePlaces, liveNationPullConfigured, readShowTasteMatches } from '../scripts/dashboard-server.mjs';
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-server-test-'));
 const eventsPath = path.join(tmpDir, 'month_plan_events.json');
@@ -291,6 +291,34 @@ await test('GET /api/favorite-places reflects a file written directly on disk (e
 await test('readFavoritePlaces returns the empty default shape (not throws) when the file is corrupt JSON', () => {
   fs.writeFileSync(favoritePlacesPath, '{not valid json');
   assert.deepEqual(readFavoritePlaces(favoritePlacesPath), { places: [], recentDiningActivity: [] });
+});
+
+await test('readShowTasteMatches serves show-matches-latest.json instead of live-rescoring', async () => {
+  // A long-running `npm run dev` otherwise keeps the in-memory scorer from
+  // process start, so a rematch (graded likes, smaller LN perk) never reaches
+  // the Dining + Shows tab until someone restarts Node. The match file is the
+  // weekly artifact; the dashboard should display it.
+  const tasteDir = fs.mkdtempSync(path.join(os.tmpdir(), 'show-matches-taste-'));
+  const cachePath = path.join(tasteDir, 'upcoming_shows_cache.json');
+  const show = { act: 'Test Bistro Band', venue: 'The Test Room', date: '2026-09-10', promoter: 'Live Nation' };
+  writeJsonAtomic(cachePath, { shows: [show] });
+  writeJsonAtomic(path.join(tasteDir, 'show-matches-latest.json'), {
+    matchedAt: '2026-08-14T16:21:02.400Z',
+    shows: [{
+      ...show,
+      kind: 'music',
+      scores: { kevin: { linked: true, score: 73, basis: 'like', liveNationBoost: 4 } },
+      us: { score: 73 },
+    }],
+  });
+  const result = await readShowTasteMatches({
+    upcomingShowsCachePath: cachePath,
+    tasteDir,
+    skipClaude: true,
+    limit: 15,
+  });
+  assert.equal(result.shows[0].scores.kevin.score, 73, 'must use the rematch file, not a live rescore');
+  assert.equal(result.shows[0].scores.kevin.liveNationBoost, 4);
 });
 
 await test('liveNationPullConfigured is false when the env file is missing or the key is blank', () => {

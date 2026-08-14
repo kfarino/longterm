@@ -117,7 +117,21 @@ export function liveNationPullConfigured(envPath = ticketmasterEnvPath()) {
   return false;
 }
 
-/** Live likeness % for Dining + Shows — hybrid floors + Claude; Hanna may be unlinked. */
+function readCachedShowMatches(tasteDir) {
+  const p = path.join(tasteDir, 'show-matches-latest.json');
+  if (!fs.existsSync(p)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+    if (Array.isArray(data.shows) && data.shows.length) return data;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** Dining + Shows likeness: prefer the weekly rematch file so a long-running
+ * `npm run dev` does not keep serving the scorer that was in memory at
+ * process start. Live-rescore only when that file is missing. */
 export async function readShowTasteMatches({
   upcomingShowsCachePath = defaultUpcomingShowsCachePath,
   tasteDir = defaultSpotifyTasteDir,
@@ -128,7 +142,8 @@ export async function readShowTasteMatches({
   const cache = readUpcomingShowsCache(upcomingShowsCachePath);
   const shows = showsFromCache(cache);
   const ownerIds = ownerIdsFromGoals(goalsPath);
-  const result = await scoreShowsLikeness({
+  const cached = readCachedShowMatches(tasteDir);
+  const result = cached || await scoreShowsLikeness({
     shows,
     ownerIds,
     tasteDir,
