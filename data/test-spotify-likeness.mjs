@@ -1,18 +1,23 @@
 // Longterm/data/test-spotify-likeness.mjs
 //
 // Permanent regression test (NOT a temp task script — do not delete). Covers
-// spotify-likeness.mjs's Live Nation ticket-connection boost (2026-08-08) —
-// a flat +15 applied on top of the existing follow/like/playlist floors,
-// the Claude ticket-estimate path, and the comedy path, whenever a show's
-// `promoter` field is 'Live Nation'. Run with:
+// spotify-likeness.mjs scoring: graded like/playlist floors (BM25-style log
+// saturation, cap 5), honest pitch copy, and a small Live Nation re-ranker
+// gated on real Spotify hits (follow/like/playlist) — not Claude/comedy
+// estimates. Run with:
 //   node Longterm/data/test-spotify-likeness.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  DIGEST_VERSION,
   LIVE_NATION_BOOST,
+  SCORE_FLOORS,
+  gradedSourceFloor,
+  likenessCacheKey,
   liveNationBoost,
+  pitchForFloor,
   scoreShowsLikeness,
 } from '../scripts/spotify-likeness.mjs';
 
@@ -20,12 +25,53 @@ function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
 console.log('test-spotify-likeness.mjs');
 
-test('liveNationBoost is LIVE_NATION_BOOST for a Live Nation promoter, 0 otherwise', () => {
-  assert.equal(liveNationBoost('Live Nation'), LIVE_NATION_BOOST);
-  assert.equal(LIVE_NATION_BOOST, 15);
-  assert.equal(liveNationBoost('Some Other Promoter'), 0);
-  assert.equal(liveNationBoost(null), 0);
-  assert.equal(liveNationBoost(undefined), 0);
+test('LIVE_NATION_BOOST is a small gated perk, not a flattening +15', () => {
+  assert.equal(LIVE_NATION_BOOST, 4);
+  assert.equal(liveNationBoost('Live Nation', 'follow'), LIVE_NATION_BOOST);
+  assert.equal(liveNationBoost('Live Nation', 'like'), LIVE_NATION_BOOST);
+  assert.equal(liveNationBoost('Live Nation', 'playlist'), LIVE_NATION_BOOST);
+  assert.equal(liveNationBoost('Live Nation', 'claude'), 0);
+  assert.equal(liveNationBoost('Live Nation', 'comedy'), 0);
+  assert.equal(liveNationBoost('Live Nation', 'comedy-venue'), 0);
+  assert.equal(liveNationBoost('Some Other Promoter', 'follow'), 0);
+  assert.equal(liveNationBoost(null, 'like'), 0);
+  assert.equal(liveNationBoost(undefined, 'follow'), 0);
+});
+
+test('graded like floors saturate at 5 tracks (1→68, 2→75, 3→79, 4→82, 5+→85)', () => {
+  assert.equal(gradedSourceFloor('liked', 1), 68);
+  assert.equal(gradedSourceFloor('liked', 2), 75);
+  assert.equal(gradedSourceFloor('liked', 3), 79);
+  assert.equal(gradedSourceFloor('liked', 4), 82);
+  assert.equal(gradedSourceFloor('liked', 5), 85);
+  assert.equal(gradedSourceFloor('liked', 12), 85);
+  assert.equal(SCORE_FLOORS.liked, 85);
+});
+
+test('graded playlist floors saturate at 5 tracks (1→62, 5+→78)', () => {
+  assert.equal(gradedSourceFloor('playlist', 1), 62);
+  assert.equal(gradedSourceFloor('playlist', 5), 78);
+  assert.equal(gradedSourceFloor('playlist', 9), 78);
+  assert.equal(SCORE_FLOORS.playlist, 78);
+});
+
+test('follow floor stays 92 regardless of trackCount', () => {
+  assert.equal(gradedSourceFloor('followed', 1), 92);
+  assert.equal(gradedSourceFloor('followed', 5), 92);
+  assert.equal(SCORE_FLOORS.followed, 92);
+});
+
+test('pitch names the evidence and does not say heavy for 1–2 likes', () => {
+  const one = pitchForFloor({ type: 'liked', artistName: 'Test Bistro Band', trackCount: 1 });
+  const two = pitchForFloor({ type: 'liked', artistName: 'Test Bistro Band', trackCount: 2 });
+  const five = pitchForFloor({ type: 'liked', artistName: 'Test Bistro Band', trackCount: 5 });
+  const follow = pitchForFloor({ type: 'followed', artistName: 'Test Bistro Band' });
+  assert.match(one, /1 saved track/i);
+  assert.doesNotMatch(one, /heavy/i);
+  assert.match(two, /2 saved tracks/i);
+  assert.doesNotMatch(two, /heavy/i);
+  assert.match(five, /heavy/i);
+  assert.match(follow, /follow/i);
 });
 
 function tmpDir(prefix) {
@@ -41,11 +87,22 @@ function noVenuesPath() {
   return path.join(tmpDir('spotify-likeness-no-venues-'), 'venues_to_follow.json');
 }
 
+function asEntry(entry, type) {
+  if (typeof entry === 'string') {
+    const src = { type };
+    if (type !== 'followed') src.trackCount = 3;
+    return { id: entry, name: entry, sources: [src] };
+  }
+  const src = { type };
+  if (entry.trackCount != null) src.trackCount = entry.trackCount;
+  return { id: entry.name, name: entry.name, sources: [src] };
+}
+
 function writeTaste(tasteDir, ownerId, { followed = [], liked = [], playlist = [] } = {}) {
   const artists = [
-    ...followed.map((name) => ({ id: name, name, sources: [{ type: 'followed' }] })),
-    ...liked.map((name) => ({ id: name, name, sources: [{ type: 'liked', trackCount: 3 }] })),
-    ...playlist.map((name) => ({ id: name, name, sources: [{ type: 'playlist', trackCount: 3 }] })),
+    ...followed.map((e) => asEntry(e, 'followed')),
+    ...liked.map((e) => asEntry(e, 'liked')),
+    ...playlist.map((e) => asEntry(e, 'playlist')),
   ];
   fs.writeFileSync(
     path.join(tasteDir, `${ownerId}-taste.json`),
@@ -53,34 +110,104 @@ function writeTaste(tasteDir, ownerId, { followed = [], liked = [], playlist = [
   );
 }
 
-await asyncTest('a playlist-floor show gets +15 added (not clamped) when Live Nation-promoted', async () => {
-  // Playlist floor is 78 (SCORE_FLOORS.playlist) — 78 + 15 = 93, comfortably
-  // under 100, so this proves the boost actually adds rather than just
-  // happening to land on the clamp ceiling (the followed floor, 92, would
-  // clamp at 107→100 and mask an off-by-N bug in the addition itself).
+await asyncTest('a 5-track playlist-floor show gets +4 when Live Nation-promoted', async () => {
   const tasteDir = tmpDir('spotify-likeness-floor-');
-  writeTaste(tasteDir, 'kevin', { playlist: ['Counting Crows'] });
+  writeTaste(tasteDir, 'kevin', { playlist: [{ name: 'Counting Crows', trackCount: 5 }] });
   const shows = [
     { act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' },
     { act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-17' }, // no promoter — control
   ];
   const payload = await scoreShowsLikeness({ shows, ownerIds: ['kevin'], tasteDir, venuesPath: noVenuesPath(), skipClaude: true });
   const [withLN, withoutLN] = payload.shows;
-  assert.equal(withLN.scores.kevin.score, 78 + 15, 'playlist floor (78) + Live Nation boost (15)');
+  assert.equal(withLN.scores.kevin.score, 78 + 4, 'playlist floor (78) + Live Nation boost (4)');
   assert.equal(withLN.scores.kevin.liveNation, true);
-  assert.equal(withLN.scores.kevin.liveNationBoost, 15);
+  assert.equal(withLN.scores.kevin.liveNationBoost, 4);
   assert.equal(withoutLN.scores.kevin.score, 78, 'no promoter tag means no boost');
   assert.equal(withoutLN.scores.kevin.liveNation, false);
   assert.equal(withoutLN.scores.kevin.liveNationBoost, 0);
 });
 
-await asyncTest('the boost clamps at 100 rather than overflowing', async () => {
+await asyncTest('follow + LN is 96, not clamped to 100', async () => {
   const tasteDir = tmpDir('spotify-likeness-clamp-');
   writeTaste(tasteDir, 'kevin', { followed: ['Counting Crows'] });
   const shows = [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' }];
   const payload = await scoreShowsLikeness({ shows, ownerIds: ['kevin'], tasteDir, venuesPath: noVenuesPath(), skipClaude: true });
   assert.ok(payload.shows[0].scores.kevin.score <= 100);
-  assert.equal(payload.shows[0].scores.kevin.score, 100, 'followed floor 92 + 15 = 107, clamps to 100');
+  assert.equal(payload.shows[0].scores.kevin.score, 96, 'followed floor 92 + 4 = 96');
+});
+
+await asyncTest('1-like + LN does not pin at 100 and does not outrank 5+ like without LN', async () => {
+  const tasteDir = tmpDir('spotify-likeness-grade-rank-');
+  writeTaste(tasteDir, 'kevin', {
+    liked: [
+      { name: 'One Save Act', trackCount: 1 },
+      { name: 'Heavy Like Act', trackCount: 5 },
+    ],
+  });
+  const shows = [
+    { act: 'One Save Act', venue: 'The Wiltern', date: '2026-09-10', promoter: 'Live Nation' },
+    { act: 'Heavy Like Act', venue: 'The Wiltern', date: '2026-09-17' },
+  ];
+  const payload = await scoreShowsLikeness({ shows, ownerIds: ['kevin'], tasteDir, venuesPath: noVenuesPath(), skipClaude: true });
+  const oneSave = payload.shows.find((s) => s.act === 'One Save Act').scores.kevin;
+  const heavy = payload.shows.find((s) => s.act === 'Heavy Like Act').scores.kevin;
+  assert.equal(oneSave.score, 68 + 4);
+  assert.ok(oneSave.score < 100, '1-like + LN must not pin at 100');
+  assert.equal(heavy.score, 85);
+  assert.ok(oneSave.score < heavy.score, 'LN must not invert a 1-save over a 5+ like');
+  assert.match(oneSave.pitch, /1 saved track/i);
+  assert.doesNotMatch(oneSave.pitch, /heavy/i);
+});
+
+await asyncTest('follow without LN outranks 1-like + LN', async () => {
+  const tasteDir = tmpDir('spotify-likeness-follow-rank-');
+  writeTaste(tasteDir, 'kevin', {
+    followed: ['Followed Act'],
+    liked: [{ name: 'One Save Act', trackCount: 1 }],
+  });
+  const shows = [
+    { act: 'Followed Act', venue: 'The Wiltern', date: '2026-09-10' },
+    { act: 'One Save Act', venue: 'The Wiltern', date: '2026-09-17', promoter: 'Live Nation' },
+  ];
+  const payload = await scoreShowsLikeness({ shows, ownerIds: ['kevin'], tasteDir, venuesPath: noVenuesPath(), skipClaude: true });
+  const follow = payload.shows.find((s) => s.act === 'Followed Act').scores.kevin;
+  const oneSaveLN = payload.shows.find((s) => s.act === 'One Save Act').scores.kevin;
+  assert.equal(follow.score, 92);
+  assert.equal(oneSaveLN.score, 72);
+  assert.ok(follow.score > oneSaveLN.score);
+});
+
+await asyncTest('Claude + LN keeps the badge but gets boost 0', async () => {
+  const tasteDir = tmpDir('spotify-likeness-claude-ln-');
+  const cachePath = path.join(tasteDir, 'likeness-cache.json');
+  writeTaste(tasteDir, 'kevin', {});
+  const act = 'Unknown Estimated Act';
+  const venue = 'The Wiltern';
+  const date = '2026-09-10';
+  const key = likenessCacheKey('kevin', act, venue, date, 'music');
+  fs.writeFileSync(cachePath, JSON.stringify({
+    [key]: {
+      score: 70,
+      pitch: 'Estimated fit from profile.',
+      reason: 'test',
+      digestVersion: DIGEST_VERSION,
+      profileBuiltAt: null,
+    },
+  }));
+  const shows = [{ act, venue, date, promoter: 'Live Nation' }];
+  const payload = await scoreShowsLikeness({
+    shows,
+    ownerIds: ['kevin'],
+    tasteDir,
+    cachePath,
+    venuesPath: noVenuesPath(),
+    skipClaude: true,
+  });
+  const score = payload.shows[0].scores.kevin;
+  assert.equal(score.basis, 'claude');
+  assert.equal(score.liveNation, true, 'LN badge stays on Claude estimates');
+  assert.equal(score.liveNationBoost, 0);
+  assert.equal(score.score, 70, 'Claude + LN must not receive the perk');
 });
 
 await asyncTest('an unlinked owner is unaffected by the Live Nation boost (still not linked)', async () => {
@@ -90,7 +217,7 @@ await asyncTest('an unlinked owner is unaffected by the Live Nation boost (still
   assert.equal(payload.shows[0].scores.kevin.score, null);
 });
 
-await asyncTest('a comedy show gets the Live Nation boost added to its venue-base score, without double-applying a venue-rating boost', async () => {
+await asyncTest('a comedy show keeps the LN badge but does not get the boost', async () => {
   // Comedy scoring never reads the taste artist list, but "connected"
   // (i.e. has a taste.json at all) is still checked before any kind-
   // specific branching — an owner with no taste file gets linked:false
@@ -102,9 +229,9 @@ await asyncTest('a comedy show gets the Live Nation boost added to its venue-bas
   const score = payload.shows[0].scores.kevin;
   assert.equal(score.basis, 'comedy-venue');
   assert.equal(score.venueBoost, 0, 'comedy never gets the venue-rating boost (already baked into its base score)');
-  assert.equal(score.liveNation, true);
-  assert.equal(score.liveNationBoost, 15);
-  assert.equal(score.score, 52 + 15, 'unrated-venue comedy base (52) + Live Nation boost (15)');
+  assert.equal(score.liveNation, true, 'LN badge stays on comedy');
+  assert.equal(score.liveNationBoost, 0);
+  assert.equal(score.score, 52, 'unrated-venue comedy base (52) + no LN perk');
 });
 
 console.log('All spotify-likeness tests passed.');

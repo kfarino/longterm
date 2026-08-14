@@ -69,7 +69,7 @@ export function actCandidates(act) {
 
 /**
  * Match one act against one owner's taste index.
- * @returns {null | { connected: true, hit: false }} | { connected: true, hit: true, type, label, score, artistName }}
+ * @returns {null | { connected: true, hit: false }} | { connected: true, hit: true, type, label, score, artistName, trackCount }}
  * Pass index=null for "not connected".
  */
 export function matchActForOwner(act, tasteIndex) {
@@ -89,6 +89,7 @@ export function matchActForOwner(act, tasteIndex) {
       score: src.score,
       artistName: artist.name,
       matchedAs: candidate,
+      trackCount: src.trackCount ?? null,
     };
   }
   return { connected: true, hit: false };

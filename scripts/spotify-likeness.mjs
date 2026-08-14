@@ -15,21 +15,39 @@ const defaultVenuesPath = path.join(repoRoot, 'data', 'venues_to_follow.json');
 
 export const SCORE_FLOORS = {
   followed: 92,
-  liked: 85,
-  playlist: 78,
+  liked: 85,     // 5+ liked tracks; fewer tracks grade lower via gradedSourceFloor
+  playlist: 78,  // 5+ playlist tracks
 };
 
 /** Max liked tracks from one artist that count toward digest ranking (stops Kanye/Drake pile-ups). */
 export const LIKED_TRACK_CAP = 5;
 
-/** Flat score bump when a show is Live Nation-promoted — Kevin has a
+/** Small re-ranker when a show is Live Nation-promoted — Kevin has a
  * personal connection who can often get free/discounted tickets to these.
- * A nudge on top of taste fit, not a floor: a show he'd genuinely dislike
- * doesn't jump to "must-go" just because the ticket is free. */
-export const LIVE_NATION_BOOST = 15;
+ * Gated on a real Spotify hit (follow/like/playlist) so it cannot flatten
+ * Claude estimates or invert a 1-save over a heavy like. The LN badge is
+ * independent of the numeric perk. */
+export const LIVE_NATION_BOOST = 4;
 
-export function liveNationBoost(promoter) {
-  return promoter === 'Live Nation' ? LIVE_NATION_BOOST : 0;
+const EXACT_SPOTIFY_BASES = new Set(['follow', 'like', 'playlist']);
+
+export function liveNationBoost(promoter, basis) {
+  if (promoter !== 'Live Nation') return 0;
+  if (!EXACT_SPOTIFY_BASES.has(basis)) return 0;
+  return LIVE_NATION_BOOST;
+}
+
+/** BM25-style log saturation, cap LIKED_TRACK_CAP.
+ * like: 1→68, 2→75, 3→79, 4→82, 5+→85
+ * playlist: 1→62 … 5+→78
+ * follow stays 92. */
+export function gradedSourceFloor(type, trackCount = 1) {
+  if (type === 'followed') return SCORE_FLOORS.followed;
+  const n = Math.min(Math.max(Number(trackCount) || 1, 1), LIKED_TRACK_CAP);
+  const t = Math.log(1 + n) / Math.log(1 + LIKED_TRACK_CAP);
+  if (type === 'liked') return Math.round(58 + 27 * t);
+  if (type === 'playlist') return Math.round(52 + 26 * t);
+  return null;
 }
 
 /** Bump when digest/profile scoring prompt changes so old Claude scores re-fetch. */
@@ -153,7 +171,7 @@ export function venueRatingBoost(rating) {
 function applyVenueBoost(scoreObj, venueInfo, promoter) {
   if (!scoreObj || typeof scoreObj.score !== 'number') return scoreObj;
   const boost = venueRatingBoost(venueInfo?.rating);
-  const lnBoost = liveNationBoost(promoter);
+  const lnBoost = liveNationBoost(promoter, scoreObj.basis);
   const total = boost + lnBoost;
   // Fold both boosts into one clamp — clamping them separately would lose
   // information whenever one alone pushed the score out of [0,100] (e.g. a
@@ -165,24 +183,25 @@ function applyVenueBoost(scoreObj, venueInfo, promoter) {
     score: next,
     venueRating: venueInfo?.rating ?? null,
     venueBoost: boost,
-    liveNation: lnBoost > 0,
+    liveNation: promoter === 'Live Nation',
     liveNationBoost: lnBoost,
   };
 }
 
 // Comedy never gets venueRatingBoost (already baked into
-// comedyVenueBaseScore, so applying it again would double-count) but still
-// needs the Live Nation boost.
+// comedyVenueBaseScore, so applying it again would double-count). LN badge
+// still shows; the numeric perk is gated off for comedy/Claude estimates.
 function applyLiveNationOnlyBoost(scoreObj, promoter) {
-  const lnBoost = liveNationBoost(promoter);
+  const lnBoost = liveNationBoost(promoter, scoreObj?.basis);
+  const isLN = promoter === 'Live Nation';
   if (!scoreObj) return scoreObj;
   if (!lnBoost || typeof scoreObj.score !== 'number') {
-    return { ...scoreObj, liveNation: false, liveNationBoost: 0 };
+    return { ...scoreObj, liveNation: isLN, liveNationBoost: 0 };
   }
   return {
     ...scoreObj,
     score: Math.max(0, Math.min(100, scoreObj.score + lnBoost)),
-    liveNation: true,
+    liveNation: isLN,
     liveNationBoost: lnBoost,
   };
 }
@@ -206,17 +225,26 @@ export function classifyShowKind(act, venue, venueInfo) {
   return 'music';
 }
 
-function pitchForFloor(hit) {
+export function pitchForFloor(hit) {
   const name = hit.artistName || 'This act';
-  if (hit.type === 'followed') return `${name} is on your follows — easy yes for a live night.`;
-  if (hit.type === 'liked') return `${name} shows up heavy in your likes — worth the ticket.`;
-  if (hit.type === 'playlist') return `${name} is on your playlists — solid live bet.`;
+  if (hit.type === 'followed') return `${name} is on your follows.`;
+  if (hit.type === 'liked') {
+    const n = Math.max(1, hit.trackCount || 1);
+    if (n >= LIKED_TRACK_CAP) return `${name} shows up heavy in your likes — worth the ticket.`;
+    if (n === 1) return `${name} has 1 saved track in your likes.`;
+    return `${name} has ${n} saved tracks in your likes.`;
+  }
+  if (hit.type === 'playlist') {
+    const n = Math.max(1, hit.trackCount || 1);
+    if (n === 1) return `${name} has 1 track on your playlists.`;
+    return `${name} has ${n} tracks on your playlists.`;
+  }
   return null;
 }
 
 function floorFromExactHit(hit) {
   if (!hit?.hit) return null;
-  const score = SCORE_FLOORS[hit.type];
+  const score = gradedSourceFloor(hit.type, hit.trackCount);
   if (score == null) return null;
   return {
     linked: true,
@@ -224,6 +252,7 @@ function floorFromExactHit(hit) {
     basis: hit.type === 'followed' ? 'follow' : hit.type === 'liked' ? 'like' : 'playlist',
     label: hit.label,
     artistName: hit.artistName || null,
+    trackCount: hit.trackCount ?? null,
     pitch: pitchForFloor(hit),
   };
 }
