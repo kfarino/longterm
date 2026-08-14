@@ -16,11 +16,10 @@ $ErrorActionPreference = 'Stop'
 #   ~/.longterm         (*.env — Monarch/Telegram/Calendar/Oura/Spotify/Ticketmaster)
 #   ~/.monarch-mcp      (Monarch MCP session.pickle)
 #   ~/.ssh              (keys if present)
-#   ~/.scrooge          (legacy leftover; cheap to keep if it exists)
 #
 # Intentionally NOT git-based. Rebuildable junk is skipped (venv, logs,
-# node_modules). Huge IDE/cache trees (.claude/.cursor/.local/.cache) are
-# NOT required to run Longterm and stay off the backup.
+# node_modules). Huge IDE/cache trees (.claude/.cursor/.local/.cache) and
+# legacy Scrooge are NOT required to run Longterm and stay off the backup.
 #
 # Exit 0 when the drive is absent (scheduled task stays green; log notes skip).
 # robocopy codes 0-7 are success; 8+ are failure.
@@ -124,12 +123,11 @@ $longtermHomeExcludes = @(
     'history-purge-2026-08-06'
 )
 
-# Home folders required (or cheap insurance) for a full Longterm restore.
+# Home folders required for a full Longterm restore.
 $homeFolders = @(
     '.longterm',
     '.monarch-mcp',
-    '.ssh',
-    '.scrooge'
+    '.ssh'
 )
 
 try {

@@ -57,7 +57,7 @@ $settings = New-ScheduledTaskSettingsSet `
 # No -WakeToRun — not worth waking the PC just for a USB mirror.
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-    -Description 'Daily robocopy for full Longterm restore: Documents\Longterm + nikola + ~/.longterm + ~/.monarch-mcp (+ .ssh/.scrooge). Skips if Lacie unplugged. Log: %USERPROFILE%\.longterm\logs\lacie-backup.log' `
+    -Description 'Daily robocopy for full Longterm restore: Documents\Longterm + nikola + ~/.longterm + ~/.monarch-mcp + ~/.ssh. Skips if Lacie unplugged. Log: %USERPROFILE%\.longterm\logs\lacie-backup.log' `
     -Force | Out-Host
 
 Write-Host ("Registered scheduled task '{0}' daily at {1}." -f $TaskName, $Time)
