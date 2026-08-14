@@ -1621,6 +1621,7 @@ function showRowHTML(show) {
     ? `<a class="show-link" href="${escapeHtml(show.sourceUrl)}" target="_blank" rel="noopener">Tickets</a>`
     : `<span class="show-link"></span>`;
   const lnBadge = show.promoter === 'Live Nation'
+    || Object.values(show.scores || {}).some((s) => s && s.liveNation)
     ? `<span class="show-ln-badge" title="Live Nation — ticket connection possible">LN</span>`
     : '';
   return `<div class="show-row">
@@ -1659,6 +1660,11 @@ function showsFindingsHTML(cache, tasteMatches, kind = 'music') {
     return `${o.displayName}: ${st.hasProfile ? 'profile' : 'linked'}`;
   }).join(' · ');
 
+  const ln = tasteMatches?.liveNation;
+  const lnSetupNote = (ln && !ln.pullConfigured && !(ln.taggedInCache > 0))
+    ? `<br><span style="font-size:12px;color:var(--sub)">LN badges need Ticketmaster: save TICKETMASTER_API_KEY in ~/.longterm/ticketmaster.env, then <code>npm run livenation:pull</code>.</span>`
+    : '';
+
   const block = `
     <div class="show-block">
       <div class="show-block-label">Best ${label.toLowerCase()} · ${shows.length}</div>
@@ -1667,7 +1673,7 @@ function showsFindingsHTML(cache, tasteMatches, kind = 'music') {
 
   return `<div class="callout" style="margin-top:0;margin-bottom:16px">Last checked ${fetchedLabel}${cache.days ? ` · next ${cache.days} days` : ''} · ${shows.length} ${label.toLowerCase()}<br><span style="font-size:12px;color:var(--sub)">${kind === 'comedy'
     ? `Comedy taste: likes clean / improv / silly / deadpan / story · dislikes crude · venue stars matter · ${escapeHtml(ownerNote)}`
-    : `Ticket fit · venue stars boost/penalize · suggestion ★ = feedback only · ${escapeHtml(ownerNote)}`}</span></div>${block}`;
+    : `Ticket fit · venue stars boost/penalize · suggestion ★ = feedback only · ${escapeHtml(ownerNote)}`}</span>${lnSetupNote}</div>${block}`;
 }
 
 

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer, writeJsonAtomic, ratePlace, rateVenue, readFavoritePlaces } from '../scripts/dashboard-server.mjs';
+import { createServer, writeJsonAtomic, ratePlace, rateVenue, readFavoritePlaces, liveNationPullConfigured } from '../scripts/dashboard-server.mjs';
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-server-test-'));
 const eventsPath = path.join(tmpDir, 'month_plan_events.json');
@@ -291,6 +291,17 @@ await test('GET /api/favorite-places reflects a file written directly on disk (e
 await test('readFavoritePlaces returns the empty default shape (not throws) when the file is corrupt JSON', () => {
   fs.writeFileSync(favoritePlacesPath, '{not valid json');
   assert.deepEqual(readFavoritePlaces(favoritePlacesPath), { places: [], recentDiningActivity: [] });
+});
+
+await test('liveNationPullConfigured is false when the env file is missing or the key is blank', () => {
+  const missing = path.join(tmpDir, 'no-ticketmaster.env');
+  assert.equal(liveNationPullConfigured(missing), false);
+  const blank = path.join(tmpDir, 'blank-ticketmaster.env');
+  fs.writeFileSync(blank, 'TICKETMASTER_API_KEY=\n');
+  assert.equal(liveNationPullConfigured(blank), false);
+  const ok = path.join(tmpDir, 'ok-ticketmaster.env');
+  fs.writeFileSync(ok, 'TICKETMASTER_API_KEY=demo-key\n');
+  assert.equal(liveNationPullConfigured(ok), true);
 });
 
 console.log('All tests passed.');

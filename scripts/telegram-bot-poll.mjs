@@ -30,6 +30,11 @@ import {
 import { shouldAlertForPause, buildPauseAlertText, countUnsyncedEvents, pauseAgeHours } from './calendar-sync-alerts.mjs';
 import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs';
 import { googleCalendarEnvPath, telegramEnvPath, telegramPollLogPath, calendarSyncAuthPausePath } from './longterm-paths.mjs';
+import {
+  mergeFindingsPreservingLivenation,
+  discoveryShowsFromFindings,
+  rebuildShowsWithLivenation,
+} from './shows-cache.mjs';
 
 const CALENDAR_ENV_PATH = googleCalendarEnvPath();
 const CALENDAR_AUTH_PAUSE_PATH = calendarSyncAuthPausePath();
@@ -499,7 +504,29 @@ async function getUpcomingShowsReply({ days }, { apiKey, venuesToFollowPath, upc
         if (result.url && !urls.includes(result.url)) urls.push(result.url);
       }
     }
-    writeJson(upcomingShowsCachePath, { fetchedAt: new Date().toISOString(), days: resolvedDays, findings: text ? [{ text, urls }] : [] });
+    let existing = {};
+    if (fs.existsSync(upcomingShowsCachePath)) {
+      try {
+        existing = JSON.parse(fs.readFileSync(upcomingShowsCachePath, 'utf8'));
+      } catch {
+        existing = {};
+      }
+    }
+    // Preserve Live Nation promoter tags across an on-demand venue refresh —
+    // a full overwrite used to wipe them, which is exactly how the dashboard
+    // LN badge disappeared mid-week after someone asked the bot for shows.
+    const discoveryFindings = text
+      ? [{ text, urls, label: 'venues' }]
+      : [];
+    const findings = mergeFindingsPreservingLivenation(discoveryFindings, existing);
+    const discoveryShows = discoveryShowsFromFindings(findings);
+    const shows = rebuildShowsWithLivenation(discoveryShows, { findings, shows: existing.shows });
+    writeJson(upcomingShowsCachePath, {
+      fetchedAt: new Date().toISOString(),
+      days: resolvedDays,
+      findings,
+      shows,
+    });
     if (!text) return "Didn't find anything for the next couple weeks at our followed venues — try again closer to the date.";
     const sourcesLine = urls.length ? `\n\nSources:\n${urls.slice(0, 6).join('\n')}` : '';
     return `${text}${sourcesLine}`;

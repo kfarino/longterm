@@ -1532,6 +1532,44 @@ await asyncTest('get_upcoming_shows: reports findings and writes them to the cac
   assert.ok(cache.fetchedAt);
 });
 
+await asyncTest('get_upcoming_shows: preserves a prior Live Nation finding when refreshing venues', async () => {
+  const dir = path.join(tmpRoot, 'upcoming-shows-preserve-ln');
+  const venuesPath = writeVenuesFixture(dir, [{ name: 'Largo at the Coronet', area: 'central', address: '366 N La Cienega Blvd' }]);
+  const cachePath = path.join(dir, 'upcoming_shows_cache.json');
+  fs.writeFileSync(cachePath, JSON.stringify({
+    fetchedAt: '2026-08-01T00:00:00.000Z',
+    days: 14,
+    findings: [
+      {
+        label: 'livenation',
+        text: '',
+        urls: [],
+        shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' }],
+      },
+    ],
+    shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' }],
+  }));
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot any good shows coming up?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'get_upcoming_shows', input: {} }],
+  });
+  const mockShowsClient = async () => ({
+    content: [
+      { type: 'text', text: 'Some Act — Largo at the Coronet — 2026-09-20 — https://example.com/show' },
+      { type: 'web_search_tool_result', content: [{ url: 'https://example.com/show' }] },
+    ],
+  });
+  await runOnce(baseOpts(paths, { anthropicClient: mockClient, showsClient: mockShowsClient, venuesToFollowPath: venuesPath, upcomingShowsCachePath: cachePath }));
+
+  const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+  assert.ok(cache.findings.some((f) => f.label === 'livenation'), 'livenation finding must survive a venue refresh');
+  const crows = (cache.shows || []).find((s) => s.act === 'Counting Crows');
+  assert.ok(crows, 'LN-tagged show must remain in shows[]');
+  assert.equal(crows.promoter, 'Live Nation');
+});
+
 await asyncTest('get_upcoming_shows: a failed live call degrades cleanly and leaves any existing cache untouched', async () => {
   const dir = path.join(tmpRoot, 'upcoming-shows-failure');
   const venuesPath = writeVenuesFixture(dir, [{ name: 'Largo at the Coronet', area: 'central', address: '366 N La Cienega Blvd' }]);

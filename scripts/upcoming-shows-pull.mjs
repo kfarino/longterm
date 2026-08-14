@@ -5,7 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { telegramEnvPath } from './longterm-paths.mjs';
-import { parseShowsFromText, dedupeShows } from './show-parse.mjs';
+import {
+  mergeFindingsPreservingLivenation,
+  discoveryShowsFromFindings,
+  rebuildShowsWithLivenation,
+} from './shows-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -97,21 +101,22 @@ async function main() {
   }
 
   const venueFinding = { text: text || 'No shows found at followed venues in this window.', urls, label: 'venues' };
-  // Keep prior Spotify block if present, then venue block.
+  // Keep prior Spotify block if present, then venue block. Live Nation
+  // findings are re-attached below — without that, a mid-week venues pull
+  // would wipe promoter tags and the dashboard LN badge would disappear
+  // until the next successful livenation:pull.
   const spotifyBlocks = (existing.findings || []).filter((f) => f.label === 'spotify' || existing.source === 'spotify-find-shows');
-  const findings = [];
+  const discoveryFindings = [];
   if (spotifyBlocks.length) {
-    for (const f of spotifyBlocks) findings.push({ ...f, label: f.label || 'spotify' });
+    for (const f of spotifyBlocks) discoveryFindings.push({ ...f, label: f.label || 'spotify' });
   } else if (existing.source === 'spotify-find-shows' && existing.findings?.[0]) {
-    findings.push({ ...existing.findings[0], label: 'spotify' });
+    discoveryFindings.push({ ...existing.findings[0], label: 'spotify' });
   }
-  findings.push(venueFinding);
+  discoveryFindings.push(venueFinding);
 
-  const shows = dedupeShows(
-    findings.flatMap((f) =>
-      parseShowsFromText(f.text, f.urls).map((s) => ({ ...s, label: f.label || null })),
-    ),
-  );
+  const findings = mergeFindingsPreservingLivenation(discoveryFindings, existing);
+  const discoveryShows = discoveryShowsFromFindings(findings);
+  const shows = rebuildShowsWithLivenation(discoveryShows, { findings, shows: existing.shows });
 
   const cache = {
     fetchedAt: new Date().toISOString(),

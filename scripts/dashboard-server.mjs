@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scoreShowsLikeness } from './spotify-likeness.mjs';
 import { parseShowsFromText, dedupeShows, takeTopShows } from './show-parse.mjs';
 import { readActRatings, setActRating } from './spotify-act-ratings.mjs';
+import { ticketmasterEnvPath } from './longterm-paths.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..');
@@ -102,6 +103,20 @@ function showsFromCache(cache) {
   return dedupeShows(out);
 }
 
+/** True when ~/.longterm/ticketmaster.env has a non-empty TICKETMASTER_API_KEY. */
+export function liveNationPullConfigured(envPath = ticketmasterEnvPath()) {
+  if (!fs.existsSync(envPath)) return false;
+  try {
+    for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+      const m = line.match(/^TICKETMASTER_API_KEY=(.*)$/);
+      if (m && m[1].trim()) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 /** Live likeness % for Dining + Shows — hybrid floors + Claude; Hanna may be unlinked. */
 export async function readShowTasteMatches({
   upcomingShowsCachePath = defaultUpcomingShowsCachePath,
@@ -121,7 +136,11 @@ export async function readShowTasteMatches({
   });
   // Top N per kind so comedy isn't crowded out by music (and vice versa).
   const lim = limit === 0 || limit === 'all' ? 0 : (Number(limit) || 15);
-  if (lim === 0) return { ...result, limit: null };
+  const liveNation = {
+    pullConfigured: liveNationPullConfigured(),
+    taggedInCache: shows.filter((s) => s.promoter === 'Live Nation').length,
+  };
+  if (lim === 0) return { ...result, limit: null, liveNation };
   const music = takeTopShows(result.shows.filter((s) => s.kind !== 'comedy'), lim, ownerIds);
   const comedy = takeTopShows(result.shows.filter((s) => s.kind === 'comedy'), lim, ownerIds);
   return {
@@ -129,6 +148,7 @@ export async function readShowTasteMatches({
     limit: lim,
     shows: [...music, ...comedy],
     byKind: { music, comedy },
+    liveNation,
   };
 }
 

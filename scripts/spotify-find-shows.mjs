@@ -8,6 +8,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { telegramEnvPath } from './longterm-paths.mjs';
+import {
+  mergeFindingsPreservingLivenation,
+  discoveryShowsFromFindings,
+  rebuildShowsWithLivenation,
+} from './shows-cache.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -180,13 +185,34 @@ async function main() {
     ? cleanedLines.join('\n')
     : 'No confirmed LA dates on/after today in this window for your followed artists (web results were empty or only past dates).';
 
+  let existing = {};
+  if (fs.existsSync(cachePath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+    } catch {
+      existing = {};
+    }
+  }
+  // Keep prior venue + Live Nation blocks across a mid-week artist re-pull.
+  // Weekly order re-runs venues/LN after this step; preserving here stops a
+  // lone `spotify:find-shows` from wiping promoter tags the badge needs.
+  const priorVenues = (existing.findings || []).filter((f) => f.label === 'venues');
+  const discoveryFindings = [
+    { text: cleanedText, urls, label: 'spotify' },
+    ...priorVenues,
+  ];
+  const findings = mergeFindingsPreservingLivenation(discoveryFindings, existing);
+  const discoveryShows = discoveryShowsFromFindings(findings);
+  const shows = rebuildShowsWithLivenation(discoveryShows, { findings, shows: existing.shows });
+
   const cache = {
     fetchedAt: new Date().toISOString(),
     days,
     source: 'spotify-find-shows',
     owners,
     artistCount: artists.length,
-    findings: [{ text: cleanedText, urls, label: 'spotify' }],
+    findings,
+    shows,
   };
   fs.mkdirSync(path.dirname(cachePath), { recursive: true });
   fs.writeFileSync(cachePath, `${JSON.stringify(cache, null, 2)}\n`, 'utf8');

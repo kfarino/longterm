@@ -19,6 +19,18 @@ await test('showRowHTML renders the LN badge for a Live Nation show', async () =
   assert.ok(/>LN</.test(html), 'expected the badge text to read "LN"');
 });
 
+await test('showRowHTML renders the LN badge from scores.liveNation when promoter was stripped', async () => {
+  const d = loadDashboard();
+  await d.initReady;
+  const html = d.showRowHTML({
+    act: 'Counting Crows',
+    venue: 'Hollywood Bowl',
+    date: '2026-09-10',
+    scores: { kevin: { linked: true, score: 97, liveNation: true } },
+  });
+  assert.ok(html.includes('show-ln-badge'), 'scores.liveNation alone must still render the badge');
+});
+
 await test('showRowHTML renders no badge when the show is not Live Nation-promoted', async () => {
   const d = loadDashboard();
   await d.initReady;
