@@ -4,22 +4,38 @@ param(
     [string]$VolumeLabel = 'LaCie',
     [string]$DestProjectsRelative = 'Projects',
     [string]$LongtermSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Longterm'),
-    [string]$NikolaSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'nikola'),
-    [string]$LongtermSecretsSource = (Join-Path $env:USERPROFILE '.longterm')
+    [string]$NikolaSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'nikola')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Mirror Documents projects + ~/.longterm onto the Lacie backup disk.
-# Intentionally NOT git-based: Longterm's financial JSON, overrides, ledgers,
-# and env files are gitignored / live outside the repo. robocopy copies those.
+# Mirror everything needed to run Longterm + nikola after a machine loss:
+#   Documents\Longterm  (incl. gitignored finance JSON)
+#   Documents\nikola
+#   ~/.longterm         (*.env — Monarch/Telegram/Calendar/Oura/Spotify/Ticketmaster)
+#   ~/.monarch-mcp      (Monarch MCP session.pickle)
+#   ~/.ssh              (keys if present)
+#   ~/.scrooge          (legacy leftover; cheap to keep if it exists)
+#
+# Intentionally NOT git-based. Rebuildable junk is skipped (venv, logs,
+# node_modules). Huge IDE/cache trees (.claude/.cursor/.local/.cache) are
+# NOT required to run Longterm and stay off the backup.
 #
 # Exit 0 when the drive is absent (scheduled task stays green; log notes skip).
 # robocopy codes 0-7 are success; 8+ are failure.
+#
+# Restore sketch (new PC, Lacie plugged in as e.g. F:):
+#   1. Copy F:\Projects\Longterm → Documents\Longterm
+#   2. Copy F:\Projects\.longterm → %USERPROFILE%\.longterm
+#   3. Copy F:\Projects\.monarch-mcp → %USERPROFILE%\.monarch-mcp
+#   4. Recreate venv: python -m venv %USERPROFILE%\.longterm\monarch-mcp-venv
+#      then pip install monarch-mcp-jamiew==0.4.0
+#   5. npm install / npm run build in Longterm; re-run install-*-scheduled-task.ps1
 
 $logDir = Join-Path $env:USERPROFILE '.longterm\logs'
 $logPath = Join-Path $logDir 'lacie-backup.log'
+$homeRoot = $env:USERPROFILE
 
 function Write-BackupLog {
     param([string]$Message)
@@ -46,9 +62,8 @@ function Invoke-RobocopyBackup {
         [string]$Source,
         [string]$Dest,
         [string[]]$ExcludeDirs = @(),
-        # /MIR deletes extras on dest (good for project trees). For ~/.longterm
-        # use -Mirror:$false so excluded venv/logs on the disk are left alone
-        # and a bad path can never wipe env files.
+        # /MIR for project trees. Home secret folders use -Mirror:$false so
+        # excluded dirs (venv/logs) on the disk are never purged by accident.
         [switch]$Mirror
     )
 
@@ -61,11 +76,6 @@ function Invoke-RobocopyBackup {
         New-Item -ItemType Directory -Path $Dest -Force | Out-Null
     }
 
-    # /E    — copy subdirs including empty
-    # /MIR  — dest matches source (optional)
-    # /FFT  — 2s timestamp fuzz (exFAT vs NTFS)
-    # /R:2 /W:5 — short retries (USB can blip)
-    # /XD   — skip rebuildable / huge dirs
     $mode = if ($Mirror) { '/MIR' } else { '/E' }
     $robocopyArgs = @(
         $Source, $Dest,
@@ -100,7 +110,6 @@ if (-not (Test-Path -LiteralPath $destRoot)) {
 
 Write-BackupLog ("Backup root: {0}" -f $destRoot)
 
-# Rebuildable / huge — keep the backup lean and focused on irreplaceable files.
 $projectExcludes = @(
     'node_modules',
     '.worktrees',
@@ -108,9 +117,19 @@ $projectExcludes = @(
     'coverage',
     '__pycache__'
 )
-$secretsExcludes = @(
+# Rebuildable — env files + session are what matter for restore.
+$longtermHomeExcludes = @(
     'monarch-mcp-venv',
-    'logs'
+    'logs',
+    'history-purge-2026-08-06'
+)
+
+# Home folders required (or cheap insurance) for a full Longterm restore.
+$homeFolders = @(
+    '.longterm',
+    '.monarch-mcp',
+    '.ssh',
+    '.scrooge'
 )
 
 try {
@@ -118,8 +137,15 @@ try {
         -Dest (Join-Path $destRoot 'Longterm') -ExcludeDirs $projectExcludes -Mirror
     Invoke-RobocopyBackup -Name 'nikola' -Source $NikolaSource `
         -Dest (Join-Path $destRoot 'nikola') -ExcludeDirs $projectExcludes -Mirror
-    Invoke-RobocopyBackup -Name '.longterm' -Source $LongtermSecretsSource `
-        -Dest (Join-Path $destRoot '.longterm') -ExcludeDirs $secretsExcludes
+
+    foreach ($name in $homeFolders) {
+        $source = Join-Path $homeRoot $name
+        $excludes = @()
+        if ($name -eq '.longterm') { $excludes = $longtermHomeExcludes }
+        Invoke-RobocopyBackup -Name $name -Source $source `
+            -Dest (Join-Path $destRoot $name) -ExcludeDirs $excludes
+    }
+
     Write-BackupLog 'DONE'
     exit 0
 } catch {
