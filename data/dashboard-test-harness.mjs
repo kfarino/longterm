@@ -80,6 +80,7 @@ const exportNames = [
   'computeTrackerPacing', 'renderCategoryDrilldown', 'toggleDrilldown',
   'renderSpendTracker', 'renderTravelSummary', 'renderJointKevinTrackers',
   'toggleExpPanel', 'initReady', 'showRowHTML',
+  'groupShowsByAct', 'showsFindingsHTML',
 ];
 
 export function loadDashboard(dataOverride, monthPlanEventsSeed, routineOverridesSeed) {

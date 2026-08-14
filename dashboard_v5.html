@@ -78,12 +78,10 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .show-block{margin-bottom:18px}
 .show-block:last-child{margin-bottom:0}
 .show-block-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:10px}
-.show-row{display:grid;grid-template-columns:56px minmax(0,1fr) 112px 64px;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--rule2)}
+.show-row{display:grid;grid-template-columns:minmax(0,1fr) 112px 64px;gap:16px;align-items:center;padding:12px 0;border-bottom:1px solid var(--rule2)}
 .show-row:last-child{border-bottom:none}
-.show-date{text-align:center;line-height:1.15}
-.show-date-mon{display:block;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub)}
-.show-date-day{display:block;font-size:22px;font-weight:700;color:var(--navy)}
 .show-act{font-size:14px;font-weight:600;color:var(--navy);line-height:1.3}
+.show-dates{font-size:12px;color:var(--mid);margin-top:2px}
 .show-ln-badge{display:inline-block;margin-left:6px;padding:1px 5px;font-size:9px;font-weight:700;letter-spacing:.04em;color:#000;background:var(--gold);border-radius:3px;vertical-align:middle}
 .show-venue{font-size:12px;color:var(--sub);margin-top:2px}
 .show-pitch{font-size:12px;color:var(--mid);margin-top:4px;line-height:1.4;max-width:42em}
@@ -107,9 +105,9 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .show-link:hover{text-decoration:underline}
 .show-empty{font-size:13px;color:var(--mid);padding:8px 0}
 @media(max-width:700px){
-  .show-row{grid-template-columns:48px 1fr;grid-template-rows:auto auto}
+  .show-row{grid-template-columns:1fr;grid-template-rows:auto auto}
   .show-scores{grid-column:1 / -1;grid-template-columns:repeat(2,1fr);justify-self:stretch;margin-top:4px}
-  .show-link{grid-column:2;justify-self:end}
+  .show-link{grid-column:1;justify-self:end}
 }
 
 .goal{padding:14px 0;border-bottom:1px solid var(--rule2)}
@@ -1435,6 +1433,94 @@ function formatShowDateParts(iso) {
   };
 }
 
+function formatShowDatesLabel(dates) {
+  return (dates || [])
+    .map((iso) => {
+      const p = formatShowDateParts(iso);
+      return p ? `${p.mon} ${p.day}` : null;
+    })
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Same rules as scripts/spotify-match.mjs normalizeArtistName — local copy so the dashboard file stays a single renderer. */
+function normalizeShowActName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^the\s+/, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function showRankScore(show) {
+  const us = show?.us?.score;
+  if (typeof us === 'number') return us;
+  const kevin = show?.scores?.kevin?.score;
+  if (typeof kevin === 'number') return kevin;
+  let best = -1;
+  for (const s of Object.values(show?.scores || {})) {
+    if (s && typeof s.score === 'number' && s.score > best) best = s.score;
+  }
+  return best;
+}
+
+/**
+ * Display grouping for Dining + Shows: one row per normalized act.
+ * Ranking / pitch / LN come from the highest Us (else Kevin) score in the
+ * group; dates and ticket URL come from the soonest upcoming date.
+ * Does not change match JSON — callers pass an already-filtered kind list.
+ */
+function groupShowsByAct(shows, todayIso) {
+  const today = todayIso || isoDate(new Date());
+  const groups = new Map();
+  (shows || []).forEach((show, index) => {
+    const key = normalizeShowActName(show.act) || `__unnamed_${index}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(show);
+  });
+
+  const grouped = [];
+  for (const occ of groups.values()) {
+    const best = [...occ].sort((a, b) => {
+      const d = showRankScore(b) - showRankScore(a);
+      return d || String(a.date || '').localeCompare(String(b.date || ''));
+    })[0];
+    const byDate = [...occ].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    const upcoming = byDate.filter((s) => s.date && s.date >= today);
+    const soonestFirst = upcoming.length ? upcoming : byDate;
+    const soonest = soonestFirst[0] || best;
+    const dates = [...new Set(byDate.map((s) => s.date).filter(Boolean))];
+    const venueNames = [];
+    const seenVenue = new Set();
+    for (const s of byDate) {
+      const v = String(s.venue || '').trim();
+      if (!v) continue;
+      const vk = v.toLowerCase();
+      if (seenVenue.has(vk)) continue;
+      seenVenue.add(vk);
+      venueNames.push(v);
+    }
+    const venueLabel = venueNames.length <= 2 ? venueNames.join(' · ') : venueNames[0];
+    const ticket = soonestFirst.find((s) => s.sourceUrl) || soonest;
+    grouped.push({
+      ...best,
+      date: soonest?.date || best.date,
+      dates,
+      venue: venueLabel,
+      sourceUrl: ticket?.sourceUrl || best.sourceUrl,
+    });
+  }
+
+  grouped.sort((a, b) => {
+    const d = showRankScore(b) - showRankScore(a);
+    return d || String(a.date || '').localeCompare(String(b.date || ''));
+  });
+  return grouped;
+}
+
 /** Pull structured shows out of LLM prose / dash-separated lines. */
 function parseShowsFromText(text, fallbackUrls) {
   if (!text) return [];
@@ -1613,10 +1699,10 @@ function suggestionStarsHTML(show) {
 }
 
 function showRowHTML(show) {
-  const parts = formatShowDateParts(show.date);
-  const dateHtml = parts
-    ? `<div class="show-date"><span class="show-date-mon">${parts.mon}</span><span class="show-date-day">${parts.day}</span></div>`
-    : `<div class="show-date"><span class="show-date-mon">—</span><span class="show-date-day">?</span></div>`;
+  const dates = Array.isArray(show.dates) && show.dates.length
+    ? show.dates
+    : (show.date ? [show.date] : []);
+  const datesLabel = formatShowDatesLabel(dates);
   const link = show.sourceUrl
     ? `<a class="show-link" href="${escapeHtml(show.sourceUrl)}" target="_blank" rel="noopener">Tickets</a>`
     : `<span class="show-link"></span>`;
@@ -1625,9 +1711,9 @@ function showRowHTML(show) {
     ? `<span class="show-ln-badge" title="Live Nation — ticket connection possible">LN</span>`
     : '';
   return `<div class="show-row">
-    ${dateHtml}
     <div>
       <div class="show-act">${escapeHtml(show.act || 'Show')}${lnBadge}</div>
+      ${datesLabel ? `<div class="show-dates">${escapeHtml(datesLabel)}</div>` : ''}
       ${show.venue ? `<div class="show-venue">${escapeHtml(show.venue)}</div>` : ''}
       ${showPitchHTML(show)}
       ${suggestionStarsHTML(show)}
@@ -1646,6 +1732,8 @@ function showsFindingsHTML(cache, tasteMatches, kind = 'music') {
     ? tasteMatches.byKind[kind]
     : (Array.isArray(tasteMatches?.shows) ? tasteMatches.shows : normalizeShowList(cache))
       .filter((s) => (s.kind || 'music') === kind);
+
+  shows = groupShowsByAct(shows);
 
   if (!shows.length) {
     return `<div class="callout" style="margin-top:0">No ${label.toLowerCase()} shows in the current window — refresh with <code>npm run shows:pull</code>.</div>`;
@@ -1722,10 +1810,10 @@ async function renderDiningShowsTab() {
   const dateNight = eligibleFavorites(places, 'dinnerSpot');
   const weekendSocial = eligibleFavorites(places, 'socialSpot');
   const venues = venuesData.venues || [];
-  const musicShows = tasteMatches.byKind?.music
-    || (tasteMatches.shows || []).filter((s) => (s.kind || 'music') === 'music');
-  const comedyShows = tasteMatches.byKind?.comedy
-    || (tasteMatches.shows || []).filter((s) => s.kind === 'comedy');
+  const musicShows = groupShowsByAct(tasteMatches.byKind?.music
+    || (tasteMatches.shows || []).filter((s) => (s.kind || 'music') === 'music'));
+  const comedyShows = groupShowsByAct(tasteMatches.byKind?.comedy
+    || (tasteMatches.shows || []).filter((s) => s.kind === 'comedy'));
   const musicCount = musicShows.length;
   const comedyCount = comedyShows.length;
 
