@@ -68,7 +68,7 @@
       "color": "#2d6a3f",
       "label": "P2",
       "name": "Higher earnings",
-      "period": "2028 → 2035",
+      "period": "2028 → 2030",
       "note": "Example next phase — adjust years and numbers to the household.",
       "income": {
         "Teddy": 12000,
@@ -100,10 +100,104 @@
     },
     {
       "id": 3,
-      "color": "#5a5230",
+      "color": "#3d5a80",
       "label": "P3",
+      "name": "Peak dual income",
+      "period": "2030",
+      "note": "Bridge phase so Trajectory phaseForYear (hard-coded P2–P6) has a real allocation row.",
+      "income": {
+        "Teddy": 14000,
+        "Lilly": 10000
+      },
+      "expenses": {
+        "Housing": 3200,
+        "Family budget": 5500,
+        "Teddy personal": 1000,
+        "Lilly personal": 800
+      },
+      "allocation": [
+        {
+          "label": "Brokerage",
+          "amount": 4500,
+          "bucket": "brokerage"
+        },
+        {
+          "label": "Flex",
+          "amount": 2500,
+          "bucket": "liquid"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "color": "#4a6741",
+      "label": "P4",
+      "name": "Both at peak",
+      "period": "2030 → 2039",
+      "note": "Fictional mid-career phase for chart projections.",
+      "income": {
+        "Teddy": 15000,
+        "Lilly": 12000
+      },
+      "expenses": {
+        "Housing": 3200,
+        "Family budget": 6000,
+        "Teddy personal": 1200,
+        "Lilly personal": 1000
+      },
+      "allocation": [
+        {
+          "label": "Brokerage",
+          "amount": 5000,
+          "bucket": "brokerage"
+        },
+        {
+          "label": "Travel fund",
+          "amount": 800,
+          "bucket": "liquid"
+        },
+        {
+          "label": "Flex",
+          "amount": 2800,
+          "bucket": "liquid"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "color": "#6b5b3e",
+      "label": "P5",
+      "name": "Partial step-back",
+      "period": "2039 → 2045",
+      "note": "Fictional late-career phase for chart projections.",
+      "income": {
+        "Teddy consulting": 8000,
+        "Lilly consulting": 7000
+      },
+      "expenses": {
+        "Housing": 3500,
+        "Family budget": 4500,
+        "Lifestyle": 2000
+      },
+      "allocation": [
+        {
+          "label": "Brokerage",
+          "amount": 2000,
+          "bucket": "brokerage"
+        },
+        {
+          "label": "Flex",
+          "amount": 1500,
+          "bucket": "liquid"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "color": "#5a5230",
+      "label": "P6",
       "name": "Semi-retirement",
-      "period": "2035+",
+      "period": "2045+",
       "note": "Work optional. Expenses can be empty if using the P6-style slider later.",
       "income": {
         "Teddy (optional work)": 3000,

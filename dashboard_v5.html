@@ -1873,7 +1873,7 @@ function phaseForYear(yr, kv) {
   return 6;
 }
 function phaseContribution(phase, bucket) {
-  return phase.allocation.filter(a => a.bucket === bucket).reduce((sum,a) => sum + a.amount, 0);
+  return (phase?.allocation || []).filter(a => a.bucket === bucket).reduce((sum,a) => sum + a.amount, 0);
 }
 
 // Croatia lifestyle (Trajectory alternate): surplus = Kevin income + LA rental − rent − living budget.

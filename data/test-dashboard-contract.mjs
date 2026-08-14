@@ -259,7 +259,12 @@ await test('nav tab label reads "Planner" (renamed from "Budget")', () => {
 });
 
 await test('renderTodosSection: renders open items with owner pills, omits null deadlines, shows age, hides done items, and renders weekly-goal progress in one list', () => {
+  // Owners override so CI (examples use teddy/lilly) still exercises kevin/hanna pills.
   const d = loadDashboard({
+    owners: [
+      { id: 'kevin', displayName: 'Kevin' },
+      { id: 'hanna', displayName: 'Hanna' },
+    ],
     todos: {
       items: [
         { title: 'Fix the AC wall mount', owner: 'kevin', dateAdded: isoDaysAgo(5), deadline: null, done: false },
