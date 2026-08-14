@@ -15,6 +15,9 @@ import {
   fetchClassificationEvents,
   fetchAllLiveNationEvents,
   runOnce,
+  PAGE_SIZE,
+  DEFAULT_MAX_PAGES,
+  MAX_PAGE_OFFSET,
 } from '../scripts/live-nation-pull.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
@@ -106,6 +109,46 @@ await asyncTest('fetchClassificationEvents paginates until totalPages is exhaust
   assert.equal(events.length, 2);
   assert.ok(calls[0].includes('classificationName=Music'));
   assert.ok(calls[0].includes('apikey=k'));
+});
+
+test('default pagination stays under Ticketmaster DIS1035 (page * size < 1000)', () => {
+  assert.equal(PAGE_SIZE, 200);
+  assert.equal(DEFAULT_MAX_PAGES, 5, 'pages 0–4 only — page 5 with size 200 would be DIS1035');
+  assert.ok(
+    (DEFAULT_MAX_PAGES - 1) * PAGE_SIZE < MAX_PAGE_OFFSET,
+    'highest requested page offset must be < 1000',
+  );
+  assert.ok(
+    DEFAULT_MAX_PAGES * PAGE_SIZE >= MAX_PAGE_OFFSET || DEFAULT_MAX_PAGES === Math.floor(MAX_PAGE_OFFSET / PAGE_SIZE),
+    'defaults should use the full safe window (not leave unused pages on the table)',
+  );
+});
+
+await asyncTest('fetchClassificationEvents never requests page*size >= 1000 even if maxPages is too high', async () => {
+  const offsets = [];
+  const fetchImpl = async (url) => {
+    const params = new URL(url).searchParams;
+    const page = Number(params.get('page'));
+    const size = Number(params.get('size'));
+    offsets.push(page * size);
+    return {
+      ok: true,
+      json: async () => ({
+        _embedded: { events: [fakeEvent({ id: `evt-${page}` })] },
+        page: { totalPages: 50, number: page },
+      }),
+    };
+  };
+  await fetchClassificationEvents({
+    apiKey: 'k',
+    classificationName: 'Music',
+    days: 60,
+    fetchImpl,
+    maxPages: 10, // would have hit DIS1035 at page 5 with size 200 before the fix
+  });
+  assert.equal(offsets.length, 5, 'safe max is pages 0–4 at size 200');
+  assert.ok(offsets.every((o) => o < MAX_PAGE_OFFSET), 'every request must satisfy page*size < 1000');
+  assert.deepEqual(offsets, [0, 200, 400, 600, 800]);
 });
 
 await asyncTest('fetchClassificationEvents throws with the response body on a non-ok response', async () => {

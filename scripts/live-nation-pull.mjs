@@ -23,6 +23,12 @@ const CLASSIFICATIONS = ['Music', 'Comedy'];
 // House of Blues Concerts is a real Live Nation subsidiary promoter name
 // that shows up in live Ticketmaster responses.
 const LIVE_NATION_PROMOTER_RE = /live nation|house of blues concerts/i;
+// Ticketmaster Discovery rejects requests where page * size >= 1000 (DIS1035).
+// size 200 + pages 0–4 (maxPages 5) reaches the same ~1000-event ceiling as a
+// smaller size with more pages, with fewer round-trips — so keep size 200.
+export const PAGE_SIZE = 200;
+export const DEFAULT_MAX_PAGES = 5;
+export const MAX_PAGE_OFFSET = 1000; // API: (page * size) must be < this
 
 function parseEnvFile(envFilePath) {
   const vars = {};
@@ -81,14 +87,24 @@ export function mapEventToShow(event, knownVenueNames = []) {
   return show;
 }
 
-export async function fetchClassificationEvents({ apiKey, classificationName, days, fetchImpl = fetch, maxPages = 10 }) {
+export async function fetchClassificationEvents({
+  apiKey,
+  classificationName,
+  days,
+  fetchImpl = fetch,
+  maxPages = DEFAULT_MAX_PAGES,
+  pageSize = PAGE_SIZE,
+}) {
   const today = new Date();
   const end = new Date(today.getTime() + days * 24 * 60 * 60 * 1000);
   const startDateTime = `${today.toISOString().slice(0, 19)}Z`;
   const endDateTime = `${end.toISOString().slice(0, 19)}Z`;
+  // Cap so the highest page we ever request still satisfies page * size < 1000.
+  const safeMaxPages = Math.min(maxPages, Math.floor(MAX_PAGE_OFFSET / pageSize));
   const events = [];
   let page = 0;
   for (;;) {
+    if (page * pageSize >= MAX_PAGE_OFFSET) break;
     const params = new URLSearchParams({
       apikey: apiKey,
       latlong: LA_LATLONG,
@@ -97,7 +113,7 @@ export async function fetchClassificationEvents({ apiKey, classificationName, da
       classificationName,
       startDateTime,
       endDateTime,
-      size: '200',
+      size: String(pageSize),
       page: String(page),
     });
     const res = await fetchImpl(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
@@ -107,15 +123,28 @@ export async function fetchClassificationEvents({ apiKey, classificationName, da
     events.push(...pageEvents);
     const totalPages = body?.page?.totalPages ?? 1;
     page += 1;
-    if (page >= totalPages || page >= maxPages || !pageEvents.length) break;
+    if (page >= totalPages || page >= safeMaxPages || !pageEvents.length) break;
   }
   return events;
 }
 
-export async function fetchAllLiveNationEvents({ apiKey, days = 60, fetchImpl = fetch, maxPages = 10 }) {
+export async function fetchAllLiveNationEvents({
+  apiKey,
+  days = 60,
+  fetchImpl = fetch,
+  maxPages = DEFAULT_MAX_PAGES,
+  pageSize = PAGE_SIZE,
+}) {
   const all = [];
   for (const classificationName of CLASSIFICATIONS) {
-    const events = await fetchClassificationEvents({ apiKey, classificationName, days, fetchImpl, maxPages });
+    const events = await fetchClassificationEvents({
+      apiKey,
+      classificationName,
+      days,
+      fetchImpl,
+      maxPages,
+      pageSize,
+    });
     all.push(...events);
   }
   const seenIds = new Set();
