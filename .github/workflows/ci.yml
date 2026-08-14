@@ -26,6 +26,9 @@ jobs:
           node-version: '20'
       - name: Seed fictional examples
         run: npm run seed
+      # data.js is gitignored; dashboard harness tests need the generated bundle.
+      - name: Build data.js from seeded examples
+        run: npm run build
       # Every data/test-*.mjs suite, not a hand-picked two. The bot and
       # calendar-sync suites went unrun for months, which is how a test
       # asserting that a broken sync should stay silent stayed green.

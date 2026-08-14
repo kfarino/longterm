@@ -2110,7 +2110,7 @@ await asyncTest('getUpdatesClient, when supplied, is used instead of the real Te
   // this test must omit updatesFixture to actually exercise the new client —
   // point it at a nonexistent path explicitly rather than relying on baseOpts'
   // default (which does set updatesFixture).
-  await runOnce({ ...baseOpts(paths, {}), updatesFixture: null, getUpdatesClient, getUpdatesTimeoutSeconds: 25 });
+  await runOnce({ ...baseOpts(paths, {}), updatesFixture: null, token: 'test-token', getUpdatesClient, getUpdatesTimeoutSeconds: 25 });
 
   assert.equal(calls.length, 1, 'getUpdatesClient should be called exactly once');
   assert.equal(calls[0].method, 'getUpdates');

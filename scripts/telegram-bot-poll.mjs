@@ -934,7 +934,9 @@ export function calendarCaveatText(status) {
 
 export async function runOnce(opts) {
   const args = { ...parseArgs([]), ...opts };
-  const envValues = args.updatesFixture ? {} : readLocalEnv(args.envPath);
+  // Fixture mode skips env entirely. Injected getUpdatesClient tests also
+  // pass token/groupChatId explicitly so CI (no ~/.longterm/telegram.env) works.
+  const envValues = (args.updatesFixture || args.token != null) ? {} : readLocalEnv(args.envPath);
   const token = args.token || envValues.TELEGRAM_BOT_TOKEN;
   const groupChatId = args.groupChatId || envValues.TELEGRAM_GROUP_CHAT_ID;
   const botUsername = args.botUsername || envValues.TELEGRAM_BOT_USERNAME;

@@ -85,10 +85,41 @@ function defaultCalendarReadClient(accessToken) {
 // appears on the exception, not the default — the weekly recap uses this to
 // call out one-off events specifically, since those are the ones worth
 // advance awareness of.
+// Household calendars are America/Los_Angeles. Format and structured
+// date/time must not depend on the host TZ (CI runners are UTC).
+const EVENT_TIMEZONE = 'America/Los_Angeles';
+
+function wallClockInZone(dateTime, timeZone = EVENT_TIMEZONE) {
+  const d = new Date(dateTime);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(d).map((p) => [p.type, p.value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
 function formatEventLine(label, event) {
   const title = event.summary || '(untitled)';
   const when = event.start && event.start.dateTime
-    ? new Date(event.start.dateTime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    ? new Date(event.start.dateTime).toLocaleString('en-US', {
+        timeZone: EVENT_TIMEZONE,
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
     : (event.start && event.start.date);
   const recurringTag = event.recurringEventId ? ' (recurring)' : '';
   return `[${label}] ${title} — ${when}${recurringTag}`;
@@ -106,10 +137,9 @@ function toStructuredItem(label, event) {
   const isRecurring = !!event.recurringEventId;
   const title = event.summary || '(untitled)';
   if (event.start && event.start.dateTime) {
-    const d = new Date(event.start.dateTime);
-    const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return { label, title, date, time, isRecurring };
+    const wall = wallClockInZone(event.start.dateTime);
+    if (!wall) return { label, title, date: null, time: null, isRecurring };
+    return { label, title, date: wall.date, time: wall.time, isRecurring };
   }
   return { label, title, date: (event.start && event.start.date) || null, time: null, isRecurring };
 }
