@@ -581,13 +581,13 @@ test('applyManualCharges merges a tracker:joint cash charge into joint week + ca
     categoryTransactions: new Map([['Groceries', [{ date: '2026-07-26', merchant: 'Test Market', amount: 100 }]]]),
   };
   applyManualCharges(personalState, [
-    { tracker: 'joint', date: '2026-08-15', merchant: 'Test Babysitter', amount: 80, category: 'Childcare' },
+    { tracker: 'joint', date: '2026-08-15', merchant: 'Test Babysitter', amount: 80, category: 'Babysitting' },
   ], personalCycleStart, jointState, jointCycleStart);
   // Jul 25 cycle: Aug 15 is day 21 → week bucket 3
   assert.equal(jointState.buckets.get(3), 80);
-  assert.equal(jointState.categoryTotals.get('Childcare'), 80);
-  assert.equal(jointState.categoryTransactions.get('Childcare').length, 1);
-  assert.equal(jointState.categoryTransactions.get('Childcare')[0].merchant, 'Test Babysitter');
+  assert.equal(jointState.categoryTotals.get('Babysitting'), 80);
+  assert.equal(jointState.categoryTransactions.get('Babysitting').length, 1);
+  assert.equal(jointState.categoryTransactions.get('Babysitting')[0].merchant, 'Test Babysitter');
   assert.equal(personalState.kevin.buckets.size, 0, 'joint charges must not land on a personal tracker');
 });
 
@@ -595,14 +595,14 @@ test('applyManualCharges skips a joint charge when the same date+merchant+amount
   const jointCycleStart = new Date('2026-07-25T12:00:00');
   const jointState = {
     buckets: new Map([[3, 80]]),
-    categoryTotals: new Map([['Childcare', 80]]),
-    categoryTransactions: new Map([['Childcare', [{ date: '2026-08-15', merchant: 'Test Babysitter', amount: 80 }]]]),
+    categoryTotals: new Map([['Babysitting', 80]]),
+    categoryTransactions: new Map([['Babysitting', [{ date: '2026-08-15', merchant: 'Test Babysitter', amount: 80 }]]]),
   };
   applyManualCharges({}, [
-    { tracker: 'joint', date: '2026-08-15', merchant: 'Test Babysitter', amount: 80, category: 'Childcare' },
+    { tracker: 'joint', date: '2026-08-15', merchant: 'Test Babysitter', amount: 80, category: 'Babysitting' },
   ], new Date('2026-08-01T12:00:00'), jointState, jointCycleStart);
   assert.equal(jointState.buckets.get(3), 80);
-  assert.equal(jointState.categoryTransactions.get('Childcare').length, 1);
+  assert.equal(jointState.categoryTransactions.get('Babysitting').length, 1);
 });
 
 test('applyManualChargesToTracking patches joint weeks[].actual and category line items', () => {
@@ -622,15 +622,15 @@ test('applyManualChargesToTracking patches joint weeks[].actual and category lin
     personal: { kevin: { cycleStart: '2026-08-01', weeks: [{ actual: 0, days: 7 }], categories: [] } },
   };
   applyManualChargesToTracking(tracking, [
-    { tracker: 'joint', date: '2026-08-15', merchant: 'Test Babysitter', amount: 80, category: 'Childcare' },
+    { tracker: 'joint', date: '2026-08-15', merchant: 'Test Babysitter', amount: 80, category: 'Babysitting' },
   ]);
   assert.equal(tracking.joint.weeks[3].actual, 90);
-  const childcare = tracking.joint.categories.find((c) => c.name === 'Childcare');
-  assert.ok(childcare, 'Childcare category should be created');
-  assert.equal(childcare.amount, 80);
-  assert.equal(childcare.transactions.length, 1);
-  assert.equal(childcare.transactions[0].merchant, 'Test Babysitter');
-  assert.equal(childcare.transactions[0].date, '2026-08-15');
+  const sitting = tracking.joint.categories.find((c) => c.name === 'Babysitting');
+  assert.ok(sitting, 'Babysitting category should be created');
+  assert.equal(sitting.amount, 80);
+  assert.equal(sitting.transactions.length, 1);
+  assert.equal(sitting.transactions[0].merchant, 'Test Babysitter');
+  assert.equal(sitting.transactions[0].date, '2026-08-15');
 });
 
 test('applyManualChargesToTracking skips a duplicate joint charge and charges before cycleStart', () => {
@@ -639,17 +639,16 @@ test('applyManualChargesToTracking skips a duplicate joint charge and charges be
       cycleStart: '2026-07-25',
       weeks: [{ weekOf: 'Jul 25–31', actual: 80, days: 7 }],
       categories: [
-        { name: 'Childcare', amount: 80, transactions: [{ date: '2026-07-26', merchant: 'Test Babysitter', amount: 80 }] },
+        { name: 'Babysitting', amount: 80, transactions: [{ date: '2026-07-26', merchant: 'Test Babysitter', amount: 80 }] },
       ],
     },
     personal: {},
   };
   applyManualChargesToTracking(tracking, [
-    { tracker: 'joint', date: '2026-07-26', merchant: 'Test Babysitter', amount: 80, category: 'Childcare' },
-    { tracker: 'joint', date: '2026-07-20', merchant: 'Test Babysitter', amount: 40, category: 'Childcare' },
+    { tracker: 'joint', date: '2026-07-26', merchant: 'Test Babysitter', amount: 80, category: 'Babysitting' },
+    { tracker: 'joint', date: '2026-07-20', merchant: 'Test Babysitter', amount: 40, category: 'Babysitting' },
   ]);
   assert.equal(tracking.joint.weeks[0].actual, 80);
   assert.equal(tracking.joint.categories[0].transactions.length, 1);
 });
-
 console.log('All budget-tracking-pull tests passed.');

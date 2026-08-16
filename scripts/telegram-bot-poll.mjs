@@ -860,6 +860,7 @@ Use delete_todo (not mark_done) when a to-do is no longer relevant rather than f
 Budget and spending questions → get_budget_status. The household cares about **this month's spend**: what's logged, what's left, how many days are left, and whether that's on pace.
 Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.
 Cash, Venmo, babysitting cash, or any spend that will not come through a credit card / Monarch → add_manual_charge (tracker "joint" or an owner id). That is a real immediate budget line, not a decision note.
+Babysitting is its own category — opt-in spend that enables date nights. Never label it Childcare. Childcare is the standing nanny/au pair cost on the long-term plan, not a current-cycle spend bucket for sitters.
 
 ## Changing the real financial plan
 These tools REALLY change the plan, immediately — there is no review step.

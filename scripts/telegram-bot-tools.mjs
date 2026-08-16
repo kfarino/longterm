@@ -1071,7 +1071,7 @@ export const TOOL_DEFS = [
         merchant: { type: 'string', description: 'Who was paid / the label for this charge.' },
         amount: { type: 'number', description: 'Dollar amount (positive).' },
         date: { type: 'string', description: 'Spend date as YYYY-MM-DD.' },
-        category: { type: 'string', description: 'Budget category, e.g. Childcare, Dining, Groceries. Defaults to Uncategorized.' },
+        category: { type: 'string', description: 'Budget category. Babysitting (date-night sitters — never call this Childcare), Dining, Groceries, etc. Childcare is the standing nanny/au pair plan cost, not a spend-tracker label for sitters. Defaults to Uncategorized.' },
         note: { type: 'string', description: 'Optional short note.' },
       },
       required: ['tracker', 'merchant', 'amount', 'date'],
