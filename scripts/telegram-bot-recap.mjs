@@ -37,6 +37,7 @@ function parseArgs(argv) {
     unparsedPath: path.join(repoDataDir, 'telegram-unparsed.jsonl'),
     routineOverridesPath: path.join(repoDataDir, 'dining-routine-overrides.json'),
     goalsChangelogPath: path.join(repoDataDir, 'goals-changelog.jsonl'),
+    capabilityRequestsPath: path.join(repoDataDir, 'bot-capability-requests.json'),
     ouraStoreDir: defaultOuraStoreDir(),
     healthOverridesPath: defaultHealthOverridesPath(),
     dryRun: false,
@@ -59,6 +60,7 @@ function parseArgs(argv) {
       else if (key === 'unparsed-path') args.unparsedPath = value;
       else if (key === 'routine-overrides-path') args.routineOverridesPath = value;
       else if (key === 'goals-changelog-path') args.goalsChangelogPath = value;
+      else if (key === 'capability-requests-path') args.capabilityRequestsPath = value;
       else if (key === 'oura-store-dir') args.ouraStoreDir = value;
       else if (key === 'health-overrides-path') args.healthOverridesPath = value;
       else throw new Error(`Unknown argument: ${arg}`);
@@ -130,6 +132,20 @@ function loadUnparsedSince(unparsedPath, sinceISO) {
 // review gate — this just surfaces that something changed since the last
 // recap, so Kevin/Hanna aren't surprised by a plan edit they didn't see
 // happen live. Total count plus the 2 most recent replies, not every one.
+function loadOpenCapabilityRequests(requestsPath) {
+  if (!fs.existsSync(requestsPath)) return { count: 0, recent: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(requestsPath, 'utf8'));
+    const open = (parsed.items || []).filter((i) => i.status === 'open' || i.status === 'failed' || i.status === 'launched' || i.status === 'running');
+    return {
+      count: open.length,
+      recent: open.slice(-2).map((i) => i.ask),
+    };
+  } catch {
+    return { count: 0, recent: [] };
+  }
+}
+
 function loadRecentPlanChanges(goalsChangelogPath) {
   if (!fs.existsSync(goalsChangelogPath)) return { count: 0, recent: [] };
   try {
@@ -242,7 +258,7 @@ function diningSummary(monthPlanEvents, diningContext, now = null) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now, healthContext, healthAffectsPlans }) {
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now, healthContext, healthAffectsPlans }) {
   return {
     budgetStatus: financialContext.budgetStatus,
     // Forward-looking "what rate still hits the target", weekly because this
@@ -257,6 +273,7 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
     unparsedMessages,
     calendarSummary,
     recentPlanChanges,
+    openCapabilityRequests,
     health: healthContext,
     healthAffectsPlans,
   };
@@ -278,7 +295,7 @@ Health: one short line per person from health.perOwner — how this week compare
 
 After the four sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
 
-Then, only if there's something notable, add one or two short trailing lines for: an urgent open decision (decisions, only flag one with status "urgent" — don't list every open decision), a non-recurring event on either Google calendar this week (calendarSummary — name whose calendar and the date; skip if calendarSummary is null or nothing non-recurring is on either calendar), unprocessed messages since the last recap (unparsedMessages — one line, don't quote them all verbatim), or a recent direct edit to the real financial plan (recentPlanChanges — if count is non-zero, mention briefly what changed using recentPlanChanges.recent as a hint). Skip any of these four with nothing to report — don't force a line just to fill space.
+Then, only if there's something notable, add one or two short trailing lines for: an urgent open decision (decisions, only flag one with status "urgent" — don't list every open decision), a non-recurring event on either Google calendar this week (calendarSummary — name whose calendar and the date; skip if calendarSummary is null or nothing non-recurring is on either calendar), unprocessed messages since the last recap (unparsedMessages — one line, don't quote them all verbatim), a recent direct edit to the real financial plan (recentPlanChanges — if count is non-zero, mention briefly what changed using recentPlanChanges.recent as a hint), or an open bot capability request still running or failed (openCapabilityRequests — if count is non-zero, mention that a code update is in flight or needs a look, using openCapabilityRequests.recent as a hint). Skip any of these with nothing to report — don't force a line just to fill space.
 
 Never mention long-term savings goal progress or percentages — that's a different cadence of update, not part of this one. Do not use markdown formatting (no headers, no bullets, no bold) — plain text with the section labels as the only structure. Keep the whole message focused; the labeled sections plus at most a couple of trailing lines, not a wall of text.`;
 
@@ -395,8 +412,9 @@ export async function runOnce(opts) {
   diningContext.depletion = healthAffectsPlans ? healthContext.worst : null;
 
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
+  const openCapabilityRequests = loadOpenCapabilityRequests(args.capabilityRequestsPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, now, healthContext, healthAffectsPlans });
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now, healthContext, healthAffectsPlans });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });

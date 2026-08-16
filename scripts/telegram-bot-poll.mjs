@@ -14,8 +14,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
+import { applyManualChargesToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
+import { spawnDetachedLauncher } from './claude-code-run.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
 import {
@@ -64,6 +66,8 @@ function parseArgs(argv) {
     goalsChangelogPath: path.join(repoDataDir, 'goals-changelog.jsonl'),
     pendingClarificationsPath: path.join(repoDataDir, 'telegram-pending-clarifications.json'),
     messageAttemptsPath: path.join(repoDataDir, 'telegram-message-attempts.json'),
+    transactionOverridesPath: path.join(repoDataDir, 'transaction_overrides.json'),
+    capabilityRequestsPath: path.join(repoDataDir, 'bot-capability-requests.json'),
     updatesFixture: null,
     dryRun: false,
     once: false,
@@ -95,6 +99,9 @@ function parseArgs(argv) {
       else if (key === 'conversation-log-path') args.conversationLogPath = value;
       else if (key === 'goals-changelog-path') args.goalsChangelogPath = value;
       else if (key === 'pending-clarifications-path') args.pendingClarificationsPath = value;
+      else if (key === 'message-attempts-path') args.messageAttemptsPath = value;
+      else if (key === 'transaction-overrides-path') args.transactionOverridesPath = value;
+      else if (key === 'capability-requests-path') args.capabilityRequestsPath = value;
       else if (key === 'updates-fixture') args.updatesFixture = value;
       else if (key === 'max-duration-ms') args.maxDurationMs = Number(value);
       else if (key === 'max-iterations') args.maxIterations = Number(value);
@@ -261,6 +268,15 @@ function loadMonthPlanEvents(monthPlanEventsPath) {
 function loadReminders(remindersPath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(remindersPath, 'utf8'));
+    return { ...parsed, items: parsed.items || [] };
+  } catch {
+    return { items: [] };
+  }
+}
+
+function loadCapabilityRequests(requestsPath) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(requestsPath, 'utf8'));
     return { ...parsed, items: parsed.items || [] };
   } catch {
     return { items: [] };
@@ -603,9 +619,11 @@ async function naturalizeBatch({ apiKey, items, rephraseClient }) {
   }
 }
 
-async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient, authPausePath }) {
+async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides, capabilityRequests, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient, authPausePath }) {
   const rawText = message.text || '';
   const text = stripMention(rawText, botUsername);
+  const overridesState = transactionOverrides || { manualCharges: [] };
+  const requestsState = capabilityRequests || { items: [] };
 
   // Multi-turn clarification (2026-08-02): if this sender has a still-live
   // pending question, this message is treated as answering it — skip
@@ -617,12 +635,12 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
 
   if (!livePending) {
     const detResult = tryDeterministicParse(text, todos, owner);
-    if (detResult) return { todos: detResult.todos, monthPlanEvents, routineOverrides, goals, reminders, reply: detResult.reply, pendingClarification: null };
+    if (detResult) return { todos: detResult.todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: detResult.reply, pendingClarification: null };
   }
 
   if (!apiKey && !anthropicClient) {
     appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: 'no_api_key' });
-    return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: livePending };
+    return { todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: helpText(rawText), pendingClarification: livePending };
   }
 
   try {
@@ -642,14 +660,14 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
       const textBlock = llmResponse.content.find((c) => c.type === 'text');
       if (!textBlock) {
         appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: 'no_tool_or_text' });
-        return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: null };
+        return { todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: helpText(rawText), pendingClarification: null };
       }
       // No tool called at all — Claude is asking a (further) clarifying
       // question rather than guessing. originalText anchors back to
       // whatever first triggered this exchange, not just this latest reply,
       // so a multi-round clarification doesn't lose the original ask.
       return {
-        todos, monthPlanEvents, routineOverrides, goals, reminders,
+        todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState,
         reply: textBlock.text,
         pendingClarification: { question: textBlock.text, originalText: livePending ? livePending.originalText : rawText, askedAt: now.toISOString() },
       };
@@ -660,6 +678,9 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     let newRoutineOverrides = routineOverrides;
     let newGoals = goals;
     let newReminders = reminders;
+    let newOverrides = overridesState;
+    let newRequests = requestsState;
+    const launchedRequests = [];
     const rawReplies = [];
     let stillNeedsClarification = null;
     // Set when a tool wrote to the Month Plan, i.e. when this turn is about to
@@ -722,6 +743,15 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         newReminders = result.reminders;
         rawReplies.push(result.reply);
         if (result.needsClarification) stillNeedsClarification = result.reply;
+      } else if (MANUAL_CHARGE_TOOL_NAMES.has(toolUse.name)) {
+        const result = impl(newOverrides, toolUse.input, owner);
+        newOverrides = result.overrides;
+        rawReplies.push(result.reply);
+      } else if (CAPABILITY_TOOL_NAMES.has(toolUse.name)) {
+        const result = impl(newRequests, toolUse.input, owner);
+        newRequests = result.requests;
+        rawReplies.push(result.reply);
+        if (result.launchedRequest) launchedRequests.push(result.launchedRequest);
       } else if (FINANCIAL_TOOL_NAMES.has(toolUse.name)) {
         // `now` so get_budget_status can say how many days are left in the
         // cycle without reaching for the real clock (tests inject it).
@@ -748,7 +778,7 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
 
     if (!rawReplies.length) {
       // every tool_use in this turn was unrecognized
-      return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, reply: helpText(rawText), pendingClarification: null };
+      return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, reply: helpText(rawText), pendingClarification: null };
     }
 
     // A tool call itself hit an ambiguity it can't resolve (e.g.
@@ -757,17 +787,17 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     // all, so the next message resolves it instead of dead-ending.
     if (stillNeedsClarification) {
       return {
-        todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders,
+        todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests,
         reply: rawReplies.join('\n'),
         pendingClarification: { question: stillNeedsClarification, originalText: livePending ? livePending.originalText : rawText, askedAt: now.toISOString() },
         touchedCalendar,
       };
     }
 
-    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, reply: rawReplies.join('\n'), pendingClarification: null, touchedCalendar };
+    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, launchedRequests, reply: rawReplies.join('\n'), pendingClarification: null, touchedCalendar };
   } catch (err) {
     appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: `llm_error:${err.message}` });
-    return { todos, monthPlanEvents, routineOverrides, goals, reminders, reply: helpText(rawText), pendingClarification: livePending };
+    return { todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: helpText(rawText), pendingClarification: livePending };
   }
 }
 
@@ -829,13 +859,17 @@ Use delete_todo (not mark_done) when a to-do is no longer relevant rather than f
 ## Money
 Budget and spending questions → get_budget_status. The household cares about **this month's spend**: what's logged, what's left, how many days are left, and whether that's on pace.
 Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.
+Cash, Venmo, babysitting cash, or any spend that will not come through a credit card / Monarch → add_manual_charge (tracker "joint" or an owner id). That is a real immediate budget line, not a decision note.
 
 ## Changing the real financial plan
 These tools REALLY change the plan, immediately — there is no review step.
 - A change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase) → update_phase_expense. Use the phases list in context to pick the right phaseId(s) and to see current expense labels for renaming.
 - There is no way to schedule a cost that changes on a future date. Set today's real current rate and expect to be told again when it actually changes.
 - A narrative ask instead of a dollar figure (an open question, a decision to track) → log_decision.
-Never simply apologize that you can't do something financial — one of these two almost always applies.
+- Cash / out-of-band spend on this cycle's budget → add_manual_charge, never log_decision.
+
+## When you cannot do what they asked
+If no existing tool can fulfill a real ask (not a missing dollar amount, not "which of these two events"), call request_capability with the ask, why the current tools fall short, and a proposed code change. That files a request and starts a Claude Code run to add the capability. Do not apologize and stop. Do not dump an unimplemented feature into log_decision.
 
 ## Defaults, and the one time to ask instead
 Prefer a reasonable default over a question: today's date as anchor, a default duration, an existing label.
@@ -969,6 +1003,11 @@ export async function runOnce(opts) {
   const pendingClarificationsSnapshot = JSON.stringify(pendingClarifications);
   let reminders = loadReminders(args.remindersPath);
   const remindersSnapshot = JSON.stringify(reminders);
+  let transactionOverrides = loadTransactionOverrides(args.transactionOverridesPath);
+  const overridesSnapshot = JSON.stringify(transactionOverrides);
+  let capabilityRequests = loadCapabilityRequests(args.capabilityRequestsPath);
+  const requestsSnapshot = JSON.stringify(capabilityRequests);
+  const pendingLaunches = [];
   const now = args.now || new Date();
   const calendarReadContext = loadCalendarReadContext(args);
   const calendarEventsForDining = await loadCalendarEventsForDining(calendarReadContext);
@@ -1005,7 +1044,7 @@ export async function runOnce(opts) {
 
     try {
       const result = await dispatchMessage({
-        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient, authPausePath: args.authPausePath || CALENDAR_AUTH_PAUSE_PATH,
+        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides, capabilityRequests, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient, authPausePath: args.authPausePath || CALENDAR_AUTH_PAUSE_PATH,
       });
       if (result.touchedCalendar) touchedCalendar = true;
       todos = result.todos;
@@ -1017,6 +1056,9 @@ export async function runOnce(opts) {
       routineOverrides = result.routineOverrides;
       goals = result.goals;
       reminders = result.reminders;
+      transactionOverrides = result.transactionOverrides || transactionOverrides;
+      capabilityRequests = result.capabilityRequests || capabilityRequests;
+      if (result.launchedRequests?.length) pendingLaunches.push(...result.launchedRequests);
       // Same load-mutate-writeback pattern as everything else above — a
       // second message from the same sender later in this very same batch
       // already sees the first one's pending question (or its resolution),
@@ -1168,11 +1210,51 @@ export async function runOnce(opts) {
     writeJson(args.remindersPath, reminders);
   }
 
+  const overridesChanged = JSON.stringify(transactionOverrides) !== overridesSnapshot;
+  if (overridesChanged && !args.dryRun) {
+    writeJson(args.transactionOverridesPath, transactionOverrides);
+    // Patch the live cycle view so get_budget_status / the dashboard see
+    // the cash charge before tomorrow's Monarch pull rebuilds this file.
+    // Dedup inside applyManualChargesToTracking makes re-applying the full
+    // list safe. A missing/unreadable tracking file must not fail the poll.
+    try {
+      if (fs.existsSync(args.budgetTrackingPath)) {
+        const tracking = JSON.parse(fs.readFileSync(args.budgetTrackingPath, 'utf8'));
+        applyManualChargesToTracking(tracking, transactionOverrides.manualCharges);
+        writeJson(args.budgetTrackingPath, tracking);
+        const buildScript = path.join(path.dirname(args.budgetTrackingPath), 'build-data.mjs');
+        if (fs.existsSync(buildScript)) spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });
+      }
+    } catch (err) {
+      appendPollLog(args.logPath || telegramPollLogPath(), `manual charge tracking patch failed: ${err.message || err}`);
+    }
+  }
+
+  const requestsChanged = JSON.stringify(capabilityRequests) !== requestsSnapshot;
+  if ((requestsChanged || pendingLaunches.length) && !args.dryRun) {
+    for (const item of pendingLaunches) {
+      const live = capabilityRequests.items.find((i) => i.id === item.id);
+      if (live) live.status = 'launched';
+    }
+    writeJson(args.capabilityRequestsPath, capabilityRequests);
+    const launch = args.capabilityLaunchFn || spawnDetachedLauncher;
+    for (const item of pendingLaunches) {
+      try {
+        launch({ requestId: item.id, requestsPath: args.capabilityRequestsPath });
+      } catch (err) {
+        appendPollLog(args.logPath || telegramPollLogPath(), `capability launch failed (${item.id}): ${err.message || err}`);
+        const live = capabilityRequests.items.find((i) => i.id === item.id);
+        if (live) live.status = 'open';
+        writeJson(args.capabilityRequestsPath, capabilityRequests);
+      }
+    }
+  }
+
   if (maxSafeUpdateId != null && !args.dryRun) {
     saveOffset(args.offsetPath, maxSafeUpdateId + 1);
   }
 
-  return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, remindersChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications, reminders };
+  return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, remindersChanged, overridesChanged, requestsChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications, reminders, transactionOverrides, capabilityRequests };
 }
 
 function appendPollLog(logPath, message) {

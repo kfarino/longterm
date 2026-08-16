@@ -545,6 +545,90 @@ export function log_decision(goals, { title, summary, status }) {
   return { goals, reply: `Added ✓ to the plan's open decisions: "${title.trim()}".` };
 }
 
+// Cash / Venmo / not-on-a-card spend. Survives the next morning's Monarch
+// rebuild because it is stored in transaction_overrides.json (manualCharges),
+// not patched into budget_tracking.json alone. Call shape (overrides, args,
+// owner) — see MANUAL_CHARGE_TOOL_NAMES.
+export function add_manual_charge(overrides, { tracker, merchant, amount, date, category, note }, owner) {
+  if (!overrides) overrides = { manualCharges: [] };
+  if (!Array.isArray(overrides.manualCharges)) overrides.manualCharges = [];
+  if (!tracker || !String(tracker).trim()) {
+    return { overrides, reply: "Couldn't add that — need which budget (joint, or whose personal)." };
+  }
+  if (!merchant || !String(merchant).trim()) {
+    return { overrides, reply: "Couldn't add that — missing the merchant / who was paid." };
+  }
+  const dollars = Math.round(Math.abs(Number(amount)) * 100) / 100;
+  if (!(dollars > 0)) {
+    return { overrides, reply: "Couldn't add that — missing a dollar amount." };
+  }
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { overrides, reply: "Couldn't add that — need a specific date (YYYY-MM-DD)." };
+  }
+  const resolvedTracker = String(tracker).trim().toLowerCase();
+  const charge = {
+    date,
+    merchant: String(merchant).trim(),
+    amount: dollars,
+    category: (category && String(category).trim()) || 'Uncategorized',
+  };
+  if (resolvedTracker === 'joint') charge.tracker = 'joint';
+  else charge.owner = resolvedTracker;
+  if (note && String(note).trim()) charge.note = String(note).trim();
+  if (owner) charge.addedBy = owner;
+  const already = overrides.manualCharges.some((c) => (
+    (c.tracker || c.owner) === (charge.tracker || charge.owner)
+    && c.date === charge.date
+    && String(c.merchant).toLowerCase() === charge.merchant.toLowerCase()
+    && Math.abs(Number(c.amount) - dollars) < 0.01
+  ));
+  if (already) {
+    const label = resolvedTracker === 'joint' ? 'joint' : `${resolvedTracker} personal`;
+    return { overrides, reply: `Already on the ${label} budget: ${fmtMoney(dollars)} at ${charge.merchant} on ${date}.` };
+  }
+  overrides.manualCharges.push(charge);
+  const label = resolvedTracker === 'joint' ? 'joint' : `${resolvedTracker} personal`;
+  return { overrides, reply: `Logged ✓ ${fmtMoney(dollars)} at ${charge.merchant} on ${date} to the ${label} budget.` };
+}
+
+export const MANUAL_CHARGE_TOOL_NAMES = new Set(['add_manual_charge']);
+
+function nextCapabilityId(requests) {
+  const max = (requests.items || []).reduce((m, r) => {
+    const n = parseInt(String(r.id).replace(/^c/, ''), 10);
+    return Number.isFinite(n) && n > m ? n : m;
+  }, 0);
+  return `c${max + 1}`;
+}
+
+// Bot cannot fulfill an ask with existing tools. Files a request and the
+// poller detaches a Claude Code run to implement it. Not a decision note,
+// not a pending-review gate.
+export function request_capability(requests, { ask, whyCant, proposedChange }, owner) {
+  if (!requests) requests = { items: [] };
+  if (!Array.isArray(requests.items)) requests.items = [];
+  if (!ask || !String(ask).trim()) {
+    return { requests, reply: "Couldn't file that — missing what you asked for." };
+  }
+  const item = {
+    id: nextCapabilityId(requests),
+    at: new Date().toISOString(),
+    sender: owner || null,
+    ask: String(ask).trim(),
+    whyCant: (whyCant && String(whyCant).trim()) || null,
+    proposedChange: (proposedChange && String(proposedChange).trim()) || null,
+    status: 'open',
+  };
+  requests.items.push(item);
+  return {
+    requests,
+    launchedRequest: item,
+    reply: "I can't do that with my current tools. I filed a code-update request and started it — I'll ping this chat when the new capability is in.",
+  };
+}
+
+export const CAPABILITY_TOOL_NAMES = new Set(['request_capability']);
+
 // --- Reminders (2026-08-05) ---
 // A one-off timed nudge the bot proactively announces once, on its date --
 // NOT a persistent household chore (see todos.json's own family-only scope).
@@ -978,6 +1062,35 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'add_manual_charge',
+    description: 'Log a cash / Venmo / not-on-a-card charge onto the current-cycle joint or personal budget. Use this whenever spend will not come through a credit card / Monarch (babysitting cash, a cash dinner, a person-to-person payment). This is a REAL immediate change — there is no review step. Do NOT use log_decision for this. tracker is "joint" or an owner id (kevin/hanna). Date as YYYY-MM-DD.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tracker: { type: 'string', description: '"joint" for the family budget, or an owner id (kevin, hanna) for that person\'s personal tracker.' },
+        merchant: { type: 'string', description: 'Who was paid / the label for this charge.' },
+        amount: { type: 'number', description: 'Dollar amount (positive).' },
+        date: { type: 'string', description: 'Spend date as YYYY-MM-DD.' },
+        category: { type: 'string', description: 'Budget category, e.g. Childcare, Dining, Groceries. Defaults to Uncategorized.' },
+        note: { type: 'string', description: 'Optional short note.' },
+      },
+      required: ['tracker', 'merchant', 'amount', 'date'],
+    },
+  },
+  {
+    name: 'request_capability',
+    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        ask: { type: 'string', description: 'What the user asked for, in their terms.' },
+        whyCant: { type: 'string', description: 'Which current tools fall short, and how.' },
+        proposedChange: { type: 'string', description: 'A concrete code change that would make this possible.' },
+      },
+      required: ['ask'],
+    },
+  },
+  {
     name: 'get_upcoming_shows',
     description: 'Report real upcoming shows/events (comedy, music) at the venues in venues_to_follow.json over roughly the next 2 weeks — live web search, Westside-weighted per the household\'s location preference. Only call this when the user actually asks about upcoming shows/events; it is not part of the automatic recap.',
     input_schema: {
@@ -1071,6 +1184,8 @@ export const TOOL_IMPL = {
   set_routine_day: (overrides, args) => set_routine_day(overrides, { occasion: args.occasion, dayOfWeek: args.dayOfWeek }),
   update_phase_expense: (goals, args) => update_phase_expense(goals, { phaseId: args.phaseId, expenseKey: args.expenseKey, renameFrom: args.renameFrom, amount: args.amount }),
   log_decision: (goals, args) => log_decision(goals, { title: args.title, summary: args.summary, status: args.status }),
+  add_manual_charge: (overrides, args, owner) => add_manual_charge(overrides, { tracker: args.tracker, merchant: args.merchant, amount: args.amount, date: args.date, category: args.category, note: args.note }, owner),
+  request_capability: (requests, args, owner) => request_capability(requests, { ask: args.ask, whyCant: args.whyCant, proposedChange: args.proposedChange }, owner),
   add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, owner }),
   list_reminders: (reminders) => list_reminders(reminders),
   cancel_reminder: (reminders, args) => cancel_reminder(reminders, { text: args.text, date: args.date }),

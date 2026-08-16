@@ -16,6 +16,7 @@ const FORBIDDEN_TRACKED = [
   /^data\/data\.js$/i,
   /^data\/transactions_ledger\.json$/i,
   /^data\/transaction_overrides\.json$/i,
+  /^data\/bot-capability-requests\.json$/i,
   /^data\/todos\.json$/i,
   /^data\/month_plan_events\.json$/i,
   /^data\/favorite_places.*\.json$/i,

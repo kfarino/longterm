@@ -28,7 +28,8 @@ These are gitignored. **Do not add exceptions. Do not `git add -f` them.**
 |---------------|-----|
 | `data/goals.json`, `accounts.json`, `budget_tracking.json` | Live plan + balances + cycle spend |
 | `data/transactions_ledger.json` | Accumulating Monarch line items (when ledger feature is enabled) |
-| `data/transaction_overrides.json` | Personal routing rules (when overrides file is in use) |
+| `data/transaction_overrides.json` | Personal routing rules + cash/manual charges |
+| `data/bot-capability-requests.json` | Bot "I can't do that" coding requests |
 | `data/data.js`, `kevin_hanna_goal_plan.md` | Generated views of real numbers |
 | `data/todos.json`, `month_plan_events.json`, `reminders.json` | Family ops |
 | `data/favorite_places*.json`, `venues_to_follow.json` | Dining/venue habits |
@@ -154,6 +155,13 @@ the reply path could see Google at all. Rules that follow from it:
 - Dining: `set_dinner_plan` only on explicit confirm; questions → `get_dining_plan`.
 - Direct `goals.json` edits by the bot are real and immediate — never invent a
   "pending review" step that doesn't exist.
+- Cash / Venmo / not-on-a-card spend on the current cycle → `add_manual_charge`
+  (stored in `transaction_overrides.json` `manualCharges`, survives the morning
+  pull). Do not dump that into `log_decision`.
+- An ask no existing tool can fulfill → `request_capability`. That files
+  `data/bot-capability-requests.json` and detaches `scripts/claude-code-run.mjs`
+  (`claude -p`). A launch failure must not kill the poll. Never invent a
+  human-review gate for this either.
 - `add_family_event` dedupes on name + date + time. A repeat ask is a no-op, not
   a second calendar entry.
 

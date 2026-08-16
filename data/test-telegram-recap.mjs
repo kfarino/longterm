@@ -67,7 +67,7 @@ const seedAccounts = () => ({
   balances: { brokerage: { kevin: { amount: 100000 }, hanna: { amount: 50000 } } },
 });
 
-function writeFixture(dir, { todos, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, goalsChangelog } = {}) {
+function writeFixture(dir, { todos, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, goalsChangelog, capabilityRequests } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const todosPath = path.join(dir, 'todos.json');
   const goalsPath = path.join(dir, 'goals.json');
@@ -78,6 +78,7 @@ function writeFixture(dir, { todos, goals, favoritePlaces, monthPlanEvents, budg
   const recapLogPath = path.join(dir, 'telegram-recap-log.jsonl');
   const unparsedPath = path.join(dir, 'telegram-unparsed.jsonl');
   const goalsChangelogPath = path.join(dir, 'goals-changelog.jsonl');
+  const capabilityRequestsPath = path.join(dir, 'bot-capability-requests.json');
   fs.writeFileSync(todosPath, JSON.stringify(todos ?? seedTodos(), null, 2));
   fs.writeFileSync(goalsPath, JSON.stringify(goals ?? seedGoals(), null, 2));
   fs.writeFileSync(favoritePlacesPath, JSON.stringify(favoritePlaces ?? seedFavoritePlaces(), null, 2));
@@ -85,7 +86,8 @@ function writeFixture(dir, { todos, goals, favoritePlaces, monthPlanEvents, budg
   fs.writeFileSync(budgetTrackingPath, JSON.stringify(budgetTracking ?? seedBudgetTracking(), null, 2));
   fs.writeFileSync(accountsPath, JSON.stringify(accounts ?? seedAccounts(), null, 2));
   if (goalsChangelog) fs.writeFileSync(goalsChangelogPath, goalsChangelog.map((n) => JSON.stringify(n)).join('\n') + '\n');
-  return { todosPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, recapLogPath, unparsedPath, goalsChangelogPath };
+  if (capabilityRequests) fs.writeFileSync(capabilityRequestsPath, JSON.stringify(capabilityRequests, null, 2));
+  return { todosPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, recapLogPath, unparsedPath, goalsChangelogPath, capabilityRequestsPath };
 }
 
 function baseOpts(paths, extra = {}) {
@@ -99,6 +101,7 @@ function baseOpts(paths, extra = {}) {
     recapLogPath: paths.recapLogPath,
     unparsedPath: paths.unparsedPath,
     goalsChangelogPath: paths.goalsChangelogPath,
+    capabilityRequestsPath: paths.capabilityRequestsPath,
     // Guaranteed-nonexistent by default so a test isn't accidentally reading
     // this machine's real google-calendar.env (2026-08-02: it now genuinely
     // exists). Tests wanting configured-calendar behavior already override
@@ -513,6 +516,24 @@ await asyncTest('recentPlanChanges reports the total count and the 2 most recent
   assert.equal(capturedBundle.recentPlanChanges.recent.length, 2);
   assert.ok(capturedBundle.recentPlanChanges.recent[1].includes('Au pair'), 'the most recent change should be last in the recent list');
   assert.ok(!capturedBundle.recentPlanChanges.recent.some((r) => r.includes('Oldest decision')), 'only the 2 most recent should be included, not every change verbatim');
+});
+
+await asyncTest('openCapabilityRequests reports unfinished code-update asks', async () => {
+  const dir = path.join(tmpRoot, 'capability-requests-open');
+  const paths = writeFixture(dir, {
+    capabilityRequests: {
+      items: [
+        { id: 'c1', ask: 'weekly recurring reminders', status: 'launched' },
+        { id: 'c2', ask: 'already shipped', status: 'done' },
+      ],
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'Recap.' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+  assert.equal(capturedBundle.openCapabilityRequests.count, 1);
+  assert.deepEqual(capturedBundle.openCapabilityRequests.recent, ['weekly recurring reminders']);
 });
 
 // Oura health signal (2026-08-06): health is reported on both cadence days,

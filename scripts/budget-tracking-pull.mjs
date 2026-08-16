@@ -379,34 +379,92 @@ export function spendAmount(transaction, overrides = null) {
   return Math.abs(value);
 }
 
+function manualChargeAmount(charge) {
+  return Math.round(Math.abs(Number(charge.amount)) * 100) / 100;
+}
+
+function isSameManualCharge(transaction, summary) {
+  return transaction.date === summary.date
+    && String(transaction.merchant).toLowerCase() === String(summary.merchant).toLowerCase()
+    && Math.abs(Number(transaction.amount) - summary.amount) < 0.01;
+}
+
+function applyChargeToMaps(state, charge, cycleStart) {
+  const amount = manualChargeAmount(charge);
+  if (!(amount > 0) || !charge.date || !charge.merchant || !state || !cycleStart) return;
+  const catDisplay = charge.category || 'Uncategorized';
+  const summary = { date: charge.date, merchant: charge.merchant, amount };
+  const already = [...state.categoryTransactions.values()].flat().some((t) => isSameManualCharge(t, summary));
+  if (already) return;
+  const txnDate = new Date(`${charge.date}T12:00:00`);
+  const b = weekBucket(txnDate, cycleStart);
+  if (b < 0) return;
+  state.buckets.set(b, Math.round(((state.buckets.get(b) || 0) + amount) * 100) / 100);
+  state.categoryTotals.set(catDisplay, Math.round(((state.categoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
+  if (!state.categoryTransactions.has(catDisplay)) state.categoryTransactions.set(catDisplay, []);
+  state.categoryTransactions.get(catDisplay).push(summary);
+}
+
 /**
- * Merge not-yet-in-Monarch personal charges into the per-owner accumulators.
- * Skips when Monarch already logged the same date + merchant + amount on that
- * owner (so a later pull that catches the real charge does not double-count).
+ * Merge not-yet-in-Monarch charges into the per-tracker accumulators.
+ * `tracker: "joint"` goes to jointState; `{ owner }` stays on that personal
+ * tracker. Skips when the same date + merchant + amount is already present
+ * (so a later pull that catches the real charge does not double-count).
  */
-export function applyManualCharges(personalState, manualCharges, personalCycleStart) {
+export function applyManualCharges(personalState, manualCharges, personalCycleStart, jointState, jointCycleStart) {
   for (const charge of manualCharges || []) {
+    if (charge?.tracker === 'joint') {
+      applyChargeToMaps(jointState, charge, jointCycleStart);
+      continue;
+    }
     const ownerId = charge?.owner;
-    const state = ownerId && personalState[ownerId];
+    const state = ownerId && personalState?.[ownerId];
     if (!state) continue;
-    const amount = Math.round(Math.abs(Number(charge.amount)) * 100) / 100;
+    applyChargeToMaps(state, charge, personalCycleStart);
+  }
+}
+
+function growWeeks(weeks, bucketIndex) {
+  while (weeks.length <= bucketIndex) {
+    weeks.push({ weekOf: `week ${weeks.length + 1}`, actual: 0, days: 7 });
+  }
+}
+
+/**
+ * Patch live budget_tracking.json trackers with manualCharges (bot path).
+ * Same dedup + cycle-window rules as applyManualCharges; used so a cash
+ * charge shows up in get_budget_status / the dashboard before the next
+ * morning Monarch pull rebuilds this file from overrides.
+ */
+export function applyManualChargesToTracking(tracking, manualCharges) {
+  for (const charge of manualCharges || []) {
+    const tracker = charge?.tracker === 'joint'
+      ? tracking?.joint
+      : tracking?.personal?.[charge?.owner || charge?.tracker];
+    if (!tracker || !tracker.cycleStart) continue;
+    const amount = manualChargeAmount(charge);
     if (!(amount > 0) || !charge.date || !charge.merchant) continue;
     const catDisplay = charge.category || 'Uncategorized';
     const summary = { date: charge.date, merchant: charge.merchant, amount };
-    const already = [...state.categoryTransactions.values()].flat().some(
-      (t) => t.date === summary.date
-        && String(t.merchant).toLowerCase() === String(summary.merchant).toLowerCase()
-        && Math.abs(Number(t.amount) - amount) < 0.01,
-    );
+    const already = (tracker.categories || []).flatMap((c) => c.transactions || []).some((t) => isSameManualCharge(t, summary));
     if (already) continue;
+    const cycleStart = new Date(`${tracker.cycleStart}T12:00:00`);
     const txnDate = new Date(`${charge.date}T12:00:00`);
-    const b = weekBucket(txnDate, personalCycleStart);
+    const b = weekBucket(txnDate, cycleStart);
     if (b < 0) continue;
-    state.buckets.set(b, Math.round(((state.buckets.get(b) || 0) + amount) * 100) / 100);
-    state.categoryTotals.set(catDisplay, Math.round(((state.categoryTotals.get(catDisplay) || 0) + amount) * 100) / 100);
-    if (!state.categoryTransactions.has(catDisplay)) state.categoryTransactions.set(catDisplay, []);
-    state.categoryTransactions.get(catDisplay).push(summary);
+    if (!Array.isArray(tracker.weeks)) tracker.weeks = [];
+    growWeeks(tracker.weeks, b);
+    tracker.weeks[b].actual = Math.round(((Number(tracker.weeks[b].actual) || 0) + amount) * 100) / 100;
+    if (!Array.isArray(tracker.categories)) tracker.categories = [];
+    let cat = tracker.categories.find((c) => c.name === catDisplay);
+    if (!cat) {
+      cat = { name: catDisplay, amount: 0, transactions: [] };
+      tracker.categories.push(cat);
+    }
+    cat.amount = Math.round(((Number(cat.amount) || 0) + amount) * 100) / 100;
+    cat.transactions.push(summary);
   }
+  return tracking;
 }
 
 /** Monarch: spend is negative, credits positive. Trip actual is net spend (credits reduce it). */
@@ -1023,7 +1081,17 @@ async function main() {
     }
 
     const overrides = loadTransactionOverrides();
-    applyManualCharges(personalState, overrides.manualCharges, personalCycleStart);
+    applyManualCharges(
+      personalState,
+      overrides.manualCharges,
+      personalCycleStart,
+      {
+        buckets: jointBuckets,
+        categoryTotals: jointCategoryTotals,
+        categoryTransactions: jointCategoryTransactions,
+      },
+      cycleStart,
+    );
 
     const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
 

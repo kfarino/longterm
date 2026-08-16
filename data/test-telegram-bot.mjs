@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status, get_budget_status } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, request_capability } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-bot-test-'));
@@ -93,7 +93,7 @@ const seedAccounts = () => ({
   balances: { brokerage: { kevin: { amount: 100000 }, hanna: { amount: 50000 } } },
 });
 
-function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, routineOverrides, conversationLog, pendingClarifications, reminders }) {
+function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, routineOverrides, conversationLog, pendingClarifications, reminders, transactionOverrides, capabilityRequests }) {
   fs.mkdirSync(dir, { recursive: true });
   const todosPath = path.join(dir, 'todos.json');
   const updatesPath = path.join(dir, 'updates.json');
@@ -110,6 +110,8 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   const goalsChangelogPath = path.join(dir, 'goals-changelog.jsonl');
   const pendingClarificationsPath = path.join(dir, 'pending-clarifications.json');
   const remindersPath = path.join(dir, 'reminders.json');
+  const transactionOverridesPath = path.join(dir, 'transaction_overrides.json');
+  const capabilityRequestsPath = path.join(dir, 'bot-capability-requests.json');
   fs.writeFileSync(todosPath, JSON.stringify(todos ?? seedTodos(), null, 2));
   fs.writeFileSync(updatesPath, JSON.stringify(updates, null, 2));
   fs.writeFileSync(ownersPath, JSON.stringify(owners ?? { '111': 'hanna', '222': 'kevin' }, null, 2));
@@ -122,7 +124,9 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   if (conversationLog) fs.writeFileSync(conversationLogPath, conversationLog.map((e) => JSON.stringify(e)).join('\n') + '\n');
   if (pendingClarifications) fs.writeFileSync(pendingClarificationsPath, JSON.stringify(pendingClarifications, null, 2));
   fs.writeFileSync(remindersPath, JSON.stringify({ meta: { description: 'test' }, items: reminders || [] }, null, 2));
-  return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath, remindersPath };
+  fs.writeFileSync(transactionOverridesPath, JSON.stringify(transactionOverrides ?? { manualCharges: [] }, null, 2));
+  fs.writeFileSync(capabilityRequestsPath, JSON.stringify(capabilityRequests ?? { items: [] }, null, 2));
+  return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath, remindersPath, transactionOverridesPath, capabilityRequestsPath };
 }
 
 function msg(updateId, { fromId = 111, text, replyToBot = false }) {
@@ -155,6 +159,8 @@ function baseOpts(paths, extra = {}) {
     goalsChangelogPath: paths.goalsChangelogPath,
     pendingClarificationsPath: paths.pendingClarificationsPath,
     remindersPath: paths.remindersPath,
+    transactionOverridesPath: paths.transactionOverridesPath,
+    capabilityRequestsPath: paths.capabilityRequestsPath,
     // Points at a guaranteed-nonexistent path by default, so a test isn't
     // accidentally reading this machine's real google-calendar.env (2026-08-02:
     // this file now genuinely exists once Calendar was actually set up, which
@@ -2124,6 +2130,112 @@ await asyncTest('omitting getUpdatesClient/getUpdatesTimeoutSeconds preserves th
   const paths = writeFixture(dir, { updates: { ok: true, result: [] } });
   const result = await runOnce(baseOpts(paths, {}));
   assert.ok(result, 'runOnce should complete normally with no new options supplied');
+});
+
+test('add_manual_charge appends a joint cash line and does not invent a review step', () => {
+  const overrides = { manualCharges: [] };
+  const result = add_manual_charge(overrides, {
+    tracker: 'joint', merchant: 'Test Bistro', amount: 80, date: '2026-08-15', category: 'Dining',
+  }, 'kevin');
+  assert.equal(result.overrides.manualCharges.length, 1);
+  assert.equal(result.overrides.manualCharges[0].tracker, 'joint');
+  assert.equal(result.overrides.manualCharges[0].merchant, 'Test Bistro');
+  assert.equal(result.overrides.manualCharges[0].amount, 80);
+  assert.equal(result.overrides.manualCharges[0].date, '2026-08-15');
+  assert.equal(result.overrides.manualCharges[0].category, 'Dining');
+  assert.match(result.reply, /Logged ✓/);
+  assert.doesNotMatch(result.reply, /review/i);
+});
+
+test('add_manual_charge missing merchant or amount replies with a clear error and adds nothing', () => {
+  const overrides = { manualCharges: [] };
+  const missingMerchant = add_manual_charge(overrides, { tracker: 'joint', amount: 80, date: '2026-08-15' }, 'kevin');
+  assert.equal(missingMerchant.overrides.manualCharges.length, 0);
+  assert.match(missingMerchant.reply, /merchant/i);
+  const missingAmount = add_manual_charge(overrides, { tracker: 'joint', merchant: 'Test Bistro', date: '2026-08-15' }, 'kevin');
+  assert.equal(missingAmount.overrides.manualCharges.length, 0);
+  assert.match(missingAmount.reply, /amount/i);
+});
+
+test('request_capability files an open item instead of pretending a review exists', () => {
+  const requests = { items: [] };
+  const result = request_capability(requests, {
+    ask: 'Add a weekly meal-prep reminder that recurs',
+    whyCant: 'add_reminder is one-off only',
+    proposedChange: 'Add recurrenceWeeks to add_reminder',
+  }, 'kevin');
+  assert.equal(result.requests.items.length, 1);
+  assert.equal(result.requests.items[0].status, 'open');
+  assert.equal(result.requests.items[0].ask, 'Add a weekly meal-prep reminder that recurs');
+  assert.equal(result.requests.items[0].sender, 'kevin');
+  assert.match(result.reply, /code-update/i);
+  assert.doesNotMatch(result.reply, /pending review/i);
+});
+
+test('request_capability missing ask replies with a clear error and adds nothing', () => {
+  const requests = { items: [] };
+  const result = request_capability(requests, { whyCant: 'no tool' }, 'hanna');
+  assert.equal(result.requests.items.length, 0);
+  assert.match(result.reply, /missing/i);
+});
+
+await asyncTest('add_manual_charge via the bot persists the override and patches live joint tracking', async () => {
+  const dir = path.join(tmpRoot, 'add-manual-charge-joint');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: 'log $80 cash at Test Bistro to the joint budget on Aug 15' })] },
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-07-25',
+        weeks: [
+          { weekOf: 'Jul 25–31', actual: 1000, days: 7 },
+          { weekOf: 'Aug 1–7', actual: 0, days: 7 },
+          { weekOf: 'Aug 8–14', actual: 0, days: 7 },
+          { weekOf: 'Aug 15–21', actual: 10, days: 7 },
+        ],
+        cycleDays: 30,
+        categories: [{ name: 'Groceries', amount: 100, transactions: [{ date: '2026-07-26', merchant: 'Test Market', amount: 100 }] }],
+      },
+      personal: { kevin: { cycleStart: '2026-08-01', weeks: [{ actual: 0, days: 7 }], categories: [] } },
+      travel: { trips: [], unmatched: [] },
+    },
+  });
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'add_manual_charge', input: { tracker: 'joint', merchant: 'Test Bistro', amount: 80, date: '2026-08-15', category: 'Dining' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic, dryRun: false }));
+  assert.match(result.sentReplies[0], /Logged ✓/);
+  const overrides = JSON.parse(fs.readFileSync(paths.transactionOverridesPath, 'utf8'));
+  assert.equal(overrides.manualCharges[0].tracker, 'joint');
+  assert.equal(overrides.manualCharges[0].merchant, 'Test Bistro');
+  const tracking = JSON.parse(fs.readFileSync(paths.budgetTrackingPath, 'utf8'));
+  assert.equal(tracking.joint.weeks[3].actual, 90);
+  const dining = tracking.joint.categories.find((c) => c.name === 'Dining');
+  assert.ok(dining);
+  assert.equal(dining.amount, 80);
+});
+
+await asyncTest('request_capability via the bot persists an open request and starts a code-update launch', async () => {
+  const dir = path.join(tmpRoot, 'request-capability-launch');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: 'make reminders recur weekly' })] },
+  });
+  const launches = [];
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'request_capability', input: { ask: 'weekly recurring reminders', whyCant: 'add_reminder is one-off', proposedChange: 'add recurrenceWeeks' } }],
+  });
+  const result = await runOnce(baseOpts(paths, {
+    anthropicClient: mockAnthropic,
+    dryRun: false,
+    capabilityLaunchFn: (opts) => { launches.push(opts); },
+  }));
+  assert.match(result.sentReplies[0], /code-update/i);
+  const onDisk = JSON.parse(fs.readFileSync(paths.capabilityRequestsPath, 'utf8'));
+  assert.equal(onDisk.items.length, 1);
+  assert.equal(onDisk.items[0].ask, 'weekly recurring reminders');
+  assert.equal(onDisk.items[0].status, 'launched');
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0].requestId, onDisk.items[0].id);
 });
 
 console.log('All tests passed.');
