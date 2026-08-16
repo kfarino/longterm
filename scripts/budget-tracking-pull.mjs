@@ -1110,14 +1110,14 @@ async function main() {
     }
 
     // Sorted descending by amount — drives the dashboard's spend-by-category
-    // drill-down. Each category also carries its own transactions (sorted
-    // chronologically), for that drill-down's own line-item drill-down.
+    // drill-down. Each category also carries its own transactions (newest
+    // first), for that drill-down's own line-item drill-down.
     function categoryTotalsToArray(totals, transactionsByCategory) {
       return [...totals.entries()]
         .map(([name, amount]) => ({
           name,
           amount,
-          transactions: (transactionsByCategory.get(name) || []).slice().sort((a, b) => a.date.localeCompare(b.date)),
+          transactions: (transactionsByCategory.get(name) || []).slice().sort((a, b) => b.date.localeCompare(a.date)),
         }))
         .sort((a, b) => b.amount - a.amount);
     }

@@ -234,8 +234,8 @@ await test('renderCategoryDrilldown: renders every category (with its own line-i
   assert.ok(withData.includes('Dining') && withData.includes('$250'));
   assert.ok(withData.indexOf('Groceries') < withData.indexOf('Dining'), 'should preserve input order (server pre-sorts)');
 
-  // Line items sorted chronologically by the pull script — rendered as-is.
-  assert.ok(withData.indexOf('Trader Joes') < withData.indexOf('Erewhon'), 'category transactions should render in the given (chronological) order');
+  // Newest first, even when the source array is chronological.
+  assert.ok(withData.indexOf('Erewhon') < withData.indexOf('Trader Joes'), 'category line items should render most-recent first');
   assert.ok(withData.includes('No line items recorded'), 'a category with an empty transactions array should show its own fallback');
 
   const empty = d.renderCategoryDrilldown([], 'drill-test-2');

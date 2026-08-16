@@ -568,7 +568,7 @@ function renderCategoryDrilldown(categories, drillId) {
   const rows = categories.map((c, i) => {
     const catDrillId = `${drillId}-cat-${i}`;
     const txRows = (c.transactions && c.transactions.length)
-      ? c.transactions.map((tx) => trHTML(`${tx.date} · ${tx.merchant}`, fmt(tx.amount))).join('')
+      ? [...c.transactions].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((tx) => trHTML(`${tx.date} · ${tx.merchant}`, fmt(tx.amount))).join('')
       : `<div class="callout">No line items recorded.</div>`;
     return `
       <div class="tr exp-toggle" onclick="toggleDrilldown('${catDrillId}')" style="cursor:pointer">
