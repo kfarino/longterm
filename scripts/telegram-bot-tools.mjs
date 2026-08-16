@@ -764,7 +764,7 @@ function guidanceSentence(g) {
 // Croatia goal.
 export function get_savings_goals(financialContext) {
   const lines = financialContext.savingsGoals.map(
-    (g) => `${g.name}: ${fmtMoney(g.current)} / ${fmtMoney(g.targetAmount)} (${g.pct}%)`
+    (g) => `${g.name}${g.status && g.status !== 'active' ? ` [${g.status}]` : ''}: ${fmtMoney(g.current)} / ${fmtMoney(g.targetAmount)} (${g.pct}%)`
   );
   return { reply: lines.length ? lines.join('\n') : 'No savings goals found.' };
 }

@@ -114,6 +114,14 @@ await test('Status includes the savings-goal module, positioned right after the 
   assert.ok(html.indexOf('Today') < html.indexOf('Progress toward targets'), 'savings goals should come after the Today module, not before it');
 });
 
+await test('a paused savings goal is labeled paused on Status', () => {
+  const d = loadDashboard({
+    goals: [{ name: 'Test Fund', targetAmount: 10000, current: 0, status: 'paused', color: '#2d6a3f', note: 'paused for test' }],
+  });
+  d.show('position', fakeTab());
+  assert.ok(d.elements['sub-status'].innerHTML.includes('Test Fund (paused)'), 'paused goals should show the status next to the name');
+});
+
 await test('first showPosition(trajectory) constructs Chart once; switching away+back does not duplicate it', () => {
   const d = loadDashboard();
   let chartCalls = 0;

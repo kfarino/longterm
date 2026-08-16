@@ -5,9 +5,6 @@
 
 ## 🔴 Do this week (highest priority)
 
-- [ ] **Open dedicated HYSA — "Sabbatical Fund"**
-  Auto-transfer $2,500/mo. Separate from all other accounts. Do not touch.
-
 - [ ] **Review Hero employment agreement**
   Check for consulting conflict of interest clauses — especially relevant given Hanna's healthtech startup and Kevin's consulting in adjacent spaces.
 
@@ -53,14 +50,16 @@
 | Q1 2026 | Consulting client secured? If not, accelerate job search |
 | Q3 2026 | Hanna investor commitment confirmed before Sept transition? |
 | Sept 2026 | Hanna officially transitions — Phase 2 begins |
-| End of 2027 | Kevin at $300K? If not, reassess sabbatical fund gap |
-| 2030 | Sabbatical go/no-go — is the fund at $150K? Is Hanna's company stable? |
-| 2033 | Croatia — is brokerage at ~$686K? Begin property search. |
+| End of 2027 | Kevin at $300K? If not, reassess path — sabbatical funding stays paused until ~2028 |
+| ~2028 | Sabbatical funding reevaluate — Marvelous clearer? Europe sooner? Then decide whether to start a dedicated fund |
+| 2030 | Hanna's company stable? Croatia/Europe path still the plan? |
+| 2033 | Croatia — is brokerage at target? Begin property search. |
 
 ---
 
 ## 💬 Topics to revisit in future sessions
 
+- [ ] Sabbatical funding — paused until ~2028 (Marvelous + whether Europe happens sooner)
 - [ ] Croatian property research — real prices in Opatija vs. Šolta vs. Korčula
 - [ ] Hanna citizenship/EU property ownership advantages for Croatia purchase
 - [ ] Childcare cost — update base case when timing is clearer

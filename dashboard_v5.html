@@ -466,7 +466,7 @@ function renderGoalsSection() {
     return `
       <div class="goal">
         <div class="goal-head">
-          <span class="goal-name">${g.name}</span>
+          <span class="goal-name">${g.name}${g.status && g.status !== 'active' ? ` (${g.status})` : ''}</span>
           <span class="goal-num">${fmtM(current)} / ${fmtM(g.targetAmount)}</span>
         </div>
         <div class="goal-bar"><div class="goal-fill" style="width:${pct}%;background:${g.color}"></div></div>
