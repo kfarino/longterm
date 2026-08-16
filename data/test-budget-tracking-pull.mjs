@@ -610,13 +610,13 @@ test('applyManualChargesToTracking patches joint weeks[].actual and category lin
     joint: {
       cycleStart: '2026-07-25',
       weeks: [
-        { weekOf: 'Jul 25–31', actual: 100, days: 7 },
+        { weekOf: 'Jul 25–31', actual: 50, days: 7 },
         { weekOf: 'Aug 1–7', actual: 0, days: 7 },
         { weekOf: 'Aug 8–14', actual: 0, days: 7 },
         { weekOf: 'Aug 15–21', actual: 10, days: 7 },
       ],
       categories: [
-        { name: 'Groceries', amount: 100, transactions: [{ date: '2026-07-26', merchant: 'Test Market', amount: 100 }] },
+        { name: 'Groceries', amount: 50, transactions: [{ date: '2026-07-26', merchant: 'Test Market', amount: 50 }] },
       ],
     },
     personal: { kevin: { cycleStart: '2026-08-01', weeks: [{ actual: 0, days: 7 }], categories: [] } },
@@ -631,6 +631,7 @@ test('applyManualChargesToTracking patches joint weeks[].actual and category lin
   assert.equal(sitting.transactions.length, 1);
   assert.equal(sitting.transactions[0].merchant, 'Test Babysitter');
   assert.equal(sitting.transactions[0].date, '2026-08-15');
+  assert.deepEqual(tracking.joint.categories.map((c) => c.name), ['Babysitting', 'Groceries'], 'a larger new category should sort above smaller existing ones');
 });
 
 test('applyManualChargesToTracking skips a duplicate joint charge and charges before cycleStart', () => {

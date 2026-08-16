@@ -463,6 +463,14 @@ export function applyManualChargesToTracking(tracking, manualCharges) {
     }
     cat.amount = Math.round(((Number(cat.amount) || 0) + amount) * 100) / 100;
     cat.transactions.push(summary);
+    cat.transactions.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  }
+  for (const tracker of [
+    tracking?.joint,
+    ...Object.values(tracking?.personal || {}),
+  ].filter(Boolean)) {
+    if (!Array.isArray(tracker.categories)) continue;
+    tracker.categories.sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
   }
   return tracking;
 }

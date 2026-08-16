@@ -555,8 +555,8 @@ function toggleDrilldown(id) {
   el.style.display = el.style.display === 'block' ? 'none' : 'block';
 }
 
-// Sorted server-side (categoryTotalsToArray in budget-tracking-pull.mjs) —
-// rendered here in whatever order they arrive.
+// Highest spend first. Pull already sorts this way; cash patches and
+// snapshots can drift, so render re-sorts rather than trusting arrival order.
 // Each category row is itself a click-to-expand toggle (reusing the same
 // .exp-toggle/.exp-lines + toggleDrilldown() convention one level up) that
 // reveals that category's real line items — a category total on its own
@@ -565,7 +565,8 @@ function renderCategoryDrilldown(categories, drillId) {
   if (!categories || !categories.length) {
     return `<div class="exp-lines" id="${drillId}" style="display:none"><div class="callout">No category breakdown yet — populates after the next Monarch pull.</div></div>`;
   }
-  const rows = categories.map((c, i) => {
+  const ordered = [...categories].sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
+  const rows = ordered.map((c, i) => {
     const catDrillId = `${drillId}-cat-${i}`;
     const txRows = (c.transactions && c.transactions.length)
       ? [...c.transactions].sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).map((tx) => trHTML(`${tx.date} · ${tx.merchant}`, fmt(tx.amount))).join('')

@@ -227,12 +227,12 @@ await test('computeTrackerPacing: on-pace vs over-pace variance sign', () => {
 await test('renderCategoryDrilldown: renders every category (with its own line-item drill-down) and fallbacks when empty', () => {
   const d = loadDashboard();
   const withData = d.renderCategoryDrilldown([
-    { name: 'Groceries', amount: 400, transactions: [{ date: '2026-07-01', merchant: 'Trader Joes', amount: 280 }, { date: '2026-07-05', merchant: 'Erewhon', amount: 120 }] },
     { name: 'Dining', amount: 250, transactions: [] },
+    { name: 'Groceries', amount: 400, transactions: [{ date: '2026-07-01', merchant: 'Trader Joes', amount: 280 }, { date: '2026-07-05', merchant: 'Erewhon', amount: 120 }] },
   ], 'drill-test');
   assert.ok(withData.includes('Groceries') && withData.includes('$400'), 'should render category name and amount');
   assert.ok(withData.includes('Dining') && withData.includes('$250'));
-  assert.ok(withData.indexOf('Groceries') < withData.indexOf('Dining'), 'should preserve input order (server pre-sorts)');
+  assert.ok(withData.indexOf('Groceries') < withData.indexOf('Dining'), 'categories should render highest spend first');
 
   // Newest first, even when the source array is chronological.
   assert.ok(withData.indexOf('Erewhon') < withData.indexOf('Trader Joes'), 'category line items should render most-recent first');
