@@ -11,13 +11,15 @@
 // Control started blocking outright on 2026-08-02 once it moved from Evaluation to
 // Enforce mode (an automatic Windows transition, not something toggled by hand).
 // The venv's python.exe is a signed, trusted binary SAC doesn't gate.
+// Do NOT spawn Scripts\monarch-mcp-jamiew.exe — that pip console-script stub
+// is unsigned; SAC blocked it on 2026-08-17 (dialog may say "monarch.exe").
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { monarchEnvPath, monarchMcpExePath } from './longterm-paths.mjs';
+import { monarchEnvPath, monarchMcpExePath, resolveMonarchMcpLaunch } from './longterm-paths.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -75,7 +77,8 @@ class McpClient {
     this.nextId = 1;
     this.pending = new Map();
     this.stderrLines = [];
-    this.proc = spawn(mcpServerExe, [], {
+    const launch = resolveMonarchMcpLaunch(mcpServerExe);
+    this.proc = spawn(launch.command, launch.args, {
       cwd: repoRoot,
       env: { ...process.env, ...parseEnvFile(envFile) },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -236,8 +239,9 @@ async function main() {
   if (!fs.existsSync(args.envFile)) {
     throw new Error(`Missing Monarch env file: ${args.envFile}`);
   }
-  if (!fs.existsSync(args.mcpServerExe)) {
-    throw new Error(`Missing monarch-mcp-jamiew console script: ${args.mcpServerExe}`);
+  const launch = resolveMonarchMcpLaunch(args.mcpServerExe);
+  if (!fs.existsSync(launch.command)) {
+    throw new Error(`Missing signed venv Python: ${launch.command}`);
   }
   if (!fs.existsSync(args.outputPath)) {
     throw new Error(`Missing Finances accounts.json at ${args.outputPath}`);

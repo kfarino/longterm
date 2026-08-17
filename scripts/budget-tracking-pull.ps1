@@ -2,7 +2,7 @@ param(
     [string]$OutputPath = (Join-Path $PSScriptRoot '..\data\budget_tracking.json'),
     [string]$GoalsPath = (Join-Path $PSScriptRoot '..\data\goals.json'),
     [string]$EnvFile = (Join-Path $env:USERPROFILE '.longterm\monarch.env'),
-    [string]$McpServerExe = (Join-Path $env:USERPROFILE '.longterm\monarch-mcp-venv\Scripts\monarch-mcp-jamiew.exe'),
+    [string]$McpServerExe = (Join-Path $env:USERPROFILE '.longterm\monarch-mcp-venv\Scripts\python.exe'),
     [switch]$DryRun
 )
 

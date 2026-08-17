@@ -29,9 +29,31 @@ export function telegramPollLogPath() {
   return path.join(longtermHome(), 'logs', 'telegram-poll.log');
 }
 
-export function monarchMcpExePath() {
-  const exe = process.platform === 'win32' ? 'monarch-mcp-jamiew.exe' : 'monarch-mcp-jamiew';
+export function monarchMcpPythonPath() {
+  const exe = process.platform === 'win32' ? 'python.exe' : 'python';
   return path.join(longtermHome(), 'monarch-mcp-venv', process.platform === 'win32' ? 'Scripts' : 'bin', exe);
+}
+
+export function monarchMcpLaunchArgs() {
+  return ['-c', 'from server import run; run()'];
+}
+
+const UNSIGNED_MCP_STUBS = new Set(['monarch-mcp-jamiew.exe', 'monarch-mcp-jamiew']);
+
+// SAC blocks the unsigned pip console-script stub (Windows dialog may
+// shorten monarch-mcp-jamiew.exe to "monarch.exe"). Spawn signed venv
+// python instead. An explicit non-python override is left as-is for tests.
+export function resolveMonarchMcpLaunch(mcpServerExe) {
+  const base = path.basename(mcpServerExe || '').toLowerCase();
+  if (!mcpServerExe || UNSIGNED_MCP_STUBS.has(base) || base === 'python.exe' || base === 'python') {
+    return { command: monarchMcpPythonPath(), args: monarchMcpLaunchArgs() };
+  }
+  return { command: mcpServerExe, args: [] };
+}
+
+/** @deprecated Use resolveMonarchMcpLaunch — this is the signed venv python, not the jamiew stub. */
+export function monarchMcpExePath() {
+  return monarchMcpPythonPath();
 }
 
 export function ouraAppEnvPath() {

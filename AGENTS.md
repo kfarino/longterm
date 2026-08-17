@@ -109,7 +109,9 @@ derived figures out of `computeTrackerPacing` for that reason.
 
 ### Secrets and Windows
 Monarch MCP runs from `~/.longterm/monarch-mcp-venv` (signed Python), **not**
-`uvx` (Smart App Control blocks unsigned uv). Do not "simplify" back to uvx.
+`uvx` and **not** `monarch-mcp-jamiew.exe` (unsigned pip stub — Smart App
+Control blocked it 2026-08-17; the dialog may say "monarch.exe"). Spawn
+`python.exe -c "from server import run; run()"`. Do not "simplify" back to uvx.
 
 Oura refresh tokens are **single-use** — always persist the new refresh token
 after a refresh or the next pull breaks.

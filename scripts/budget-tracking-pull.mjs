@@ -7,14 +7,15 @@
 // see run-daily-pull.ps1 and install-scheduled-task.ps1 in this same folder.
 //
 // Runs monarch-mcp-jamiew from a persistent local venv (~/.longterm/monarch-mcp-venv)
-// rather than via `uvx`/`uv` — see networth-pull.mjs's header for why.
+// rather than via `uvx`/`uv` — see networth-pull.mjs's header for why. Spawns
+// the venv's signed python.exe, not the unsigned pip console-script stub.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { monarchEnvPath, monarchMcpExePath } from './longterm-paths.mjs';
+import { monarchEnvPath, monarchMcpExePath, resolveMonarchMcpLaunch } from './longterm-paths.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -78,7 +79,8 @@ class McpClient {
     this.nextId = 1;
     this.pending = new Map();
     this.stderrLines = [];
-    this.proc = spawn(mcpServerExe, [], {
+    const launch = resolveMonarchMcpLaunch(mcpServerExe);
+    this.proc = spawn(launch.command, launch.args, {
       cwd: repoRoot,
       env: { ...process.env, ...parseEnvFile(envFile) },
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -915,8 +917,9 @@ async function main() {
     return;
   }
 
+  const launch = resolveMonarchMcpLaunch(args.mcpServerExe);
   if (!fs.existsSync(args.envFile)) throw new Error(`Missing Monarch env file: ${args.envFile}`);
-  if (!fs.existsSync(args.mcpServerExe)) throw new Error(`Missing monarch-mcp-jamiew console script: ${args.mcpServerExe}`);
+  if (!fs.existsSync(launch.command)) throw new Error(`Missing signed venv Python: ${launch.command}`);
   if (!fs.existsSync(args.outputPath)) throw new Error(`Missing Finances budget_tracking.json at ${args.outputPath}`);
   if (!fs.existsSync(args.goalsPath)) throw new Error(`Missing Finances goals.json at ${args.goalsPath}`);
 
