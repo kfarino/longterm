@@ -1,16 +1,29 @@
-// Covers scripts/longterm-paths.mjs Monarch MCP launch: Smart App Control
-// blocks the unsigned pip console-script stub (monarch-mcp-jamiew.exe).
-// Spawn signed venv python instead. Invented paths only — no real env files.
+// Longterm/data/test-longterm-paths.mjs
+//
+// Permanent regression test (NOT a temp task script — do not delete). Locks
+// in the ~/.longterm/<service>.env naming convention every credential-
+// reading script in this codebase relies on, plus the Monarch MCP launch
+// (signed venv python, not the unsigned pip stub SAC blocks). Run with:
+//   node Longterm/data/test-longterm-paths.mjs
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import path from 'node:path';
-import { resolveMonarchMcpLaunch, monarchMcpPythonPath, monarchMcpLaunchArgs } from '../scripts/longterm-paths.mjs';
+import {
+  longtermHome,
+  ticketmasterEnvPath,
+  resolveMonarchMcpLaunch,
+  monarchMcpPythonPath,
+  monarchMcpLaunchArgs,
+} from '../scripts/longterm-paths.mjs';
 
+function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 console.log('test-longterm-paths.mjs');
 
-function test(name, fn) {
-  fn();
-  console.log(`  ok - ${name}`);
-}
+test('ticketmasterEnvPath returns ~/.longterm/ticketmaster.env', () => {
+  const expected = path.join(os.homedir(), '.longterm', 'ticketmaster.env');
+  assert.equal(ticketmasterEnvPath(), expected);
+  assert.equal(ticketmasterEnvPath(), path.join(longtermHome(), 'ticketmaster.env'));
+});
 
 test('default / jamiew stub / python all launch signed venv python -c', () => {
   const expected = { command: monarchMcpPythonPath(), args: monarchMcpLaunchArgs() };
