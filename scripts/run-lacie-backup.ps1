@@ -4,15 +4,17 @@ param(
     [string]$VolumeLabel = 'LaCie',
     [string]$DestProjectsRelative = 'Projects',
     [string]$LongtermSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Longterm'),
-    [string]$NikolaSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'nikola')
+    [string]$NikolaSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'nikola'),
+    [string]$TribeSource = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'tribe')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Mirror everything needed to run Longterm + nikola after a machine loss:
+# Mirror everything needed to run Longterm + nikola + tribe after a machine loss:
 #   Documents\Longterm  (incl. gitignored finance JSON)
 #   Documents\nikola
+#   Documents\tribe
 #   ~/.longterm         (*.env — Monarch/Telegram/Calendar/Oura/Spotify/Ticketmaster)
 #   ~/.monarch-mcp      (Monarch MCP session.pickle)
 #   ~/.ssh              (keys if present)
@@ -114,7 +116,8 @@ $projectExcludes = @(
     '.worktrees',
     'dist',
     'coverage',
-    '__pycache__'
+    '__pycache__',
+    '.next'
 )
 # Rebuildable — env files + session are what matter for restore.
 $longtermHomeExcludes = @(
@@ -135,6 +138,8 @@ try {
         -Dest (Join-Path $destRoot 'Longterm') -ExcludeDirs $projectExcludes -Mirror
     Invoke-RobocopyBackup -Name 'nikola' -Source $NikolaSource `
         -Dest (Join-Path $destRoot 'nikola') -ExcludeDirs $projectExcludes -Mirror
+    Invoke-RobocopyBackup -Name 'tribe' -Source $TribeSource `
+        -Dest (Join-Path $destRoot 'tribe') -ExcludeDirs $projectExcludes -Mirror
 
     foreach ($name in $homeFolders) {
         $source = Join-Path $homeRoot $name

@@ -9,8 +9,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# Daily mirror of Documents\Longterm + nikola plus restore secrets
-# (~/.longterm, ~/.monarch-mcp, ~/.ssh, ~/.scrooge) → Lacie\Projects.
+# Daily mirror of Documents\Longterm + nikola + tribe plus restore secrets
+# (~/.longterm, ~/.monarch-mcp, ~/.ssh) → Lacie\Projects.
 # Finds the disk by volume label "LaCie" (not a fixed drive letter). If the
 # drive is unplugged, run-lacie-backup.ps1 exits 0 and logs a skip.
 
@@ -57,7 +57,7 @@ $settings = New-ScheduledTaskSettingsSet `
 # No -WakeToRun — not worth waking the PC just for a USB mirror.
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-    -Description 'Daily robocopy for full Longterm restore: Documents\Longterm + nikola + ~/.longterm + ~/.monarch-mcp + ~/.ssh. Skips if Lacie unplugged. Log: %USERPROFILE%\.longterm\logs\lacie-backup.log' `
+    -Description 'Daily robocopy: Documents\Longterm + nikola + tribe + ~/.longterm + ~/.monarch-mcp + ~/.ssh. Skips if Lacie unplugged. Log: %USERPROFILE%\.longterm\logs\lacie-backup.log' `
     -Force | Out-Host
 
 Write-Host ("Registered scheduled task '{0}' daily at {1}." -f $TaskName, $Time)
