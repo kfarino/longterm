@@ -719,7 +719,7 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
       ? `${fmtMoney(left)} left`
       : `${fmtMoney(Math.abs(left))} over budget`;
     const daysLabel = g ? ` with ${g.daysRemaining} day${g.daysRemaining === 1 ? '' : 's'} to go` : '';
-    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${guidanceSentence(g)}`;
+    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${guidanceSentence(g, financialContext.budgetHabits)}`;
   };
   const personalLines = Object.values(personal || {})
     .map((p) => paceLine(p.label || p.displayName || 'Personal', p))
@@ -748,14 +748,31 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
  * cycle total — a forecast with no relationship to the goal. "You'll land at
  * $5,205" doesn't tell anyone what to do; "hold to $700/wk" does.
  */
-function guidanceSentence(g) {
-  if (!g || !g.pastHalfway || g.daysRemaining === 0) return '';
+function guidanceSentence(g, habits) {
+  if (!g || g.daysRemaining === 0) return '';
+  if (!g.pastHalfway) {
+    return habits?.headsUp ? ` ${habits.headsUp}` : '';
+  }
   if (g.remaining < 0) return ' Already past target for this cycle.';
-  const required = fmtMoney(g.requiredWeekly);
-  const current = fmtMoney(g.currentWeekly);
-  if (g.onTrack) return ` That's about ${required}/wk from here and you've been running ${current}/wk — on track.`;
-  const trim = fmtMoney(g.currentWeekly - g.requiredWeekly);
-  return ` To hit it, hold to about ${required}/wk from here — you've been running ${current}/wk, so trim about ${trim}/wk.`;
+  let rate;
+  if (g.leftoverDays) {
+    const daily = fmtMoney(g.requiredDaily);
+    rate = g.onTrack
+      ? ` That's about ${fmtMoney(g.remaining)} for the next ${g.daysRemaining} day${g.daysRemaining === 1 ? '' : 's'} — on track.`
+      : ` ${fmtMoney(g.remaining)} left for the next ${g.daysRemaining} day${g.daysRemaining === 1 ? '' : 's'} (~${daily}/day).`;
+  } else {
+    const required = fmtMoney(g.requiredWeekly);
+    const current = fmtMoney(g.currentWeekly);
+    if (g.onTrack) rate = ` That's about ${required}/wk from here and you've been running ${current}/wk — on track.`;
+    else {
+      const trim = fmtMoney(g.currentWeekly - g.requiredWeekly);
+      rate = ` To hit it, hold to about ${required}/wk from here — you've been running ${current}/wk, so trim about ${trim}/wk.`;
+    }
+  }
+  if (habits?.watchCategory && g.remaining >= 0) {
+    rate += ` Ease off ${habits.watchCategory} if you can.`;
+  }
+  return rate;
 }
 
 // Read-only — reports every savings goal's progress percentage.
@@ -1024,7 +1041,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_budget_status',
-    description: "Report this cycle's monthly spend: joint and each person's personal budget — logged so far, how much is left, how many days are left, projected total vs target, and whether that's on or over pace. This is the default answer to any budget/spending question. It does NOT include travel unless you ask for it.",
+    description: "Report this cycle's monthly spend: joint and each person's personal budget — logged so far, how much is left, how many days are left, and (past halfway) the rate that still hits target. Under a week left the reply uses leftover-days, not a weekly rate. It may include a prior-cycle habit heads-up even before halfway. This is the default answer to any budget/spending question. It does NOT include travel unless you ask for it.",
     input_schema: {
       type: 'object',
       properties: {

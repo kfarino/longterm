@@ -9,6 +9,7 @@
 // dashboard's script isn't loaded as a real ES module yet, so it can't
 // import this file, or vice versa).
 import fs from 'node:fs';
+import { loadBudgetHabits } from './cycle-history.mjs';
 
 // Mirrors dashboard_v5.html's computeTrackerPacing(): weights by
 // days-in-bucket, not entry count, so a trailing partial week doesn't skew
@@ -32,8 +33,10 @@ export function computeTrackerPacing(tracker) {
  * no relationship to the goal. This answers the actual question — what rate
  * gets us to target from here, and how far that is from the current rate.
  *
- * Expressed WEEKLY, not daily: the household reads this in a recap that lands
- * twice a week, so a weekly allowance is the unit they can act on.
+ * Expressed WEEKLY when at least a week remains: the household reads this in a
+ * recap that lands twice a week, so a weekly allowance is the unit they can
+ * act on. Under 7 days left (`leftoverDays`), consumers should use remaining
+ * dollars and `requiredDaily` instead — a weekly rate is the wrong unit.
  *
  * Deliberately separate from computeTrackerPacing, which is a byte-for-byte
  * duplicate of the dashboard's inline math and must not drift (AGENTS.md §2).
@@ -55,6 +58,8 @@ export function budgetGuidance(tracker, now = new Date()) {
   const currentWeekly = (tracker.total / daysElapsed) * 7;
   // Null once the cycle is over — there is no "rest of the cycle" to pace.
   const requiredWeekly = daysRemaining > 0 ? (remaining / daysRemaining) * 7 : null;
+  const requiredDaily = daysRemaining > 0 ? remaining / daysRemaining : null;
+  const leftoverDays = daysRemaining > 0 && daysRemaining < 7;
 
   return {
     daysElapsed,
@@ -62,6 +67,8 @@ export function budgetGuidance(tracker, now = new Date()) {
     remaining,
     currentWeekly,
     requiredWeekly,
+    requiredDaily,
+    leftoverDays,
     // Advice only past the midpoint (Kevin, 2026-08-13): earlier than that a
     // few days of noise reads as a trend, and there is still plenty of runway,
     // so corrective advice is premature and becomes background noise.
@@ -108,6 +115,10 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       label: joint.label || 'Joint',
       cycleStart: joint.cycleStart || null,
       cycleDays: joint.cycleDays || null,
+      // Name+amount only — habits compare this cycle's mix to closed-cycle
+      // usual shares. Merchant line items stay in loadTransactionDetail /
+      // budgetLineItems, not in the financialContext dump the bot LLM sees.
+      categories: (joint.categories || []).map((c) => ({ name: c.name, amount: Number(c.amount) || 0 })),
     },
     personal,
     travel: bt.travel.trips.map((t) => ({ label: t.label, actual: t.actual, budgetedAmount: t.budgetedAmount })),
@@ -188,7 +199,7 @@ export function loadTransactionDetail(budgetTrackingPath) {
 // files the same "degrade quietly" way dining-recommendation.mjs's context
 // loader does (a fresh checkout before these files exist shouldn't crash
 // the bot, just report emptier answers).
-export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath }) {
+export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath, cycleHistoryPath }) {
   let budgetStatus = { joint: null, personal: {}, travel: [] };
   try { budgetStatus = loadBudgetStatus(budgetTrackingPath, goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let savingsGoals = [];
@@ -197,5 +208,15 @@ export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPa
   try { decisions = loadDecisions(goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let transactions = [];
   try { transactions = loadTransactionDetail(budgetTrackingPath); } catch { /* missing/unparseable — degrade to empty */ }
-  return { budgetStatus, savingsGoals, decisions, transactions };
+  let budgetHabits = { sampleSize: 0, headsUp: null, watchCategory: null };
+  try {
+    if (cycleHistoryPath) {
+      budgetHabits = loadBudgetHabits(
+        cycleHistoryPath,
+        budgetStatus.joint?.categories,
+        budgetStatus.joint?.total,
+      );
+    }
+  } catch { /* missing/unparseable — degrade to empty */ }
+  return { budgetStatus, savingsGoals, decisions, transactions, budgetHabits };
 }

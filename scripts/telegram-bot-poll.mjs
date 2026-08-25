@@ -68,6 +68,7 @@ function parseArgs(argv) {
     messageAttemptsPath: path.join(repoDataDir, 'telegram-message-attempts.json'),
     transactionOverridesPath: path.join(repoDataDir, 'transaction_overrides.json'),
     capabilityRequestsPath: path.join(repoDataDir, 'bot-capability-requests.json'),
+    cycleHistoryPath: path.join(repoDataDir, 'cycle_history.json'),
     updatesFixture: null,
     dryRun: false,
     once: false,
@@ -102,6 +103,7 @@ function parseArgs(argv) {
       else if (key === 'message-attempts-path') args.messageAttemptsPath = value;
       else if (key === 'transaction-overrides-path') args.transactionOverridesPath = value;
       else if (key === 'capability-requests-path') args.capabilityRequestsPath = value;
+      else if (key === 'cycle-history-path') args.cycleHistoryPath = value;
       else if (key === 'updates-fixture') args.updatesFixture = value;
       else if (key === 'max-duration-ms') args.maxDurationMs = Number(value);
       else if (key === 'max-iterations') args.maxIterations = Number(value);
@@ -858,6 +860,7 @@ Use delete_todo (not mark_done) when a to-do is no longer relevant rather than f
 
 ## Money
 Budget and spending questions → get_budget_status. The household cares about **this month's spend**: what's logged, what's left, how many days are left, and whether that's on pace.
+The tool reply already phrases leftover-days (under a week left: remaining for the rest of this cycle, not $X/wk) and may include a prior-cycle habit heads-up even before halfway. After halfway it may name one watch category. Do not invent a weekly rate when the tool used leftover-days copy, and do not invent a category cue that is not in the tool reply.
 Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.
 Cash, Venmo, babysitting cash, or any spend that will not come through a credit card / Monarch → add_manual_charge (tracker "joint" or an owner id). That is a real immediate budget line, not a decision note.
 Babysitting is its own category — opt-in spend that enables date nights. Never label it Childcare. Childcare is the standing nanny/au pair cost on the long-term plan, not a current-cycle spend bucket for sitters.
@@ -1015,8 +1018,9 @@ export async function runOnce(opts) {
   const diningContext = loadDiningContext(args, routineOverrides, calendarEventsForDining);
   const financialContext = loadFinancialContext(args);
   // Paths threaded from args, not defaulted — otherwise a test injecting
-  // fixture paths would still read this machine's real data/oura/ and
-  // goals.json, the same leak calendarEnvPath is guarded against above.
+  // fixture paths would still read this machine's real data/oura/,
+  // cycle_history.json, and goals.json, the same leak calendarEnvPath is
+  // guarded against above.
   const healthContext = loadHealthContext({
     now, storeDir: args.ouraStoreDir, overridesPath: args.healthOverridesPath, goalsPath: args.goalsPath,
   });

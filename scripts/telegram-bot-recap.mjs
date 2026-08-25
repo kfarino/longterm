@@ -38,6 +38,7 @@ function parseArgs(argv) {
     routineOverridesPath: path.join(repoDataDir, 'dining-routine-overrides.json'),
     goalsChangelogPath: path.join(repoDataDir, 'goals-changelog.jsonl'),
     capabilityRequestsPath: path.join(repoDataDir, 'bot-capability-requests.json'),
+    cycleHistoryPath: path.join(repoDataDir, 'cycle_history.json'),
     ouraStoreDir: defaultOuraStoreDir(),
     healthOverridesPath: defaultHealthOverridesPath(),
     dryRun: false,
@@ -61,6 +62,7 @@ function parseArgs(argv) {
       else if (key === 'routine-overrides-path') args.routineOverridesPath = value;
       else if (key === 'goals-changelog-path') args.goalsChangelogPath = value;
       else if (key === 'capability-requests-path') args.capabilityRequestsPath = value;
+      else if (key === 'cycle-history-path') args.cycleHistoryPath = value;
       else if (key === 'oura-store-dir') args.ouraStoreDir = value;
       else if (key === 'health-overrides-path') args.healthOverridesPath = value;
       else throw new Error(`Unknown argument: ${arg}`);
@@ -261,10 +263,11 @@ function diningSummary(monthPlanEvents, diningContext, now = null) {
 function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now, healthContext, healthAffectsPlans }) {
   return {
     budgetStatus: financialContext.budgetStatus,
-    // Forward-looking "what rate still hits the target", weekly because this
-    // recap is what carries it. Null before the cycle's midpoint, which is the
-    // signal to the prompt that it's too early to give corrective advice.
+    // Forward-looking "what rate still hits the target". Always an object when
+    // the joint tracker has a cycle (pastHalfway false = no dollar-rate yet).
+    // leftoverDays means use remaining / requiredDaily, not $X/wk.
     budgetGuidance: budgetGuidance(financialContext.budgetStatus?.joint, now),
+    budgetHabits: financialContext.budgetHabits,
     budgetLineItems: budgetLineItemsOver100(financialContext),
     budgetRefunds: budgetRefundsThisCycle(financialContext),
     decisions: financialContext.decisions,
@@ -283,7 +286,9 @@ const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Tele
 
 Budget: report the joint tracker using real dollar figures from budgetStatus.joint — amount logged so far, the target, and what's left (target minus logged). Do NOT report a projected cycle total; a projection of where spending lands if nothing changes is not what the household wants to know.
 
-What they want is how to still hit the target. When budgetGuidance is present (it is null before the cycle is half over, and null is the signal to give no advice at all — just report the figures above), state it in weekly terms: budgetGuidance.requiredWeekly is what they can spend per week from here to land on target, budgetGuidance.currentWeekly is what they have actually been running, and budgetGuidance.daysRemaining is how long is left. If onTrack is true, say so plainly and briefly. If it is false, say what to hold to per week and roughly how much that means trimming (currentWeekly minus requiredWeekly). If remaining is negative they are already past target for the cycle — say that plainly rather than suggesting a rate. Keep this to a line or two; it is guidance, not a lecture, and never invent a number that is not in budgetGuidance.
+What they want is how to still hit the target. budgetGuidance is an object whenever the joint tracker has a cycle — it is not null before halfway. pastHalfway false means give NO dollar-rate advice (no $X/wk, no trim). leftoverDays true (under 7 days left) means do not say $X/wk at all: say what's left for the rest of this cycle using remaining and requiredDaily. Only when pastHalfway is true AND leftoverDays is false, state it in weekly terms: requiredWeekly is what they can spend per week from here, currentWeekly is what they have actually been running, daysRemaining is how long is left. If onTrack is true, say so plainly and briefly. If it is false, say what to hold to per week and roughly how much that means trimming (currentWeekly minus requiredWeekly). If remaining is negative they are already past target for the cycle — say that plainly rather than suggesting a rate.
+
+budgetHabits.headsUp may appear even before halfway — one prior-cycle habit cue, if present. After halfway, if budgetHabits.watchCategory is set, name that one category to ease off. Skip both if they are null. Never invent a category. Keep this to a line or two; it is guidance, not a lecture, and never invent a number that is not in budgetGuidance.
 
 Then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
 

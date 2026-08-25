@@ -16,6 +16,17 @@ import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { monarchEnvPath, monarchMcpExePath, resolveMonarchMcpLaunch } from './longterm-paths.mjs';
+import {
+  loadCycleHistory,
+  saveCycleHistory,
+  maybeArchiveOnRollover,
+  archiveClosedCycle,
+  previousJointCycleStarts,
+  cycleDaysBetween,
+  buildSnapshotFromCharges,
+  deliverCloseOuts,
+  defaultCloseOutNotifyFn,
+} from './cycle-history.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -28,6 +39,8 @@ function parseArgs(argv) {
     limit: 1000,
     dryRun: false,
     historyBackfillDays: null,
+    cycleHistoryPath: path.join(repoRoot, 'data', 'cycle_history.json'),
+    cycleHistoryBackfillCycles: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -47,6 +60,8 @@ function parseArgs(argv) {
       else if (key === 'mcp-server-exe') args.mcpServerExe = value;
       else if (key === 'limit') args.limit = Number.parseInt(value, 10);
       else if (key === 'history-backfill-days') args.historyBackfillDays = Number.parseInt(value, 10);
+      else if (key === 'cycle-history-path') args.cycleHistoryPath = value;
+      else if (key === 'cycle-history-backfill-cycles') args.cycleHistoryBackfillCycles = Number.parseInt(value, 10);
       else throw new Error(`Unknown argument: ${arg}`);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -507,6 +522,48 @@ function currentMonthStart(today) {
   return new Date(today.getFullYear(), today.getMonth(), 1);
 }
 
+function jointTargetFromGoals(goals, tracking) {
+  const key = tracking?.joint?.targetExpenseKey;
+  if (!key) return null;
+  const v = goals?.phases?.[0]?.expenses?.[key];
+  return v == null ? null : Number(v);
+}
+
+// Joint-only charges for closed-cycle backfill. Same card / travel / reassignment
+// routing as the live pull, but no merchant line items — just date, category, amount.
+function collectJointCharges(transactions, tracking) {
+  const overrides = loadTransactionOverrides();
+  const travelCategories = new Set((tracking.mapping?.travelCategoryNames || []).map((c) => c.toLowerCase()));
+  const jointLabels = new Set(tracking.mapping?.jointAccountLabels || []);
+  const personalLabelsByOwner = tracking.mapping?.personalAccountLabels || {};
+  const labelToOwnerId = new Map();
+  for (const [ownerId, labels] of Object.entries(personalLabelsByOwner)) {
+    for (const label of labels || []) labelToOwnerId.set(label, ownerId);
+  }
+  const charges = [];
+  for (const txn of transactions) {
+    const catDisplay = categoryName(txn, overrides) || 'Uncategorized';
+    const cat = catDisplay.toLowerCase();
+    if (travelCategories.has(cat)) continue;
+    const amount = spendAmount(txn, overrides);
+    if (amount === 0) continue;
+    const reassignment = trackerReassignment(txn, overrides);
+    if (reassignment?.reassignTo === 'exclude') continue;
+    const acct = accountLabel(txn);
+    let routeToJoint = false;
+    if (reassignment) {
+      if (reassignment.reassignTo === 'joint') routeToJoint = true;
+    } else if (labelToOwnerId.has(acct)) {
+      routeToJoint = false;
+    } else if (jointLabels.has(acct)) {
+      routeToJoint = true;
+    }
+    if (!routeToJoint) continue;
+    charges.push({ date: txn.date, category: catDisplay, amount: Math.round(amount * 100) / 100 });
+  }
+  return charges;
+}
+
 function daysInMonth(today) {
   return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
 }
@@ -909,6 +966,73 @@ async function runHistoryBackfill(args, tracking, today) {
   }
 }
 
+async function runCycleHistoryBackfill(args, tracking, goals, today) {
+  const n = args.cycleHistoryBackfillCycles;
+  if (!(n > 0)) throw new Error('cycle-history-backfill-cycles must be a positive integer');
+  const currentIso = isoDate(currentCycleStart(today));
+  const starts = previousJointCycleStarts(currentIso, n);
+  const oldest = starts[starts.length - 1];
+  const end = currentCycleStart(today);
+  end.setDate(end.getDate() - 1);
+  const endIso = isoDate(end);
+  const target = jointTargetFromGoals(goals, tracking);
+  const closedAt = new Date().toISOString();
+
+  const client = new McpClient({ mcpServerExe: args.mcpServerExe, envFile: args.envFile });
+  try {
+    await client.initialize();
+    const transactions = await fetchTransactions(client, oldest, endIso, args.limit);
+    const charges = collectJointCharges(transactions, tracking);
+    let history = loadCycleHistory(args.cycleHistoryPath);
+    // Insert oldest first so each unshift leaves newest at [0] — habits read
+    // cycles[0] as the most recently closed cycle.
+    for (let i = starts.length - 1; i >= 0; i -= 1) {
+      const cycleStart = starts[i];
+      const nextStart = i === 0 ? currentIso : starts[i - 1];
+      const snapshot = buildSnapshotFromCharges({
+        cycleStart,
+        cycleDays: cycleDaysBetween(cycleStart, nextStart),
+        target,
+        charges,
+        closedAt,
+      });
+      if (cycleStart !== starts[0]) snapshot.closeOutSent = true;
+      history = archiveClosedCycle(history, snapshot);
+    }
+    saveCycleHistory(args.cycleHistoryPath, history);
+    try {
+      const notifyFn = args.closeOutNotifyFn || defaultCloseOutNotifyFn;
+      await deliverCloseOuts(args.cycleHistoryPath, { notifyFn });
+    } catch (err) {
+      console.error('cycle close-out notify failed (backfill still ok):', sanitize(err.message || err));
+    }
+    console.log(JSON.stringify({
+      ok: true,
+      cycleHistoryBackfill: true,
+      cycles: starts,
+      transactionCount: transactions.length,
+      path: args.cycleHistoryPath,
+    }));
+  } catch (error) {
+    const stderrTail = client.stderrLines.slice(-5);
+    if (stderrTail.length > 0) {
+      error.message = `${error.message}${os.EOL}MCP stderr tail:${os.EOL}${stderrTail.join(os.EOL)}`;
+    }
+    throw error;
+  } finally {
+    client.close();
+  }
+}
+
+async function maybeNotifyCloseOut(args) {
+  try {
+    const notifyFn = args.closeOutNotifyFn || defaultCloseOutNotifyFn;
+    await deliverCloseOuts(args.cycleHistoryPath, { notifyFn });
+  } catch (err) {
+    console.error('cycle close-out notify failed (budget pull still ok):', sanitize(err.message || err));
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -931,6 +1055,21 @@ async function main() {
     await runHistoryBackfill(args, tracking, today);
     return;
   }
+
+  if (args.cycleHistoryBackfillCycles) {
+    await runCycleHistoryBackfill(args, tracking, goals, today);
+    return;
+  }
+
+  // Snapshot the closed joint cycle before this run overwrites the live file.
+  const newCycleStartIso = isoDate(currentCycleStart(today));
+  const rolled = maybeArchiveOnRollover(
+    loadCycleHistory(args.cycleHistoryPath),
+    tracking,
+    newCycleStartIso,
+    { target: jointTargetFromGoals(goals, tracking) },
+  );
+  if (rolled.archived) saveCycleHistory(args.cycleHistoryPath, rolled.history);
 
   const cycleStart = currentCycleStart(today); // joint cycle
   const personalCycleStart = currentMonthStart(today); // personal trackers (calendar month)
@@ -1174,6 +1313,8 @@ async function main() {
     refreshFavoritePlaces(favoriteRawPath, favoritePlacesPath, transactions, today, jointLabels, personalLabels);
 
     writeJson(args.outputPath, tracking);
+
+    await maybeNotifyCloseOut(args);
 
     const buildScript = path.join(path.dirname(args.outputPath), 'build-data.mjs');
     const result = spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });

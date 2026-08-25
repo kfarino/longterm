@@ -27,6 +27,7 @@ These are gitignored. **Do not add exceptions. Do not `git add -f` them.**
 | Path / secret | Why |
 |---------------|-----|
 | `data/goals.json`, `accounts.json`, `budget_tracking.json` | Live plan + balances + cycle spend |
+| `data/cycle_history.json` | Closed joint-cycle snapshots (totals + category amounts, no merchants) |
 | `data/transactions_ledger.json` | Accumulating Monarch line items (when ledger feature is enabled) |
 | `data/transaction_overrides.json` | Personal routing rules + cash/manual charges |
 | `data/bot-capability-requests.json` | Bot "I can't do that" coding requests |
@@ -91,6 +92,18 @@ Travel & Vacation charges match `goals.travel` by stay dates + 300-day
 lookback — **except** `budgetedAmount: null` (settled trips) get **no**
 lookback. Ambiguous or unmatched → `travel.unmatched` (ask a human). Never
 guess a trip.
+
+### Joint cycle snapshots
+The daily budget pull must archive `budget_tracking.json`'s joint tracker into
+`cycle_history.json` **before** rebuilding the live cycle. Missing that step on
+a 25th permanently loses the closed cycle (the live file only holds the current
+window). Telegram close-out is contained — a failed send must not fail the
+money pull, and `closeOutSent` stays false so it retries.
+
+### Rate vs leftover-days
+`budgetGuidance` weekly `$X/wk` only after halfway and when `daysRemaining >= 7`.
+Under a week left, leftover-days copy (what's left for the rest of this cycle).
+Prior-cycle habit heads-up may appear before halfway; the rate must not.
 
 ### Refunds vs payments
 Joint refunds are positive amounts that are **not** the card's own "Credit

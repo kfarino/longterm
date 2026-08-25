@@ -169,6 +169,7 @@ function baseOpts(paths, extra = {}) {
     // calendarReadClient/calendarReadCalendarIds, which take priority over
     // any env file regardless of this default.
     calendarEnvPath: path.join(path.dirname(paths.todosPath), 'no-such-google-calendar.env'),
+    cycleHistoryPath: path.join(path.dirname(paths.todosPath), 'no-such-cycle-history.json'),
     groupChatId: '-999',
     botUsername: 'TestBot',
     dryRun: true,
@@ -1334,6 +1335,35 @@ test('get_budget_status: already over target says so rather than suggesting a ra
   assert.match(reply, /\$500 over budget/);
   assert.match(reply, /Already past target/);
   assert.doesNotMatch(reply, /\/wk/, 'no weekly allowance when there is none left');
+});
+
+test('get_budget_status: under a week left, leftover-days not a weekly rate', () => {
+  const { reply } = get_budget_status(budgetCtx({ total: 4400 }), {}, new Date('2026-08-20T12:00:00'));
+  assert.match(reply, /4 days to go/);
+  assert.match(reply, /next 4 days/);
+  assert.match(reply, /~\$25\/day/);
+  assert.doesNotMatch(reply, /\/wk/, 'weekly rate is the wrong unit this close to the 25th');
+});
+
+test('get_budget_status: a prior-cycle habit heads-up is allowed before halfway', () => {
+  const ctx = {
+    ...budgetCtx(),
+    budgetHabits: { headsUp: 'Last cycle the last week ran hot on Test Dining.', watchCategory: 'Test Dining' },
+  };
+  const { reply } = get_budget_status(ctx, {}, new Date('2026-08-01T12:00:00'));
+  assert.match(reply, /Last cycle the last week ran hot on Test Dining/);
+  assert.doesNotMatch(reply, /hold to about/, 'still no dollar-rate before halfway');
+  assert.doesNotMatch(reply, /Ease off/, 'watch-category cue waits until past halfway');
+});
+
+test('get_budget_status: past halfway names one watch category when this cycle is running hot on it', () => {
+  const ctx = {
+    ...budgetCtx({ total: 1500 }),
+    budgetHabits: { headsUp: null, watchCategory: 'Test Dining' },
+  };
+  const { reply } = get_budget_status(ctx, {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /Ease off Test Dining/);
+  assert.match(reply, /on track/);
 });
 
 test('get_budget_status: a finished cycle gives no forward advice', () => {

@@ -107,6 +107,7 @@ function baseOpts(paths, extra = {}) {
     // exists). Tests wanting configured-calendar behavior already override
     // via calendarReadClient/calendarReadCalendarIds.
     calendarEnvPath: path.join(path.dirname(paths.todosPath), 'no-such-google-calendar.env'),
+    cycleHistoryPath: path.join(path.dirname(paths.todosPath), 'no-such-cycle-history.json'),
     // Defaults to a no-op so a test isn't accidentally making a real Oura API
     // call on a machine that happens to have real oura-*.env tokens (this one
     // does) — tests wanting to verify the live-pull-before-recap behavior
@@ -209,6 +210,72 @@ await asyncTest('budgetGuidance is null before the cycle midpoint, so the recap 
   await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
 
   assert.equal(capturedBundle.budgetGuidance.pastHalfway, false, 'the prompt reads this as "say nothing yet"');
+  assert.equal(capturedBundle.budgetHabits?.headsUp ?? null, null, 'no real cycle_history.json in tests');
+});
+
+await asyncTest('budgetGuidance leftoverDays is true when under a week remains', async () => {
+  const dir = path.join(tmpRoot, 'budget-guidance-leftover');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-07-05',
+        cycleDays: 30,
+        weeks: [{ actual: 4000, days: 28 }],
+        categories: [],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: mockTelegram }));
+  assert.equal(capturedBundle.budgetGuidance.leftoverDays, true);
+  assert.equal(capturedBundle.budgetGuidance.daysRemaining, 2);
+  assert.ok(capturedBundle.budgetGuidance.requiredDaily != null);
+});
+
+await asyncTest('bundle budgetHabits names a watch category when this cycle is above its usual share', async () => {
+  const dir = path.join(tmpRoot, 'budget-habits-watch');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-07-15',
+        cycleDays: 30,
+        weeks: [{ actual: 500, days: 18 }],
+        categories: [{ name: 'Test Dining', amount: 400 }, { name: 'Test Groceries', amount: 100 }],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: { trips: [] },
+    },
+  });
+  const historyPath = path.join(dir, 'cycle_history.json');
+  fs.writeFileSync(historyPath, JSON.stringify({
+    joint: {
+      cycles: [{
+        cycleStart: '2026-06-25',
+        cycleDays: 30,
+        total: 1000,
+        categories: [{ name: 'Test Groceries', amount: 800 }, { name: 'Test Dining', amount: 200 }],
+        weeks: [{ actual: 400, days: 7 }, { actual: 400, days: 7 }, { actual: 200, days: 7 }],
+        closeOutSent: true,
+      }],
+    },
+  }));
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, {
+    now: SUNDAY,
+    cycleHistoryPath: historyPath,
+    anthropicClient: mockAnthropic,
+    telegramClient: mockTelegram,
+  }));
+  assert.equal(capturedBundle.budgetHabits.watchCategory, 'Test Dining');
+  assert.ok(!JSON.stringify(capturedBundle.budgetHabits).includes('Test Bistro'));
 });
 
 await asyncTest('bundle includes budgetRefunds: every joint-tracker refund this cycle, and refunds are excluded from budgetLineItems', async () => {

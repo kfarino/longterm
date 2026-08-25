@@ -13,6 +13,7 @@ const FORBIDDEN_TRACKED = [
   /^data\/goals\.json$/i,
   /^data\/accounts\.json$/i,
   /^data\/budget_tracking\.json$/i,
+  /^data\/cycle_history\.json$/i,
   /^data\/data\.js$/i,
   /^data\/transactions_ledger\.json$/i,
   /^data\/transaction_overrides\.json$/i,
