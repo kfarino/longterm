@@ -809,7 +809,15 @@ function isBudgetPlanEvent(ev) {
   return ev && (ev.kind === 'dining' || ev.kind === 'family');
 }
 
-function planRemainingMonth(diningRoutine, budgetPacing, today, events, favorites, recentDiningActivity, lowKeyHangIdeas) {
+// Stay-window only (not the 300-day booking lookback). Dining skip is "are
+// we actually out of town that night." Kept identical to
+// scripts/dining-recommendation.mjs's tripCoveringDate.
+function tripCoveringDate(travel, dateIso) {
+  if (!dateIso || !Array.isArray(travel)) return null;
+  return travel.find((t) => t.startDate && t.endDate && dateIso >= t.startDate && dateIso <= t.endDate) || null;
+}
+
+function planRemainingMonth(diningRoutine, budgetPacing, today, events, favorites, recentDiningActivity, lowKeyHangIdeas, travel) {
   const cycleEnd = cycleEndDate(budgetPacing.cycleStart, budgetPacing.cycleDays);
   const todayISO = isoDate(today);
   const cycleEndISO = isoDate(cycleEnd);
@@ -852,6 +860,21 @@ function planRemainingMonth(diningRoutine, budgetPacing, today, events, favorite
         resolvedSlots.push({ date: dISO, isLive: false, ...ev, cost });
       }
       if (budgetEvents.length > 0) continue;
+    }
+
+    const away = tripCoveringDate(travel, dISO);
+    if (away) {
+      const routineEntry = diningRoutine.find((r) => r.dayOfWeek === d.getDay());
+      if (!routineEntry) continue;
+      resolvedSlots.push({
+        date: dISO,
+        isLive: false,
+        kind: 'travel',
+        name: away.trip || 'Away',
+        tier: 'low-key',
+        cost: 0,
+      });
+      continue;
     }
 
     const routineEntry = diningRoutine.find((r) => r.dayOfWeek === d.getDay());
@@ -1064,7 +1087,7 @@ async function computeMonthPlanProjectedSpend() {
   const routineOverrides = await loadRoutineOverrides();
   const diningRoutine = effectiveDiningRoutine(D.diningRoutine, routineOverrides);
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const plan = planRemainingMonth(diningRoutine, D.budgetTracking.joint, today, state.events, favorites, recentDiningActivity, D.lowKeyHangIdeas);
+  const plan = planRemainingMonth(diningRoutine, D.budgetTracking.joint, today, state.events, favorites, recentDiningActivity, D.lowKeyHangIdeas, D.travel);
   return plan.projectedSpend;
 }
 
@@ -1082,7 +1105,7 @@ async function renderMonthPlan() {
     : `<div class="callout">No favorites synced yet — ask Claude to sync your dining list from the Google Sheet. Ad-hoc events below still work; routine-day suggestions are limited until then.</div>`;
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const plan = planRemainingMonth(diningRoutine, joint, today, state.events, favorites, recentDiningActivity, lowKeyHangIdeas);
+  const plan = planRemainingMonth(diningRoutine, joint, today, state.events, favorites, recentDiningActivity, lowKeyHangIdeas, D.travel);
   const slotByDate = {};
   plan.slots.forEach((s) => { (slotByDate[s.date] = slotByDate[s.date] || []).push(s); });
 

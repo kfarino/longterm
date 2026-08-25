@@ -858,6 +858,20 @@ await asyncTest('get_dining_plan: a recurring evening calendar block (e.g. a dai
   assert.ok(result.suggestedName, 'a recurring personal-routine block is not a special commitment and should not suppress a suggestion — found live against a real recurring "Eat" reminder');
 });
 
+await asyncTest('get_dining_plan: a trip stay date suppresses the LA dining suggestion', () => {
+  const monthPlanEvents = { events: {} };
+  const context = {
+    ...diningContextFixture(),
+    travel: [{ id: 'boston', trip: 'Labor Day — Boston', startDate: '2026-08-28', endDate: '2026-09-07' }],
+  };
+  const away = get_dining_plan(monthPlanEvents, { occasion: 'family_dinner', now: new Date(2026, 7, 28, 12, 0, 0) }, context);
+  assert.equal(away.suggestedName, null);
+  assert.match(away.reply, /Labor Day — Boston/);
+  assert.doesNotMatch(away.reply, /Place A/);
+  const home = get_dining_plan(monthPlanEvents, { occasion: 'family_dinner', now: new Date(2026, 7, 25, 12, 0, 0) }, context);
+  assert.ok(home.suggestedName, 'the Wednesday before the trip should still get a suggestion');
+});
+
 await asyncTest('get_dining_plan: reports an already-decided plan instead of suggesting', async () => {
   const dir = path.join(tmpRoot, 'dining-get-existing');
   // Compute the next Wednesday so the fixture's pre-set event actually lines

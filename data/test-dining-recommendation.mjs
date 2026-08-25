@@ -9,7 +9,7 @@
 // behavior. Run with:
 //   node Longterm/data/test-dining-recommendation.mjs
 import assert from 'node:assert/strict';
-import { recommendForSlot } from '../scripts/dining-recommendation.mjs';
+import { recommendForSlot, tripCoveringDate } from '../scripts/dining-recommendation.mjs';
 
 function test(name, fn) {
   fn();
@@ -154,6 +154,18 @@ test('a low-key slot states the caller-supplied reason, not the budget default',
 test('a low-key slot with no reason supplied keeps the budget default', () => {
   const rec = recommendForSlot({ tier: 'low-key', dynamic: false }, [], [], ['Walk to the overlook'], new Set());
   assert.match(rec.reasoning, /Budget is tight/);
+});
+
+test('tripCoveringDate matches stay dates inclusive and ignores trips without dates', () => {
+  const travel = [
+    { id: 'skip', trip: 'Unplanned', startDate: null, endDate: null },
+    { id: 'boston', trip: 'Labor Day — Boston', startDate: '2026-08-28', endDate: '2026-09-07' },
+  ];
+  assert.equal(tripCoveringDate(travel, '2026-08-28')?.id, 'boston');
+  assert.equal(tripCoveringDate(travel, '2026-09-07')?.id, 'boston');
+  assert.equal(tripCoveringDate(travel, '2026-08-27'), null);
+  assert.equal(tripCoveringDate(travel, '2026-09-08'), null);
+  assert.equal(tripCoveringDate([], '2026-08-28'), null);
 });
 
 console.log('All tests passed.');

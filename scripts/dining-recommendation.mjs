@@ -58,6 +58,14 @@ export const OCCASION_DAY_OF_WEEK = {
   weekend_social: 6,
 };
 
+// Stay-window only (not the 300-day booking lookback). Dining skip is "are
+// we actually out of town that night," not "did we buy flights." First
+// matching trip wins. Mirrored in dashboard_v5.html.
+export function tripCoveringDate(travel, dateIso) {
+  if (!dateIso || !Array.isArray(travel)) return null;
+  return travel.find((t) => t?.startDate && t?.endDate && dateIso >= t.startDate && dateIso <= t.endDate) || null;
+}
+
 // Looks the routine entry up by its goals.json-native (static) day first —
 // deliberately not by an already-"moved" array — then overlays the current
 // override on the returned slot's dayOfWeek. Resolving fresh from the live

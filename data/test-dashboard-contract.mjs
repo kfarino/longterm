@@ -375,4 +375,20 @@ await test('loadRoutineOverrides degrades to all-null when the route/file is una
   assert.deepEqual(overrides, { family_dinner: null, date_night: null, weekend_social: null });
 });
 
+await test('planRemainingMonth shows an away chip instead of a live restaurant on a trip stay date', () => {
+  const d = loadDashboard();
+  const today = new Date(2026, 7, 26);
+  const budgetPacing = { cycleStart: '2026-08-25', cycleDays: 30, target: 5500, weeks: [{ actual: 0, days: 1 }] };
+  const routine = [{ dayOfWeek: 5, tier: 'mid', dynamic: true, requiresTag: 'dinnerSpot' }];
+  const travel = [{ id: 'boston', trip: 'Labor Day — Boston', startDate: '2026-08-28', endDate: '2026-09-07' }];
+  const favorites = [{ name: 'Test Bistro', list: 'go-to', dinnerSpot: true, observed: { tier: 'mid', avgSpend: 60 } }];
+  const plan = d.planRemainingMonth(routine, budgetPacing, today, {}, favorites, [], [], travel);
+  const away = plan.slots.find((s) => s.date === '2026-08-28');
+  assert.ok(away, 'Friday during the trip is a routine date-night');
+  assert.equal(away.isLive, false);
+  assert.equal(away.name, 'Labor Day — Boston');
+  assert.ok(!away.picks, 'must not generate an LA restaurant pick');
+  assert.equal(away.cost, 0);
+});
+
 console.log('All tests passed.');

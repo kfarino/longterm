@@ -210,10 +210,12 @@ function loadRoutineOverrides(routineOverridesPath) {
 function loadDiningContext({ goalsPath, favoritePlacesPath, routineOverridesPath }, calendarEvents = []) {
   let diningRoutine = [];
   let lowKeyHangIdeas = [];
+  let travel = [];
   try {
     const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
     diningRoutine = goals.diningRoutine || [];
     lowKeyHangIdeas = goals.lowKeyHangIdeas || [];
+    travel = goals.travel || [];
   } catch { /* missing/unparseable — dining summary degrades to empty */ }
   let favorites = [];
   let recentDiningActivity = [];
@@ -223,7 +225,7 @@ function loadDiningContext({ goalsPath, favoritePlacesPath, routineOverridesPath
     recentDiningActivity = fp.recentDiningActivity || [];
   } catch { /* missing/unparseable — dining summary degrades to empty */ }
   const routineOverrides = loadRoutineOverrides(routineOverridesPath);
-  return { diningRoutine, lowKeyHangIdeas, favorites, recentDiningActivity, routineOverrides, calendarEvents };
+  return { diningRoutine, lowKeyHangIdeas, favorites, recentDiningActivity, routineOverrides, calendarEvents, travel };
 }
 
 function loadMonthPlanEvents(monthPlanEventsPath) {
@@ -294,7 +296,7 @@ Then list every joint-card line item over $100 this cycle from budgetLineItems (
 
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 
-Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick or a "looks already covered" note is just mentioned in passing, not pushed for a reply.
+Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick, a "looks already covered" note, or a traveling/away note is just mentioned in passing, not pushed for a reply.
 
 Health: one short line per person from health.perOwner — how this week compared to that person's own baseline, using the real figures in their reason string. Never a bare adjective like "poor" or "fine" on its own; the numbers are the point, exactly as with budget pace. If someone's reason is "insufficient_data", say plainly that their baseline is still building and give the night count, rather than implying anything at all about how they slept. If health is null or health.configured is false, skip this section entirely. If healthAffectsPlans is false, report only — do not suggest changing any plan on the basis of health, and do not imply the weekend should be different.
 

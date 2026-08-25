@@ -509,6 +509,27 @@ await asyncTest('calendarSummary is populated from the configured read calendars
   assert.ok(capturedBundle.calendarSummary.includes('[Hanna] Yoga'));
 });
 
+await asyncTest('dining summary skips LA suggestions when the occasion date is a trip stay date', async () => {
+  const dir = path.join(tmpRoot, 'dining-away-trip');
+  const paths = writeFixture(dir, {
+    goals: {
+      ...seedGoals(),
+      travel: [{ id: 'boston', trip: 'Labor Day — Boston', startDate: '2026-08-28', endDate: '2026-09-07' }],
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  const mockTelegram = async () => ({ ok: true });
+  await runOnce(baseOpts(paths, {
+    now: new Date(2026, 7, 27, 9, 0, 0),
+    anthropicClient: mockAnthropic,
+    telegramClient: mockTelegram,
+  }));
+  assert.match(capturedBundle.dining.date_night.reply, /Labor Day — Boston/);
+  assert.match(capturedBundle.dining.weekend_social.reply, /traveling/);
+  assert.doesNotMatch(capturedBundle.dining.date_night.reply, /suggestion:/);
+});
+
 await asyncTest('a dining occasion already covered by an evening calendar event is reflected directly in the bundle, not just the composed text', async () => {
   const dir = path.join(tmpRoot, 'dining-calendar-coverage');
   const paths = writeFixture(dir);

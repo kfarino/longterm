@@ -19,7 +19,7 @@
 // tools' (todos, args, owner) signature, since they genuinely need
 // different inputs. telegram-bot-poll.mjs's dispatch branches on which
 // shape a given tool name expects.
-import { slotForOccasion, recommendForSlot, TIER_MIDPOINT, familyEventBudgetFields } from './dining-recommendation.mjs';
+import { slotForOccasion, recommendForSlot, TIER_MIDPOINT, familyEventBudgetFields, tripCoveringDate } from './dining-recommendation.mjs';
 // Pure function; financial-context.mjs does no work at import time, so this
 // keeps the tools module's "no fs of its own" property intact.
 import { budgetGuidance } from './financial-context.mjs';
@@ -266,6 +266,11 @@ export function get_dining_plan(monthPlanEvents, { occasion, now = null }, dinin
   if (coverage) {
     const names = coverage.map((c) => `${c.label}: ${c.title}`).join('; ');
     return { monthPlanEvents, reply: `${label} (${date}) looks already covered — ${names} that evening. No fresh suggestion generated — say the word if you still want one.`, date, suggestedName: null };
+  }
+  const away = tripCoveringDate(diningContext.travel, date);
+  if (away) {
+    const tripName = away.trip || 'a trip';
+    return { monthPlanEvents, reply: `${label} (${date}) — traveling (${tripName}). No dining suggestion.`, date, suggestedName: null };
   }
   const alreadyUsedNames = new Set([
     ...Object.values(monthPlanEvents.events).flat().map((e) => e.favoriteName || e.name).filter(Boolean),

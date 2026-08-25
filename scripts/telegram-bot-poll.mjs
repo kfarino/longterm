@@ -236,10 +236,12 @@ async function loadCalendarEventsForDining(calendarReadContext) {
 function loadDiningContext({ goalsPath, favoritePlacesPath }, routineOverrides, calendarEvents = []) {
   let diningRoutine = [];
   let lowKeyHangIdeas = [];
+  let travel = [];
   try {
     const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
     diningRoutine = goals.diningRoutine || [];
     lowKeyHangIdeas = goals.lowKeyHangIdeas || [];
+    travel = goals.travel || [];
   } catch {
     // missing/unparseable goals.json — dining tools just won't have routine slots to match.
   }
@@ -252,7 +254,7 @@ function loadDiningContext({ goalsPath, favoritePlacesPath }, routineOverrides, 
   } catch {
     // missing/unparseable favorite_places.json — recommendations degrade to "no fresh picks."
   }
-  return { diningRoutine, lowKeyHangIdeas, favorites, recentDiningActivity, routineOverrides, calendarEvents };
+  return { diningRoutine, lowKeyHangIdeas, favorites, recentDiningActivity, routineOverrides, calendarEvents, travel };
 }
 
 function loadMonthPlanEvents(monthPlanEventsPath) {
@@ -839,6 +841,7 @@ If the message is a question answerable from current state, call the relevant re
 Defaults are Wed/Fri/Sat respectively, but see the dining routine in context — they can be rescheduled.
 A dining plan has two states: a live suggestion (nothing stored, recomputed each time) and a confirmed pick (stored, pushed to Google Calendar).
 - Asked what the plan or suggestion is → get_dining_plan.
+- If get_dining_plan says they're traveling that day, report that — do not invent an LA restaurant.
 - Explicitly confirming or booking a specific choice → set_dinner_plan. Only then.
 - If they give a time ("5pm", "7:30") or duration ("for an hour"), pass time/durationHours so the calendar event lands on the right slot instead of a default 2-hour block.
 - Moving which weekday a routine occasion falls on ("move family dinner to Thursdays") → set_routine_day. Future scheduling only; it does not touch an already-confirmed plan.
