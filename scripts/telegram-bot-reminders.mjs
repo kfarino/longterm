@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 // Finances/Longterm/scripts/telegram-bot-reminders.mjs
-// Sends any one-off reminders due today (or earlier -- see the <= catch-up
-// note below) as a single grouped Telegram message into the same group the
-// interactive bot uses, then marks them sent. Sibling to
+// Sends any one-off reminders that have come due (see dueReminders below for
+// the catch-up rules) as a single grouped Telegram message into the same
+// group the interactive bot uses, then marks them sent. Sibling to
 // telegram-bot-recap.mjs -- same conventions (own callTelegram copy,
-// parseArgs/runOnce/main shape) -- but a much simpler daily job: no LLM
-// call, no dedup log (the item's own `sent` flag is the dedup). Runs via its
-// own scheduled task (install-telegram-reminders-scheduled-task.ps1), daily
-// at 8am by default. See docs/superpowers/specs/2026-08-05-telegram-reminders-design.md.
+// parseArgs/runOnce/main shape) -- but much simpler: no LLM call, no dedup
+// log (the item's own `sent` flag is the dedup).
+//
+// Runs via its own scheduled task (install-telegram-reminders-scheduled-task.ps1),
+// every few minutes rather than once each morning as of 2026-08-28, when
+// reminders gained an optional time of day -- a once-a-morning job cannot
+// deliver a 6am reminder at 6am. A tick with nothing due sends nothing.
+// See docs/superpowers/specs/2026-08-05-telegram-reminders-design.md.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { telegramEnvPath } from './longterm-paths.mjs';
+import { DEFAULT_REMINDER_TIME, clockOf, effectiveTime, formatReminderTime, parseReminderTime } from './reminder-time.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
@@ -21,6 +26,12 @@ function parseArgs(argv) {
   const args = {
     envPath: telegramEnvPath(),
     remindersPath: path.join(repoDataDir, 'reminders.json'),
+    // The hour a reminder with no time of its own goes out at. The job now
+    // ticks every few minutes (so a 06:00 reminder can actually fire at
+    // 06:00), which would otherwise make a day-level reminder go off at
+    // whatever minute the machine first woke up -- 00:15 is not a morning
+    // nudge. Overridable so the scheduled task owns the household's hour.
+    defaultTime: DEFAULT_REMINDER_TIME,
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -32,6 +43,7 @@ function parseArgs(argv) {
       i += 1;
       if (key === 'env-path') args.envPath = value;
       else if (key === 'reminders-path') args.remindersPath = value;
+      else if (key === 'default-time') args.defaultTime = value;
       else throw new Error(`Unknown argument: ${arg}`);
     }
   }
@@ -71,15 +83,35 @@ function loadReminders(remindersPath) {
   }
 }
 
-// <= today, not ==, so a reminder due on a date the scheduled task didn't
-// run (PC asleep, task failure) still fires late on the next successful run
-// instead of being silently dropped.
-function dueReminders(reminders, today) {
-  return reminders.items.filter((r) => !r.sent && r.date <= today);
+// Due = its moment has arrived and not been sent yet.
+//
+// A past date fires regardless of the hour -- < today, not <=, so a reminder
+// the scheduled task missed entirely (PC asleep, task failure) still goes out
+// late on the next successful run instead of being silently dropped, and a
+// yesterday-at-18:00 reminder is not made to wait until 18:00 today.
+//
+// On its own date it waits for its time of day, or for the day-level default
+// when it has none. Comparing zero-padded "HH:MM" strings is a plain
+// lexicographic compare, and both sides are local wall-clock -- someone who
+// says "6am" means 6am where they live.
+function dueReminders(reminders, now, defaultTime) {
+  const today = isoDate(now);
+  const clock = clockOf(now);
+  return reminders.items.filter((r) => {
+    if (r.sent) return false;
+    if (r.date < today) return true;
+    if (r.date > today) return false;
+    return clock >= effectiveTime(r, defaultTime);
+  });
 }
 
+// A timed reminder leads with its time, in the same 12-hour form the bot
+// confirmed when it was set -- so a wrong am/pm is visible on arrival too.
 function formatGroupedMessage(due) {
-  const lines = due.map((r) => `- ${r.text}${r.owner ? ` (${r.owner})` : ''}`);
+  const lines = due.map((r) => {
+    const time = parseReminderTime(r.time).time;
+    return `- ${time ? `${formatReminderTime(time)} — ` : ''}${r.text}${r.owner ? ` (${r.owner})` : ''}`;
+  });
   return `⏰ Reminders for today:\n${lines.join('\n')}`;
 }
 
@@ -107,10 +139,9 @@ async function callTelegram(token, method, body) {
 export async function runOnce(opts) {
   const args = { ...parseArgs([]), ...opts };
   const now = args.now || new Date();
-  const today = isoDate(now);
 
   const reminders = loadReminders(args.remindersPath);
-  const due = dueReminders(reminders, today);
+  const due = dueReminders(reminders, now, args.defaultTime || DEFAULT_REMINDER_TIME);
   if (!due.length) return { sent: false, reason: 'none_due' };
 
   const envValues = args.token && args.groupChatId ? {} : readLocalEnv(args.envPath);

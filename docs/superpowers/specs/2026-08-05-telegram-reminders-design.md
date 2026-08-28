@@ -17,6 +17,14 @@ this is that new plan.
 - Reminders **proactively message the Telegram group** at the right time (not a passive
   "surface it next time you ask" — that wouldn't match "remind me tomorrow").
 - **Day-level granularity only** — no specific time-of-day support in this pass.
+  *(Superseded 2026-08-28: an optional `time` (`"HH:MM"`, 24-hour, nullable) was added
+  to each item and to `add_reminder`, after someone asked for a 6am reminder and then
+  tried to correct an am/pm mixup that the tool had no field to hold. Parsing and
+  display live in `scripts/reminder-time.mjs`, shared by the tool and the delivery job
+  so the time a reminder confirms is the time it fires. The delivery task changed from
+  one daily trigger to a 5-minute repeating one for the same reason; a reminder with no
+  `time` still behaves exactly as described here, going out at the job's
+  `--default-time` morning hour. One-off only still holds.)*
 - **One-off only** — no recurring reminders yet.
 - **A new dedicated `data/reminders.json`**, not a reuse of `todos.json`'s unused
   `deadline` field — a reminder is a one-time timed nudge, not necessarily a persistent

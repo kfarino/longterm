@@ -23,6 +23,7 @@ import { slotForOccasion, recommendForSlot, TIER_MIDPOINT, familyEventBudgetFiel
 // Pure function; financial-context.mjs does no work at import time, so this
 // keeps the tools module's "no fs of its own" property intact.
 import { budgetGuidance } from './financial-context.mjs';
+import { parseReminderTime, formatReminderTime, effectiveTime } from './reminder-time.mjs';
 
 // Financial Q&A tools (get_budget_status/get_savings_goals/get_decisions,
 // added 2026-07-31) are read-only over a financialContext bundle (see
@@ -652,23 +653,48 @@ function nextReminderId(reminders) {
   return `r${max + 1}`;
 }
 
-export function add_reminder(reminders, { text, date, owner }) {
+// `time` is optional ("HH:MM", 24-hour; 12-hour spellings are normalized).
+// No time = the day-level reminder this started as, delivered on the morning
+// tick. An unreadable time is refused outright rather than quietly stored as
+// day-level: someone who asked for 6am and got a mid-morning ping has no way
+// to tell the time was dropped, which is exactly the am/pm confusion this
+// feature exists to end.
+export function add_reminder(reminders, { text, date, time, owner }) {
   if (!text || !text.trim()) {
     return { reminders, reply: "Couldn't set that reminder — missing what to remind you about." };
   }
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return { reminders, reply: "Couldn't set that reminder — need a specific date (YYYY-MM-DD)." };
   }
-  const item = { id: nextReminderId(reminders), text: text.trim(), date, owner: owner || null, createdAt: new Date().toISOString(), sent: false, sentAt: null };
+  const parsedTime = parseReminderTime(time);
+  if (parsedTime.invalid) {
+    return { reminders, reply: `Couldn't set that reminder — didn't understand the time "${time}". Give it as HH:MM on a 24-hour clock (06:00 for 6am, 18:00 for 6pm).` };
+  }
+  const item = { id: nextReminderId(reminders), text: text.trim(), date, time: parsedTime.time, owner: owner || null, createdAt: new Date().toISOString(), sent: false, sentAt: null };
   reminders.items.push(item);
-  return { reminders, reply: `Reminder set ✓ for ${date}: ${item.text}` };
+  const when = parsedTime.time ? `${date} at ${formatReminderTime(parsedTime.time)}` : date;
+  return { reminders, reply: `Reminder set ✓ for ${when}: ${item.text}` };
 }
 
+// Sorted by when each one actually fires (date, then its time-of-day or the
+// day-level default), and every time is shown -- a listing is how someone
+// catches a wrong am/pm before the reminder goes off.
 export function list_reminders(reminders) {
-  const open = reminders.items.filter((r) => !r.sent).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const open = reminders.items.filter((r) => !r.sent).sort((a, b) => {
+    const keyA = `${a.date} ${effectiveTime(a)}`;
+    const keyB = `${b.date} ${effectiveTime(b)}`;
+    return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+  });
   if (!open.length) return { reminders, reply: 'No upcoming reminders.' };
-  const lines = open.map((r) => `${r.date}: ${r.text}${r.owner ? ` (${r.owner})` : ''}`);
+  const lines = open.map((r) => `${reminderWhen(r)}: ${r.text}${r.owner ? ` (${r.owner})` : ''}`);
   return { reminders, reply: `Upcoming reminders:\n${lines.join('\n')}` };
+}
+
+// The human-facing "when" for one reminder: bare date if it is day-level,
+// date + 12-hour time if it carries one.
+function reminderWhen(reminder) {
+  const time = parseReminderTime(reminder.time).time;
+  return time ? `${reminder.date} ${formatReminderTime(time)}` : reminder.date;
 }
 
 // Matches by case-insensitive substring on text (+ exact date if given, to
@@ -685,12 +711,12 @@ export function cancel_reminder(reminders, { text, date }) {
     return { reminders, reply: `Couldn't find an upcoming reminder like "${text}".` };
   }
   if (matches.length > 1) {
-    const names = matches.map((r) => `${r.date}: ${r.text}`).join(', ');
+    const names = matches.map((r) => `${reminderWhen(r)}: ${r.text}`).join(', ');
     return { reminders, reply: `Multiple reminders match "${text}": ${names}. Say which one to cancel.`, needsClarification: true };
   }
   const [match] = matches;
   reminders.items = reminders.items.filter((r) => r.id !== match.id);
-  return { reminders, reply: `Cancelled ✓: ${match.text} (was ${match.date})` };
+  return { reminders, reply: `Cancelled ✓: ${match.text} (was ${reminderWhen(match)})` };
 }
 
 // Tool names whose implementation operates on a reminders object, not
@@ -1139,12 +1165,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'add_reminder',
-    description: 'Set a one-off reminder that proactively pings the household Telegram group on a specific date (day-level only -- no specific time-of-day support). Use this, and never add_todo, whenever the user says "remind me..." or asks for a reminder: a to-do sits on the shared Planner list until done, a reminder proactively announces itself once on its date and never appears on the Planner list.',
+    description: 'Set a one-off reminder that proactively pings the household Telegram group on a specific date, optionally at a specific time of day. Use this, and never add_todo, whenever the user says "remind me..." or asks for a reminder: a to-do sits on the shared Planner list until done, a reminder proactively announces itself once and never appears on the Planner list.',
     input_schema: {
       type: 'object',
       properties: {
         text: { type: 'string', description: 'What to be reminded about.' },
         date: { type: 'string', description: 'The date to fire on, as YYYY-MM-DD, resolved from whatever the user said ("tomorrow", "Friday") using today\'s date from context.' },
+        time: { type: 'string', description: 'Optional time of day to fire at, as HH:MM on a 24-hour clock — 6am is "06:00", 6pm is "18:00". Pass it whenever the user names an hour, and mind am vs pm. Omit it entirely if they only gave a day; the reminder then goes out with the morning batch.' },
       },
       required: ['text', 'date'],
     },
@@ -1208,7 +1235,7 @@ export const TOOL_IMPL = {
   log_decision: (goals, args) => log_decision(goals, { title: args.title, summary: args.summary, status: args.status }),
   add_manual_charge: (overrides, args, owner) => add_manual_charge(overrides, { tracker: args.tracker, merchant: args.merchant, amount: args.amount, date: args.date, category: args.category, note: args.note }, owner),
   request_capability: (requests, args, owner) => request_capability(requests, { ask: args.ask, whyCant: args.whyCant, proposedChange: args.proposedChange }, owner),
-  add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, owner }),
+  add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, time: args.time, owner }),
   list_reminders: (reminders) => list_reminders(reminders),
   cancel_reminder: (reminders, args) => cancel_reminder(reminders, { text: args.text, date: args.date }),
 };

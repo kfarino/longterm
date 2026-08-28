@@ -537,6 +537,71 @@ await asyncTest('cancel_reminder: no match replies clearly rather than throwing'
   assert.ok(result.sentReplies[0].includes("Couldn't find"));
 });
 
+// --- Reminder time-of-day (2026-08-28) ---
+
+await asyncTest('add_reminder: an explicit time is stored and confirmed back in 12-hour form', async () => {
+  const dir = path.join(tmpRoot, 'add-reminder-with-time');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot remind me at 6am to turn the water off' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_reminder', input: { text: 'Turn the water off', date: '2026-08-06', time: '06:00' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.reminders.items[0].time, '06:00');
+  assert.ok(result.sentReplies[0].includes('6:00am'), `expected the confirmation to state 6:00am, got: ${result.sentReplies[0]}`);
+});
+
+await asyncTest('add_reminder: a 12-hour time is normalized to 24-hour storage', async () => {
+  const dir = path.join(tmpRoot, 'add-reminder-12h-time');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot remind me at 6pm to move the car' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_reminder', input: { text: 'Move the car', date: '2026-08-06', time: '6pm' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.reminders.items[0].time, '18:00');
+  assert.ok(result.sentReplies[0].includes('6:00pm'));
+});
+
+await asyncTest('add_reminder: an unreadable time creates nothing rather than firing at the wrong hour', async () => {
+  const dir = path.join(tmpRoot, 'add-reminder-bad-time');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot remind me in the morning to turn the water off' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_reminder', input: { text: 'Turn the water off', date: '2026-08-06', time: 'morning' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.reminders.items.length, 0, 'an unparseable time must not be silently dropped into a day-level reminder');
+  assert.ok(result.sentReplies[0].toLowerCase().includes('time'));
+});
+
+await asyncTest('add_reminder: no time still stores a day-level reminder', async () => {
+  const dir = path.join(tmpRoot, 'add-reminder-no-time');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot remind me tomorrow to call the doctor' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'add_reminder', input: { text: 'Call the doctor', date: '2026-08-06' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(result.reminders.items[0].time, null);
+  assert.ok(!result.sentReplies[0].includes(' at '));
+});
+
+await asyncTest('list_reminders: a timed reminder shows its time so an am/pm mixup is visible', async () => {
+  const dir = path.join(tmpRoot, 'list-reminders-with-time');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot what reminders do we have' })] },
+    reminders: [{ id: 'r1', text: 'Turn the water off', date: '2026-08-06', time: '06:00', owner: 'kevin', createdAt: '2026-08-01T00:00:00.000Z', sent: false, sentAt: null }],
+  });
+  const mockClient = async () => ({ content: [{ type: 'tool_use', name: 'list_reminders', input: {} }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.ok(result.sentReplies[0].includes('6:00am'), `expected the listing to state 6:00am, got: ${result.sentReplies[0]}`);
+});
+
 // --- add_family_event recurrence ---
 
 await asyncTest('add_family_event: recurrenceWeeks materializes N independent weekly occurrences', async () => {

@@ -1,9 +1,9 @@
 // Longterm/data/test-telegram-reminders.mjs
 //
 // Permanent regression test (NOT a temp task script -- do not delete). Covers
-// telegram-bot-reminders.mjs's due-vs-not-due filtering (including the <=
-// catch-up behavior for a missed run), the grouped single-message send, and
-// the all-or-nothing sent-marking on success vs. failure. Run with:
+// telegram-bot-reminders.mjs's due-vs-not-due filtering (date, time of day,
+// and the catch-up behavior for a missed run), the grouped single-message
+// send, and the all-or-nothing sent-marking on success vs. failure. Run with:
 //   node Longterm/data/test-telegram-reminders.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -138,6 +138,107 @@ await asyncTest('a sent reminder is never included again on a later run', async 
   const result = await runOnce(baseOpts(paths, { now: TODAY, telegramClient: mockTelegram }));
   assert.equal(result.sent, false);
   assert.equal(sent.length, 0);
+});
+
+// --- Time-of-day reminders (2026-08-28) ---
+// A reminder may now carry an optional `time` ("HH:MM", 24-hour). Delivery
+// runs on a short repeating cadence rather than once a morning, so these
+// tests pin the two halves that keeps honest: a timed reminder must not go
+// out early, and an untimed one must still behave day-level (waiting for the
+// default morning hour) instead of firing at whatever minute the job happens
+// to tick first.
+
+function at(hour, minute) {
+  return new Date(2026, 7, 6, hour, minute, 0); // 2026-08-06 local
+}
+
+function reminder(extra) {
+  return {
+    id: 'r1', text: 'Turn the water off', date: '2026-08-06', time: null, owner: null,
+    createdAt: '2026-08-05T00:00:00.000Z', sent: false, sentAt: null, ...extra,
+  };
+}
+
+await asyncTest('a timed reminder is not sent before its time of day', async () => {
+  const dir = path.join(tmpRoot, 'timed-too-early');
+  const paths = writeFixture(dir, { items: [reminder({ time: '06:00' })] });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(5, 45), telegramClient: mockTelegram }));
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, 'none_due');
+  assert.equal(sent.length, 0);
+  const persisted = JSON.parse(fs.readFileSync(paths.remindersPath, 'utf8'));
+  assert.equal(persisted.items[0].sent, false);
+});
+
+await asyncTest('a timed reminder is sent once its time arrives, and the message names the time', async () => {
+  const dir = path.join(tmpRoot, 'timed-on-time');
+  const paths = writeFixture(dir, { items: [reminder({ time: '06:00' })] });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(6, 0), telegramClient: mockTelegram }));
+  assert.equal(result.sent, true);
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].body.text.includes('Turn the water off'));
+  assert.ok(sent[0].body.text.includes('6:00am'), `expected the delivered message to state 6:00am, got: ${sent[0].body.text}`);
+});
+
+await asyncTest('a timed reminder whose time passed earlier today still fires on a later run', async () => {
+  const dir = path.join(tmpRoot, 'timed-catch-up-same-day');
+  const paths = writeFixture(dir, { items: [reminder({ time: '06:00' })] });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(9, 30), telegramClient: mockTelegram }));
+  assert.equal(result.sent, true);
+  assert.equal(sent.length, 1);
+});
+
+await asyncTest('an untimed reminder still waits for the day-level default hour', async () => {
+  const dir = path.join(tmpRoot, 'untimed-waits-for-default');
+  const paths = writeFixture(dir, { items: [reminder({ time: null })] });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(0, 15), defaultTime: '08:00', telegramClient: mockTelegram }));
+  assert.equal(result.sent, false, 'a day-level reminder must not fire at whatever minute the job first ticks');
+  assert.equal(sent.length, 0);
+});
+
+await asyncTest('an untimed reminder fires once the day-level default hour arrives', async () => {
+  const dir = path.join(tmpRoot, 'untimed-fires-at-default');
+  const paths = writeFixture(dir, { items: [reminder({ time: null })] });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(8, 0), defaultTime: '08:00', telegramClient: mockTelegram }));
+  assert.equal(result.sent, true);
+  assert.ok(sent[0].body.text.includes('Turn the water off'));
+});
+
+await asyncTest('an overdue timed reminder from a past date fires immediately, whatever the hour', async () => {
+  const dir = path.join(tmpRoot, 'timed-overdue-past-date');
+  const paths = writeFixture(dir, { items: [reminder({ date: '2026-08-03', time: '18:00' })] });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(5, 45), telegramClient: mockTelegram }));
+  assert.equal(result.sent, true, 'a missed date must still catch up rather than wait for 18:00 today');
+});
+
+await asyncTest('two reminders at different times of the same day are not grouped early', async () => {
+  const dir = path.join(tmpRoot, 'timed-not-grouped-early');
+  const paths = writeFixture(dir, {
+    items: [
+      reminder({ id: 'r1', text: 'Turn the water off', time: '06:00' }),
+      reminder({ id: 'r2', text: 'Take the bins out', time: '20:00' }),
+    ],
+  });
+  const sent = [];
+  const mockTelegram = async (token, method, body) => { sent.push({ method, body }); return { ok: true }; };
+  const result = await runOnce(baseOpts(paths, { now: at(6, 5), telegramClient: mockTelegram }));
+  assert.equal(result.count, 1);
+  assert.ok(sent[0].body.text.includes('Turn the water off'));
+  assert.ok(!sent[0].body.text.includes('Take the bins out'), 'a later-in-the-day reminder must not ride along with the morning one');
+  const persisted = JSON.parse(fs.readFileSync(paths.remindersPath, 'utf8'));
+  assert.equal(persisted.items.find((r) => r.id === 'r2').sent, false);
 });
 
 console.log('All tests passed.');
