@@ -173,6 +173,14 @@ the reply path could see Google at all. Rules that follow from it:
 - Cash / Venmo / not-on-a-card spend on the current cycle → `add_manual_charge`
   (stored in `transaction_overrides.json` `manualCharges`, survives the morning
   pull). Do not dump that into `log_decision`.
+- A decision that has been **settled** (an expected refund that posted, a
+  question that got answered) → `resolve_decision`, not a second `log_decision`
+  entry saying the first is done. It sets `status: "resolved"` and every "open
+  decisions" surface filters through `scripts/decisions.mjs` — recap bundle,
+  `get_decisions`, dashboard tab, generated plan doc. Filter in that shared
+  helper, never per-consumer: a decision that goes quiet in one place and keeps
+  talking in another is the bug this replaced. Resolved entries stay in
+  `goals.json` as history; do not delete them.
 - An ask no existing tool can fulfill → `request_capability`. That files
   `data/bot-capability-requests.json` and detaches `scripts/claude-code-run.mjs`
   (`claude -p`). A launch failure must not kill the poll. Never invent a

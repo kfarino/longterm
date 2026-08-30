@@ -1961,6 +1961,133 @@ await asyncTest('log_decision: missing title or summary replies with a clear err
   assert.ok(result.sentReplies[0].includes('missing a summary'));
 });
 
+// --- resolve_decision (2026-08-30): a settled decision can be closed out, so
+// the Sun/Thu recap stops citing it as still pending. log_decision could only
+// ever append; there was no way to say "this one already happened."
+
+await asyncTest('resolve_decision: marks a matching decision resolved and keeps it in the plan as history', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-basic');
+  const goals = {
+    ...seedGoals(),
+    decisions: [
+      { status: 'urgent', title: 'Urgent test decision', body: 'test body', action: 'Do the urgent thing' },
+      { status: 'active', title: 'Expected Test Airline refund — test trip', body: 'Waiting on the credit to post.', action: 'Watch for it' },
+    ],
+  };
+  const paths = writeFixture(dir, {
+    goals,
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'the test airline refund came through, close it out' })] },
+  });
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'resolve_decision', input: { title: 'Test Airline refund', note: 'Credit posted last cycle.' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic }));
+  const closed = result.goals.decisions.find((d) => d.title.includes('Test Airline refund'));
+  assert.ok(closed, 'the decision stays in goals.json as history rather than being deleted');
+  assert.equal(closed.status, 'resolved');
+  assert.match(closed.resolvedOn, /^\d{4}-\d{2}-\d{2}$/, 'resolved decisions record when they closed');
+  assert.equal(closed.resolution, 'Credit posted last cycle.');
+  assert.equal(result.goals.decisions.length, 2, 'nothing else in the list is touched');
+  assert.equal(result.goals.decisions[0].status, 'urgent');
+  assert.ok(result.sentReplies[0].includes('Closed ✓'));
+  assert.ok(result.sentReplies[0].includes('Test Airline refund'));
+});
+
+await asyncTest('resolve_decision: persists to disk (not just the in-memory return value) when not a dry run', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-persisted');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'the watch item is settled' })] },
+  });
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'resolve_decision', input: { title: 'Watch test decision' } }],
+  });
+  await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic, dryRun: false }));
+  const onDisk = JSON.parse(fs.readFileSync(paths.goalsPath, 'utf8'));
+  const closed = onDisk.decisions.find((d) => d.title === 'Watch test decision');
+  assert.equal(closed.status, 'resolved', 'the close-out should have landed on disk, not just in the returned object');
+});
+
+await asyncTest('resolve_decision: a resolved decision stops showing up in get_decisions', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-hidden-from-reads');
+  const goals = {
+    ...seedGoals(),
+    decisions: [
+      { status: 'urgent', title: 'Urgent test decision', body: 'test body', action: 'Do the urgent thing' },
+      { status: 'resolved', resolvedOn: '2026-08-29', title: 'Expected Test Airline refund — test trip', body: 'Credit posted.', action: 'Resolved' },
+    ],
+  };
+  const paths = writeFixture(dir, {
+    goals,
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'what decisions are open?' })] },
+  });
+  const mockAnthropic = async () => ({ content: [{ type: 'tool_use', name: 'get_decisions', input: {} }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic }));
+  assert.ok(result.sentReplies[0].includes('Urgent test decision'));
+  assert.ok(!result.sentReplies[0].includes('Test Airline refund'), 'a closed-out decision is not an open decision');
+});
+
+await asyncTest('resolve_decision: an ambiguous title asks which one instead of closing the wrong decision', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-ambiguous');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'that test decision is done' })] },
+  });
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'resolve_decision', input: { title: 'test decision' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic, dryRun: false }));
+  assert.equal(result.goalsChanged, false, 'nothing is closed while it is unclear which one was meant');
+  assert.ok(result.sentReplies[0].includes('Urgent test decision'));
+  assert.ok(result.sentReplies[0].includes('Watch test decision'));
+  const onDisk = JSON.parse(fs.readFileSync(paths.pendingClarificationsPath, 'utf8'));
+  assert.ok(onDisk.hanna.question.includes('Watch test decision'), 'the bot waits for an answer, same as an ambiguous remove_event');
+});
+
+await asyncTest('resolve_decision: an unknown title replies with what is actually open and changes nothing', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-unknown');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'close out the boat decision' })] },
+  });
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'resolve_decision', input: { title: 'buying a boat' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic }));
+  assert.equal(result.goalsChanged, false);
+  assert.ok(result.sentReplies[0].includes("Couldn't find"));
+  assert.ok(result.sentReplies[0].includes('Urgent test decision'), 'the reply names the open decisions it could have meant');
+});
+
+await asyncTest('resolve_decision: an already-resolved decision says so rather than reporting a fresh close-out', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-already');
+  const goals = {
+    ...seedGoals(),
+    decisions: [
+      { status: 'resolved', resolvedOn: '2026-08-20', title: 'Expected Test Airline refund — test trip', body: 'Credit posted.', action: 'Resolved' },
+    ],
+  };
+  const paths = writeFixture(dir, {
+    goals,
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'close the airline refund decision' })] },
+  });
+  const mockAnthropic = async () => ({
+    content: [{ type: 'tool_use', name: 'resolve_decision', input: { title: 'Test Airline refund' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic }));
+  assert.equal(result.goalsChanged, false, 'no second write for something already closed');
+  assert.ok(result.sentReplies[0].includes('already'));
+  assert.ok(result.sentReplies[0].includes('2026-08-20'));
+});
+
+await asyncTest('resolve_decision: a missing title replies with a clear error and changes nothing', async () => {
+  const dir = path.join(tmpRoot, 'resolve-decision-no-title');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'close that out' })] },
+  });
+  const mockAnthropic = async () => ({ content: [{ type: 'tool_use', name: 'resolve_decision', input: {} }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic }));
+  assert.equal(result.goalsChanged, false);
+  assert.ok(result.sentReplies[0].includes('which decision'));
+});
+
 // --- Multi-turn clarification (2026-08-02): the bot waits for an answer instead of guessing or dead-ending ---
 
 await asyncTest('a plain-text fallback reply (no tool call) registers a pending clarification and persists it to disk', async () => {

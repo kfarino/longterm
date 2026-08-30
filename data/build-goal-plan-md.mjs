@@ -9,6 +9,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// Same rule as the dashboard: the generated plan lists decisions still open,
+// not ones already closed out (see scripts/decisions.mjs).
+import { openDecisions } from '../scripts/decisions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outPath = join(here, '..', 'kevin_hanna_goal_plan.md');
@@ -102,7 +105,7 @@ const travelSection = goals.travel.map((t) =>
 ).join('\n');
 
 const timelineSection = goals.timeline.map((t) => `| ${t.year} | ${t.title}${t.detail ? ' — ' + t.detail : ''} |`).join('\n');
-const decisions = goals.decisions || goals.openDecisions || [];
+const decisions = openDecisions(goals.decisions || goals.openDecisions);
 const openDecisionsSection = decisions.map((d) => {
   if (d.decision) return `| ${d.decision} | ${d.status} |`;
   return `| ${d.title} | ${d.status} |`;

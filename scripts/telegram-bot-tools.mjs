@@ -24,6 +24,10 @@ import { slotForOccasion, recommendForSlot, TIER_MIDPOINT, familyEventBudgetFiel
 // keeps the tools module's "no fs of its own" property intact.
 import { budgetGuidance } from './financial-context.mjs';
 import { parseReminderTime, formatReminderTime, effectiveTime } from './reminder-time.mjs';
+// Pure title-matching / open-vs-resolved helpers, shared with the recap, the
+// dashboard build and the goal-plan build so 'closed' means the same thing in
+// all four places (see resolve_decision).
+import { openDecisions, isResolvedDecision, matchDecisionsByTitle } from './decisions.mjs';
 
 // Financial Q&A tools (get_budget_status/get_savings_goals/get_decisions,
 // added 2026-07-31) are read-only over a financialContext bundle (see
@@ -551,6 +555,63 @@ export function log_decision(goals, { title, summary, status }) {
   return { goals, reply: `Added ✓ to the plan's open decisions: "${title.trim()}".` };
 }
 
+// The counterpart log_decision never had (2026-08-30): closes a decision out
+// once it has actually been settled. Until this existed, a decision could only
+// ever be added, so something that had already happened — an expected refund
+// that posted a cycle ago — kept getting cited by the Sun/Thu recap as still
+// pending, with no way to shut it up short of hand-editing goals.json.
+//
+// The entry is kept and marked `status: "resolved"`, not spliced out: the plan
+// should remember what was decided and when. scripts/decisions.mjs is what
+// makes that marking mean something — every "open decisions" surface (recap
+// bundle, get_decisions, dashboard tab, generated plan doc) filters through it.
+//
+// Ambiguity is never guessed away. Closing the wrong decision is silent and
+// hard to notice, so more than one open match asks which one (needsClarification,
+// same as remove_event), and a title that only matches an already-resolved
+// decision says so rather than reporting a fresh close-out that didn't happen.
+export function resolve_decision(goals, { title, note }) {
+  if (!title || !String(title).trim()) {
+    return { goals, reply: "Couldn't close that out — say which decision (a few words of its title)." };
+  }
+  const all = goals.decisions || [];
+  const matches = matchDecisionsByTitle(all, title);
+  const openMatches = matches.filter(({ decision }) => !isResolvedDecision(decision));
+
+  if (!matches.length) {
+    const openTitles = openDecisions(all).map((d) => d.title).join(', ');
+    return {
+      goals,
+      reply: openTitles
+        ? `Couldn't find an open decision matching "${String(title).trim()}". Currently open: ${openTitles}`
+        : `Couldn't find an open decision matching "${String(title).trim()}" — there are no open decisions right now.`,
+    };
+  }
+
+  if (!openMatches.length) {
+    const already = matches[0].decision;
+    return {
+      goals,
+      reply: `"${already.title}" is already closed${already.resolvedOn ? ` (resolved ${already.resolvedOn})` : ''} — nothing to change.`,
+    };
+  }
+
+  if (openMatches.length > 1) {
+    const names = openMatches.map(({ decision }) => decision.title).join(', ');
+    return { goals, reply: `More than one open decision matches "${String(title).trim()}": ${names}. Say which one to close.`, needsClarification: true };
+  }
+
+  const { decision } = openMatches[0];
+  const today = isoToday();
+  decision.status = 'resolved';
+  decision.resolvedOn = today;
+  if (note && String(note).trim()) decision.resolution = String(note).trim();
+  decision.action = note && String(note).trim()
+    ? `Resolved ${today} — ${String(note).trim()}`
+    : `Resolved ${today}. No further action.`;
+  return { goals, reply: `Closed ✓ "${decision.title}" is marked resolved (${today}) and won't come up in the recap again.` };
+}
+
 // Cash / Venmo / not-on-a-card spend. Survives the next morning's Monarch
 // rebuild because it is stored in transaction_overrides.json (manualCharges),
 // not patched into budget_tracking.json alone. Call shape (overrides, args,
@@ -922,7 +983,7 @@ export const ROUTINE_OVERRIDE_TOOL_NAMES = new Set(['set_routine_day']);
 // comment) — call shape (goals, args), no todos/monthPlanEvents/diningContext
 // involved. The caller persists goals.json, regenerates data.js/the goal-plan
 // doc, and appends to goals-changelog.jsonl.
-export const GOALS_TOOL_NAMES = new Set(['update_phase_expense', 'log_decision']);
+export const GOALS_TOOL_NAMES = new Set(['update_phase_expense', 'log_decision', 'resolve_decision']);
 
 // Tool definitions in Anthropic Messages API shape, for the LLM-fallback
 // path. Kept alongside the implementations so the two can't drift apart
@@ -1056,6 +1117,18 @@ export const TOOL_DEFS = [
         status: { type: 'string', enum: ['urgent', 'active', 'watch', 'good'], description: 'How pressing this is. Defaults to "active" if unclear.' },
       },
       required: ['title', 'summary'],
+    },
+  },
+  {
+    name: 'resolve_decision',
+    description: 'Close out an open decision in the real long-term plan once it has actually been settled — a question that got answered, an expected refund that posted, a choice that was made. Use this whenever someone says an item is done, settled, resolved, no longer pending, or that it keeps coming up even though it already happened. The decision stays in the plan as history, marked resolved, and stops appearing in the weekly recap and in get_decisions. This is a real immediate change — there is no review step. Do NOT log_decision a duplicate "this is done" entry instead.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Enough of the existing decision\'s title to identify it (matched case-insensitively as a substring). If several open decisions could match, the tool will ask which one rather than guessing.' },
+        note: { type: 'string', description: 'Optional one-line record of how it was settled, e.g. "refund posted last cycle".' },
+      },
+      required: ['title'],
     },
   },
   {
@@ -1233,6 +1306,7 @@ export const TOOL_IMPL = {
   set_routine_day: (overrides, args) => set_routine_day(overrides, { occasion: args.occasion, dayOfWeek: args.dayOfWeek }),
   update_phase_expense: (goals, args) => update_phase_expense(goals, { phaseId: args.phaseId, expenseKey: args.expenseKey, renameFrom: args.renameFrom, amount: args.amount }),
   log_decision: (goals, args) => log_decision(goals, { title: args.title, summary: args.summary, status: args.status }),
+  resolve_decision: (goals, args) => resolve_decision(goals, { title: args.title, note: args.note }),
   add_manual_charge: (overrides, args, owner) => add_manual_charge(overrides, { tracker: args.tracker, merchant: args.merchant, amount: args.amount, date: args.date, category: args.category, note: args.note }, owner),
   request_capability: (requests, args, owner) => request_capability(requests, { ask: args.ask, whyCant: args.whyCant, proposedChange: args.proposedChange }, owner),
   add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, time: args.time, owner }),

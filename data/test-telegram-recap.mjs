@@ -768,4 +768,30 @@ await asyncTest('a live Oura pull failure never blocks the recap from sending', 
   assert.ok(sent);
 });
 
+// A decision that already happened (a refund that posted) used to keep showing
+// up in the Sunday recap as still pending, because nothing could close it out.
+// resolve_decision sets status "resolved"; the recap must never see it.
+await asyncTest('bundle excludes decisions marked resolved, so a settled item stops being cited as pending', async () => {
+  const dir = path.join(tmpRoot, 'resolved-decisions');
+  const paths = writeFixture(dir, {
+    goals: {
+      ...seedGoals(),
+      decisions: [
+        { status: 'urgent', title: 'Urgent test decision', body: 'test body', action: 'Do the urgent thing' },
+        { status: 'resolved', resolvedOn: '2026-08-01', title: 'Expected Test Airline refund — test trip', body: 'Credit posted.', action: 'Resolved' },
+      ],
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }) }));
+
+  assert.equal(capturedBundle.decisions.length, 1, 'only the still-open decision belongs in the recap');
+  assert.equal(capturedBundle.decisions[0].title, 'Urgent test decision');
+  assert.ok(
+    !JSON.stringify(capturedBundle.decisions).includes('Test Airline refund'),
+    'the composer must not even be shown the settled decision — it cannot cite what it never sees'
+  );
+});
+
 console.log('All tests passed.');

@@ -10,6 +10,7 @@
 // import this file, or vice versa).
 import fs from 'node:fs';
 import { loadBudgetHabits } from './cycle-history.mjs';
+import { openDecisions } from './decisions.mjs';
 
 // Mirrors dashboard_v5.html's computeTrackerPacing(): weights by
 // days-in-bucket, not entry count, so a trailing partial week doesn't skew
@@ -144,12 +145,15 @@ export function loadSavingsGoals(goalsPath, accountsPath) {
   });
 }
 
-// Plain pass-through of goals.json's decisions array — no math to port,
-// just a read-only accessor kept alongside the others for a consistent
-// "financial context" surface.
+// Read-only accessor for goals.json's decisions array, kept alongside the
+// others for a consistent "financial context" surface. The one piece of logic
+// it applies (2026-08-30): decisions closed out via resolve_decision are
+// filtered out here, so neither the bot's get_decisions nor the Sun/Thu recap
+// can cite a decision that already happened. They stay in goals.json as
+// history — see scripts/decisions.mjs for why.
 export function loadDecisions(goalsPath) {
   const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
-  return goals.decisions;
+  return openDecisions(goals.decisions);
 }
 
 // Flattens the per-category/per-trip transaction line items budget_tracking.json

@@ -738,6 +738,12 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         const result = impl(newGoals, toolUse.input);
         newGoals = result.goals;
         rawReplies.push(result.reply);
+        // resolve_decision can hit a genuinely ambiguous title (two open
+        // decisions both matching what was said). Closing the wrong one is
+        // silent and easy to miss, so it asks instead — and the question has
+        // to be registered as pending, same as an ambiguous remove_event, or
+        // the answer comes back with no memory of what it answers.
+        if (result.needsClarification) stillNeedsClarification = result.reply;
         // Traceability, not a review gate — the edit has already happened;
         // this just records what changed and when so it's never a mystery
         // looking back, same reasoning as every git commit message.
@@ -875,6 +881,7 @@ These tools REALLY change the plan, immediately — there is no review step.
 - A change with a specific dollar figure (a cost changing, a new recurring expense, a rent increase) → update_phase_expense. Use the phases list in context to pick the right phaseId(s) and to see current expense labels for renaming.
 - There is no way to schedule a cost that changes on a future date. Set today's real current rate and expect to be told again when it actually changes.
 - A narrative ask instead of a dollar figure (an open question, a decision to track) → log_decision.
+- A decision that has now been SETTLED (the refund posted, the question got answered, the choice was made, "that already happened", "stop bringing that up") → resolve_decision. It stays in the plan as history and stops appearing in the weekly recap and in get_decisions. Never log_decision a second entry saying the first one is done.
 - Cash / out-of-band spend on this cycle's budget → add_manual_charge, never log_decision.
 
 ## When you cannot do what they asked

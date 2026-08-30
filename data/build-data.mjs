@@ -9,6 +9,9 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// Resolved/closed decisions stay in goals.json as history but are not 'open'
+// decisions — the dashboard's Decisions tab shows what still needs deciding.
+import { openDecisions } from '../scripts/decisions.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -71,7 +74,7 @@ const DATA = {
   phases: goals.phases,
   goals: goals.lifeGoals,
   timeline: goals.timeline,
-  decisions: goals.decisions,
+  decisions: openDecisions(goals.decisions),
   travel: goals.travel,
   chart: goals.chart,
   lifestyleScenarios: goals.lifestyleScenarios || {},
