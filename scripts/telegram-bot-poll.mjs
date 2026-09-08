@@ -369,6 +369,72 @@ function tryDeterministicParse(text, todos, owner) {
 // Strips the bot's own @mention out of the text so it doesn't confuse
 // deterministic parsing (e.g. "@Bot new: buy milk" should parse the same as
 // "new: buy milk") — reply-to-message addressing has no such prefix to strip.
+// Leading politeness/framing that carries no subject of its own. Stripped
+// (repeatedly, since they stack: "hey can you give me a quick update") so the
+// core phrase below can stay a short, readable whole-message match.
+const UPDATE_ASK_LEADERS = [
+  /^(?:hey|hi|hello|yo|ok|okay|so)[,\s]+/,
+  /^(?:please|pls)\s+/,
+  /^(?:can|could|would)\s+(?:you|i|we)\s+/,
+  /^(?:i'?d|i would)\s+like\s+/,
+  /^(?:give|get|send|show)\s+(?:me|us)\s+/,
+  /^gimme\s+/,
+  /^what(?:'|’)?s\s+/,
+  /^what is\s+/,
+  /^(?:the|our|any|a|an)\s+/,
+  /^(?:quick|short|brief|weekly|daily|general|full)\s+/,
+];
+
+// Anchored end-to-end on purpose. "update on the Zagreb trip" and "how are we
+// doing on the trip budgets?" name a subject and must keep going to tool
+// selection — answering either of those with budget + to-dos would be
+// answering a different question than the one asked.
+const UPDATE_ASK_CORE = [
+  /^update$/,
+  /^status(?: update)?$/,
+  /^check[- ]?in$/,
+  /^recap$/,
+  /^summary$/,
+  /^how(?: are| is|'?s)? (?:we|things|everything|it) (?:doing|going)$/,
+  /^where do we stand$/,
+  /^where are we(?: at)?$/,
+  /^catch (?:me|us) up$/,
+];
+
+/**
+ * True only for an unqualified ask for where things stand.
+ *
+ * Kevin, 2026-09-08: a bare "update" was coming back with the long-term plan
+ * attached — open decisions, milestones, savings-goal progress — on top of the
+ * two things actually wanted. Tool selection decided that per turn and there
+ * was no way to change it, so the unambiguous phrasings are answered here
+ * instead, from exactly two sources. Everything looser still goes to the model,
+ * which carries the same rule in BOT_SYSTEM_PROMPT.
+ */
+export function isGenericUpdateRequest(text) {
+  let t = String(text || '').toLowerCase().trim().replace(/\s+/g, ' ').replace(/[?!.,]+$/, '').trim();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const re of UPDATE_ASK_LEADERS) {
+      const next = t.replace(re, '');
+      if (next !== t) { t = next; changed = true; }
+    }
+  }
+  t = t.replace(/\s+(?:please|pls)$/, '').trim();
+  return UPDATE_ASK_CORE.some((re) => re.test(t));
+}
+
+// What a generic update is: this month's spend and what's still open. Composed
+// here rather than left to tool selection so it can't quietly regrow a
+// long-term-plan section — get_decisions and get_savings_goals are reserved for
+// a message that actually asks about the plan. Travel stays out for the same
+// reason it stays out of every other budget reply (no includeTravel).
+function genericUpdateReply({ todos, financialContext, now }) {
+  const budget = TOOL_IMPL.get_budget_status(financialContext, {}, now).reply;
+  const open = TOOL_IMPL.list_todos(todos, {}).reply;
+  return `${budget}\n\n${open}`;
+}
+
 function stripMention(text, botUsername) {
   if (!botUsername) return text;
   const re = new RegExp(`@${botUsername}\\b`, 'gi');
@@ -640,6 +706,14 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
   if (!livePending) {
     const detResult = tryDeterministicParse(text, todos, owner);
     if (detResult) return { todos: detResult.todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: detResult.reply, pendingClarification: null };
+
+    // An unqualified "give me an update" — answered from budget + to-dos
+    // directly, no tool-selection round-trip and no long-term plan. Falls
+    // through to the model if the budget bundle didn't load, since a
+    // half-answer is worse than letting the normal path handle it.
+    if (isGenericUpdateRequest(text) && financialContext && financialContext.budgetStatus) {
+      return { todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: genericUpdateReply({ todos, financialContext, now }), pendingClarification: null };
+    }
   }
 
   if (!apiKey && !anthropicClient) {
@@ -826,7 +900,7 @@ function helpText(rawText) {
 // weight, which showed up as the bot picking plausible-but-wrong tools and
 // missing the second half of two-part asks. The truthfulness rule is first
 // because it is the one that must never lose.
-const BOT_SYSTEM_PROMPT = `You manage a shared household's to-do list, weekly goals, dining plan, calendar events, and long-term financial plan, over Telegram, for Kevin and Hanna.
+export const BOT_SYSTEM_PROMPT = `You manage a shared household's to-do list, weekly goals, dining plan, calendar events, and long-term financial plan, over Telegram, for Kevin and Hanna.
 
 ## The rule that outranks everything else
 When you reply after taking a real action, state ONLY what actually happened. Never invent or promise a review process, notification, sync, or follow-up mechanism that doesn't exist — your edits are real and immediate, full stop.
@@ -841,6 +915,8 @@ If the message clearly asks for more than one distinct thing ("add milk to the l
 If the message is a question answerable from current state, call the relevant read-only tool and answer conversationally: list_todos, get_dining_plan, get_budget_status, get_savings_goals, get_decisions, get_calendar_events, get_upcoming_shows, search_transactions, list_reminders, get_sync_status.
 - Shows, concerts, comedy nights → get_upcoming_shows (it checks the household's followed venues, not a general search).
 - Whether a specific charge/merchant is in a budget, or a category's individual line items → search_transactions, not a guess from aggregate pace numbers. It only covers the current cycle; say so when that matters.
+- A general "give me an update", "how are we doing", "where do we stand" with no subject named → get_budget_status and list_todos, and nothing else. Do NOT call get_decisions or get_savings_goals for a generic update: an update means this month's spend and what's still open on the list, not the long-term plan.
+- get_decisions and get_savings_goals belong to a message that explicitly asks about decisions, milestones, savings goals, or the long-term plan — including an update asked about one of those ("update on our goals").
 - Anyone's schedule, "my schedule," "what's on the calendar" → get_calendar_events. Hanna's calendar IS readable (shared into Kevin's Google account). Never claim you lack access to it. Kevin's work calendar is deliberately excluded.
 
 ## Dining (3 routine occasions: family_dinner, date_night, weekend_social)

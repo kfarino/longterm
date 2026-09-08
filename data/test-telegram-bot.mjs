@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runOnce, REPHRASE_SYSTEM_PROMPT } from '../scripts/telegram-bot-poll.mjs';
+import { runOnce, REPHRASE_SYSTEM_PROMPT, BOT_SYSTEM_PROMPT, isGenericUpdateRequest } from '../scripts/telegram-bot-poll.mjs';
 import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, request_capability } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2472,6 +2472,112 @@ await asyncTest('request_capability via the bot persists an open request and sta
   assert.equal(onDisk.items[0].status, 'launched');
   assert.equal(launches.length, 1);
   assert.equal(launches[0].requestId, onDisk.items[0].id);
+});
+
+
+// --- A generic "give me an update" (2026-09-08) ---
+//
+// Kevin asked for this: an unqualified "update" was coming back with the
+// long-term plan attached — open decisions, milestones, savings-goal
+// progress — on top of the two things he actually wanted, this month's
+// spend and what's still open on the list. Nothing in the tools controlled
+// that; it was whatever tool selection felt like calling that turn. So a
+// bare update ask is now answered deterministically from exactly two
+// sources, and the LLM path is told the same rule for the phrasings the
+// matcher deliberately doesn't cover.
+
+test('isGenericUpdateRequest: recognizes an unqualified ask for an update', () => {
+  for (const text of [
+    'update',
+    'update?',
+    'any update',
+    'give me an update',
+    'Give me an update please',
+    'can you give me an update?',
+    'gimme a quick update',
+    "what's our status",
+    'status update',
+    'how are we doing',
+    'where do we stand',
+    'catch me up',
+    'weekly check-in',
+  ]) {
+    assert.ok(isGenericUpdateRequest(text), `should be a generic update ask: "${text}"`);
+  }
+});
+
+test('isGenericUpdateRequest: an update ABOUT something is not a generic update', () => {
+  // These are the cases the fast path must never swallow — each one names a
+  // subject, and answering it with budget + todos would be answering a
+  // different question than the one asked.
+  for (const text of [
+    'update on the Zagreb trip',
+    'give me an update on our goals',
+    'what is the status of the au pair decision',
+    'how are we doing on the trip budgets?',
+    'update the family budget to 5800',
+    'any update on the refund',
+    'what decisions are open?',
+    'catch me up on the long-term plan',
+  ]) {
+    assert.ok(!isGenericUpdateRequest(text), `should NOT be a generic update ask: "${text}"`);
+  }
+});
+
+await asyncTest('a generic "give me an update" answers with budget + todos only, no decisions', async () => {
+  const dir = path.join(tmpRoot, 'generic-update');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot give me an update' })] },
+  });
+  let llmCalls = 0;
+  const mockClient = async () => {
+    llmCalls += 1;
+    return { content: [{ type: 'tool_use', name: 'get_decisions', input: {} }] };
+  };
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(llmCalls, 0, 'a bare update ask should not need a tool-selection round-trip at all');
+  assert.ok(result.sentReplies[0].includes('Joint:'), 'should report this month\'s joint spend');
+  assert.ok(result.sentReplies[0].includes('Kevin personal:'), 'should report personal spend too');
+  assert.ok(result.sentReplies[0].includes('Existing item'), 'should list what is still open');
+  assert.ok(!result.sentReplies[0].includes('Urgent test decision'), 'open decisions must stay out of a generic update');
+  assert.ok(!result.sentReplies[0].includes('Test Fund'), 'long-term savings goals must stay out too');
+  assert.ok(!result.sentReplies[0].includes('Test Trip'), 'trip budgets must stay out, same as any other budget reply');
+  assert.equal(result.todosChanged, false, 'an update reads state, it never changes it');
+});
+
+await asyncTest('asking explicitly about decisions still gets the long-term plan', async () => {
+  const dir = path.join(tmpRoot, 'explicit-decisions');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot what decisions are open?' })] },
+  });
+  const mockClient = async () => ({ content: [{ type: 'tool_use', name: 'get_decisions', input: {} }] });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.ok(result.sentReplies[0].includes('Urgent test decision'), 'an explicit decisions ask is exactly when get_decisions belongs');
+});
+
+await asyncTest('"update on <subject>" still goes to tool selection rather than the fast path', async () => {
+  const dir = path.join(tmpRoot, 'update-with-subject');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot give me an update on our long-term plan' })] },
+  });
+  let llmCalls = 0;
+  const mockClient = async () => {
+    llmCalls += 1;
+    return { content: [{ type: 'tool_use', name: 'get_decisions', input: {} }] };
+  };
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
+  assert.equal(llmCalls, 1, 'a subject-bearing ask must still be routed by the model');
+  assert.ok(result.sentReplies[0].includes('Urgent test decision'));
+});
+
+test('BOT_SYSTEM_PROMPT reserves get_decisions for an explicit long-term-plan ask', () => {
+  // The matcher above only covers the phrasings it can be sure about; every
+  // looser one ("how's everything looking this week?") lands on the model,
+  // so the rule has to exist in both places or the behavior splits.
+  const lower = BOT_SYSTEM_PROMPT.toLowerCase();
+  assert.ok(lower.includes('get_budget_status and list_todos'), 'must name the two tools a generic update is allowed to use');
+  assert.ok(/do not call get_decisions/.test(lower), 'must rule get_decisions out of a generic update explicitly');
+  assert.ok(lower.includes('get_savings_goals'), 'savings-goal progress is long-term too and must be named');
 });
 
 console.log('All tests passed.');
