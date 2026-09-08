@@ -17,6 +17,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { monarchEnvPath, monarchMcpExePath, resolveMonarchMcpLaunch } from './longterm-paths.mjs';
 import {
+  DEFAULT_LEDGER_PATH,
+  transactionId,
+  upsertLedgerRows,
+} from './transactions-store.mjs';
+import {
   loadCycleHistory,
   saveCycleHistory,
   maybeArchiveOnRollover,
@@ -41,6 +46,8 @@ function parseArgs(argv) {
     historyBackfillDays: null,
     cycleHistoryPath: path.join(repoRoot, 'data', 'cycle_history.json'),
     cycleHistoryBackfillCycles: null,
+    transactionsLedgerPath: DEFAULT_LEDGER_PATH,
+    ledgerBackfillDays: null,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -62,6 +69,8 @@ function parseArgs(argv) {
       else if (key === 'history-backfill-days') args.historyBackfillDays = Number.parseInt(value, 10);
       else if (key === 'cycle-history-path') args.cycleHistoryPath = value;
       else if (key === 'cycle-history-backfill-cycles') args.cycleHistoryBackfillCycles = Number.parseInt(value, 10);
+      else if (key === 'transactions-ledger-path') args.transactionsLedgerPath = value;
+      else if (key === 'ledger-backfill-days') args.ledgerBackfillDays = Number.parseInt(value, 10);
       else throw new Error(`Unknown argument: ${arg}`);
     } else {
       throw new Error(`Unknown argument: ${arg}`);
@@ -564,6 +573,82 @@ function collectJointCharges(transactions, tracking) {
   return charges;
 }
 
+// One durable ledger row per transaction, for scripts/transactions-store.mjs —
+// the history that makes a CLOSED cycle still searchable after this file has
+// rebuilt budget_tracking.json for the new one.
+//
+// Routing mirrors the live loop's card / travel / reassignment rules, in the
+// same spirit (and for the same reason) as collectJointCharges above: a second,
+// simpler pass rather than a refactor of the money loop itself. It is
+// deliberately NOT week-bucketed and NOT cycle-clipped — a charge from before
+// the current cycle start is precisely what this is here to keep. Trip
+// attribution is left out too: matching a charge to a trip needs the
+// booking-lookback windows in the live loop, and getting that wrong silently
+// is the failure AGENTS.md warns about, so a travel charge is stored as
+// `travel` and no more than that.
+export function ledgerRowsFromTransactions(transactions, tracking, { overrides = null } = {}) {
+  const rules = overrides || loadTransactionOverrides();
+  const travelCategories = new Set((tracking?.mapping?.travelCategoryNames || []).map((c) => c.toLowerCase()));
+  const jointLabels = new Set(tracking?.mapping?.jointAccountLabels || []);
+  const personalLabelsByOwner = tracking?.mapping?.personalAccountLabels || {};
+  const labelToOwnerId = new Map();
+  for (const [ownerId, labels] of Object.entries(personalLabelsByOwner)) {
+    for (const label of labels || []) labelToOwnerId.set(label, ownerId);
+  }
+
+  const rows = [];
+  for (const txn of transactions || []) {
+    const reassignment = trackerReassignment(txn, rules);
+    if (reassignment?.reassignTo === 'exclude') continue;
+
+    const catDisplay = categoryName(txn, rules) || 'Uncategorized';
+    const cat = catDisplay.toLowerCase();
+    const acct = accountLabel(txn);
+    const rawAmount = Number(txn.amount);
+    if (!Number.isFinite(rawAmount) || rawAmount === 0) continue;
+
+    let tracker = null;
+    let ownerId = null;
+    if (travelCategories.has(cat)) {
+      tracker = 'travel';
+    } else if (reassignment) {
+      if (reassignment.reassignTo === 'joint') tracker = 'joint';
+      else if (personalLabelsByOwner[reassignment.reassignTo]) { tracker = 'personal'; ownerId = reassignment.reassignTo; }
+    } else if (labelToOwnerId.has(acct)) {
+      tracker = 'personal';
+      ownerId = labelToOwnerId.get(acct);
+    } else if (jointLabels.has(acct)) {
+      tracker = 'joint';
+    }
+    // Anything else (Ally, Vanguard, Trinet, Ascensus, ...) isn't a spend card.
+    if (!tracker) continue;
+
+    // A positive amount is money coming back. The card paying off its own
+    // balance is not a refund and is not spend — same exclusion, and the same
+    // reasoning, as detectJointRefunds.
+    const isCredit = rawAmount > 0;
+    if (isCredit && cat === 'credit card payment') continue;
+    const amount = isCredit
+      ? Math.round(Math.abs(rawAmount) * 100) / 100
+      : spendAmount(txn, rules);
+    if (amount === 0) continue;
+
+    rows.push({
+      id: transactionId({ ...txn, accountLabel: acct }),
+      date: txn.date,
+      merchant: merchantName(txn),
+      amount,
+      accountLabel: acct,
+      category: catDisplay,
+      group: catDisplay,
+      tracker,
+      ownerId,
+      type: isCredit ? (tracker === 'travel' ? 'credit' : 'refund') : 'spend',
+    });
+  }
+  return rows;
+}
+
 function daysInMonth(today) {
   return new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
 }
@@ -1024,6 +1109,45 @@ async function runCycleHistoryBackfill(args, tracking, goals, today) {
   }
 }
 
+// One-off/occasional deep pull that fills the ledger backwards, for the
+// cycles that closed before the ledger existed (or while it was broken).
+// Deliberately its own mode rather than widening the daily fetch window: the
+// daily loop's trip matching, its `b < 0` reassignment fold-in, and
+// refreshFavoritePlaces all read the same fetched array, so a wider window
+// there would quietly change live tracker numbers. This one touches nothing
+// but the ledger.
+async function runLedgerBackfill(args, tracking, today) {
+  const days = args.ledgerBackfillDays;
+  if (!(days > 0)) throw new Error('ledger-backfill-days must be a positive integer');
+  const startDateObj = new Date(today);
+  startDateObj.setDate(startDateObj.getDate() - days);
+
+  const client = new McpClient({ mcpServerExe: args.mcpServerExe, envFile: args.envFile });
+  try {
+    await client.initialize();
+    const transactions = await fetchTransactions(client, isoDate(startDateObj), isoDate(today), args.limit);
+    const rows = ledgerRowsFromTransactions(transactions, tracking, { overrides: loadTransactionOverrides() });
+    const ledger = upsertLedgerRows(args.transactionsLedgerPath, rows, { asOf: isoDate(today) });
+    console.log(JSON.stringify({
+      ok: true,
+      ledgerBackfill: true,
+      days,
+      transactionCount: transactions.length,
+      rowsUpserted: rows.length,
+      ledgerSize: ledger.meta.transactionCount,
+      ledgerPath: args.transactionsLedgerPath,
+    }));
+  } catch (error) {
+    const stderrTail = client.stderrLines.slice(-5);
+    if (stderrTail.length > 0) {
+      error.message = `${error.message}${os.EOL}MCP stderr tail:${os.EOL}${stderrTail.join(os.EOL)}`;
+    }
+    throw error;
+  } finally {
+    client.close();
+  }
+}
+
 async function maybeNotifyCloseOut(args) {
   try {
     const notifyFn = args.closeOutNotifyFn || defaultCloseOutNotifyFn;
@@ -1058,6 +1182,11 @@ async function main() {
 
   if (args.cycleHistoryBackfillCycles) {
     await runCycleHistoryBackfill(args, tracking, goals, today);
+    return;
+  }
+
+  if (args.ledgerBackfillDays) {
+    await runLedgerBackfill(args, tracking, today);
     return;
   }
 
@@ -1243,6 +1372,21 @@ async function main() {
       cycleStart,
     );
 
+    // Keep every fetched line item as durable history before the live cycle
+    // view is rebuilt over it. Contained like the other side-effect steps: a
+    // ledger failure must never fail the money pull — but it is reported, not
+    // swallowed, both here and in this run's result JSON (AGENTS.md §2: a
+    // broken integration that still reports success is the worst failure mode
+    // this project has had).
+    let ledgerRowCount = null;
+    try {
+      const rows = ledgerRowsFromTransactions(transactions, tracking, { overrides });
+      upsertLedgerRows(args.transactionsLedgerPath, rows, { asOf: isoDate(today) });
+      ledgerRowCount = rows.length;
+    } catch (err) {
+      console.error('transaction ledger update failed (budget pull still ok):', sanitize(err.message || err));
+    }
+
     const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
 
     function bucketsToWeeks(buckets, refCycleStart) {
@@ -1325,6 +1469,7 @@ async function main() {
       transactionCount: transactions.length,
       personalOwners: Object.keys(tracking.personal || {}),
       travelUnmatchedCount: unmatched.length,
+      ledgerRowsUpserted: ledgerRowCount,
       jointUpdated: jointLabels.size > 0,
       outputPath: args.outputPath,
     }));

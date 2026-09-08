@@ -59,6 +59,15 @@ Longterm/
     cycle_history.json     — closed joint-cycle snapshots (newest first, cap 6).
                              Generated on 25th rollover / backfill. Gitignored.
                              Categories are name+amount only — no merchants.
+    transactions_ledger.json — generated: accumulating merchant line items, one
+                             record per Monarch transaction, upserted by id and
+                             never dropped when it leaves the fetch window (see
+                             scripts/transactions-store.mjs). This is what keeps
+                             a CLOSED cycle searchable — budget_tracking.json is
+                             rebuilt for the live window every pull, and
+                             cycle_history.json deliberately keeps no merchants.
+                             Written by budget-tracking-pull.mjs; gitignored;
+                             never hand-edit.
     data.js                — generated: `window.DATA = {...}`, bundles the three JSON
                              files above, loaded as a plain <script> include. This
                              originally existed because dashboard_v5.html was opened

@@ -28,6 +28,7 @@ import { parseReminderTime, formatReminderTime, effectiveTime } from './reminder
 // dashboard build and the goal-plan build so 'closed' means the same thing in
 // all four places (see resolve_decision).
 import { openDecisions, isResolvedDecision, matchDecisionsByTitle } from './decisions.mjs';
+import { queryLedger, ledgerCoverage, resolveSearchWindow } from './transactions-store.mjs';
 
 // Financial Q&A tools (get_budget_status/get_savings_goals/get_decisions,
 // added 2026-07-31) are read-only over a financialContext bundle (see
@@ -888,14 +889,22 @@ export function get_decisions(financialContext) {
   return { reply: lines.length ? lines.join('\n') : 'No open decisions.' };
 }
 
-// Read-only — looks up individual current-cycle line items by merchant
-// and/or tracker. financialContext.transactions is pre-flattened by
-// scripts/financial-context.mjs (loadTransactionDetail) from the same
-// per-category/per-trip detail budget_tracking.json already carries for the
-// current cycle — no older history, no live Monarch call. The reply always
-// states that scope explicitly so the bot never implies it checked further
-// back than it did.
-export function search_transactions(financialContext, { merchant, tracker } = {}) {
+// A refund/credit row is stored as a positive amount just like a spend row —
+// marked distinctly here (a "+" prefix and a trailing "(refund)") so a reply
+// never reads as if money went out when it actually came back.
+function transactionLine(r) {
+  return (r.type === 'refund' || r.type === 'credit')
+    ? `${r.group} (${r.tracker}): ${r.merchant} — +${fmtMoney(r.amount)} (refund) on ${r.date}`
+    : `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`;
+}
+
+// The live windows, out of budget_tracking.json. financialContext.transactions
+// is pre-flattened by scripts/financial-context.mjs (loadTransactionDetail)
+// from the per-category/per-trip detail that file already carries. This stays
+// the default path — and stays reading budget_tracking rather than the ledger —
+// because it is the only view that includes manual cash charges (add_manual_charge),
+// which Monarch, and therefore the ledger, has never seen.
+function searchCurrentCycle(financialContext, { merchant, tracker }) {
   let rows = financialContext.transactions || [];
   if (merchant && merchant.trim()) {
     const needle = merchant.trim().toLowerCase();
@@ -904,17 +913,77 @@ export function search_transactions(financialContext, { merchant, tracker } = {}
   if (tracker) {
     rows = rows.filter((r) => (tracker === 'personal' ? r.tracker.startsWith('personal:') : r.tracker === tracker));
   }
-  const header = 'Current-cycle line items only (no earlier history):';
+  const header = 'Current-cycle line items:';
   if (!rows.length) return { reply: `${header}\nNo matching current-cycle transactions found.` };
-  // A refund/credit row (financial-context.mjs's loadTransactionDetail tags
-  // these with type: 'refund') is stored as a positive amount just like a
-  // spend row — marked distinctly here (a "+" prefix and a trailing
-  // "(refund)") so the reply never reads as if money went out when it
-  // actually came back.
-  const lines = rows.map((r) => (r.type === 'refund'
-    ? `${r.group} (${r.tracker}): ${r.merchant} — +${fmtMoney(r.amount)} (refund) on ${r.date}`
-    : `${r.group} (${r.tracker}): ${r.merchant} — ${fmtMoney(r.amount)} on ${r.date}`));
-  return { reply: `${header}\n${lines.join('\n')}` };
+  return { reply: `${header}\n${rows.map(transactionLine).join('\n')}` };
+}
+
+// A closed cycle, out of the accumulating ledger (scripts/transactions-store.mjs).
+// Everything here is about not letting the answer overstate itself: the window
+// searched is named with its real dates (joint runs 25th-to-24th, so "last
+// month" is not the calendar month), an absent ledger says so rather than
+// reporting an empty result, and a window reaching back past what was ever
+// recorded says where history actually begins.
+function searchStoredHistory(financialContext, { merchant, tracker }, window) {
+  const ledgerPath = financialContext?.ledgerPath;
+  const coverage = ledgerPath ? ledgerCoverage(ledgerPath) : { count: 0, earliest: null, latest: null };
+  if (!coverage.count) {
+    return {
+      reply: `No stored transaction history yet — only the current cycle is available, so I can't look back to ${window.label}. `
+        + 'Line items get archived from each daily pull going forward; an older stretch can be filled in with '
+        + '`node scripts/budget-tracking-pull.mjs --ledger-backfill-days 120`.',
+    };
+  }
+
+  const result = queryLedger(ledgerPath, {
+    merchant,
+    tracker,
+    startDate: window.startDate,
+    endDate: window.endDate,
+  });
+
+  const scope = tracker ? `${tracker} ` : '';
+  const lines = [`Stored ${scope}line items, ${window.label}:`];
+  if (!result.rows.length) {
+    lines.push('No matching transactions in that window.');
+  } else {
+    lines.push(...result.rows.map(transactionLine));
+    if (result.truncated) lines.push(`Showing the ${result.rows.length} most recent of ${result.matchCount} matches.`);
+    if (result.spendCount) lines.push(`Total: ${fmtMoney(result.spendTotal)} across ${result.spendCount} charge${result.spendCount === 1 ? '' : 's'}.`);
+    if (result.refundCount) lines.push(`Plus ${fmtMoney(result.refundTotal)} back across ${result.refundCount} refund${result.refundCount === 1 ? '' : 's'}.`);
+  }
+  if (window.startDate && coverage.earliest && coverage.earliest > window.startDate) {
+    lines.push(`Stored history only starts ${coverage.earliest}, so anything before that isn't included.`);
+  }
+  // The caveat that actually bites: a ledger that has stopped updating still
+  // answers, and a half-recorded month reads exactly like a cheap month unless
+  // the reply says where the data runs out.
+  if (window.endDate && coverage.latest && coverage.latest < window.endDate) {
+    lines.push(`Stored history currently runs through ${coverage.latest}, so anything after that isn't included yet.`);
+  }
+  return { reply: lines.join('\n') };
+}
+
+/**
+ * Read-only line-item lookup by merchant and/or tracker.
+ *
+ * Current cycle by default; a `period` ("last_month") or an explicit
+ * `since`/`until` searches closed cycles out of the ledger instead. Two
+ * sources rather than one because they answer different questions: the live
+ * tracker is the only place cash charges exist, and the ledger is the only
+ * place last month still exists.
+ */
+export function search_transactions(financialContext, { merchant, tracker, period, since, until } = {}, now = new Date()) {
+  const window = resolveSearchWindow({
+    period,
+    since,
+    until,
+    tracker,
+    jointCycleStart: financialContext?.budgetStatus?.joint?.cycleStart || null,
+    today: now,
+  });
+  if (window.isCurrent) return searchCurrentCycle(financialContext, { merchant, tracker });
+  return searchStoredHistory(financialContext, { merchant, tracker }, window);
 }
 
 // Tool names whose implementation is read-only over a financialContext
@@ -1173,12 +1242,19 @@ export const TOOL_DEFS = [
   },
   {
     name: 'search_transactions',
-    description: 'Look up individual current-cycle transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget" or "what\'s in the joint dining category this cycle". Also surfaces refunds/credits (e.g. "was there a refund from Amazon"), marked distinctly from regular spend in the reply. Current cycle only (joint\'s current ~4-week cycle, personal\'s current month, current travel trips) — cannot see older cycles or history further back.',
+    description: 'Look up individual transaction line items (date, merchant, amount, category/trip) by merchant name and/or tracker — e.g. "was there a Geico charge in the joint budget", "what is in the joint dining category this cycle", "how much did we spend at that restaurant last month". Also surfaces refunds/credits (e.g. "was there a refund from Amazon"), marked distinctly from regular spend. Defaults to the current cycle; pass period or since/until to search closed cycles, which are answered from stored history rather than the live tracker.',
     input_schema: {
       type: 'object',
       properties: {
         merchant: { type: 'string', description: 'Substring to search for in the merchant name (case-insensitive), e.g. "Geico". Omit to not filter by merchant.' },
         tracker: { type: 'string', enum: ['joint', 'personal', 'travel'], description: 'Restrict to one tracker. Omit to search across all of them.' },
+        period: {
+          type: 'string',
+          enum: ['current', 'last_month', 'last_3_months', 'all'],
+          description: 'Which window to search. "current" (the default) is the live cycle. "last_month" is the previous closed cycle — the joint budget runs 25th-to-24th, so for joint/travel that means the prior 25th-to-24th cycle, and for a personal tracker the prior calendar month. "last_3_months" is this cycle plus the two before it. "all" is everything stored. Pass a period whenever the question is about a past month rather than right now.',
+        },
+        since: { type: 'string', description: 'Start of an explicit date range, YYYY-MM-DD, inclusive. Overrides period. Use this when someone names actual dates.' },
+        until: { type: 'string', description: 'End of an explicit date range, YYYY-MM-DD, inclusive. Defaults to today when only since is given.' },
       },
     },
   },
@@ -1301,7 +1377,7 @@ export const TOOL_IMPL = {
   get_health_status: (healthContext) => get_health_status(healthContext),
   get_savings_goals: (financialContext) => get_savings_goals(financialContext),
   get_decisions: (financialContext) => get_decisions(financialContext),
-  search_transactions: (financialContext, args) => search_transactions(financialContext, { merchant: args.merchant, tracker: args.tracker }),
+  search_transactions: (financialContext, args, now) => search_transactions(financialContext, { merchant: args.merchant, tracker: args.tracker, period: args.period, since: args.since, until: args.until }, now),
   add_family_event: (monthPlanEvents, args) => add_family_event(monthPlanEvents, { date: args.date, title: args.title, time: args.time, recurrenceWeeks: args.recurrenceWeeks, durationHours: args.durationHours, kind: args.kind }),
   set_routine_day: (overrides, args) => set_routine_day(overrides, { occasion: args.occasion, dayOfWeek: args.dayOfWeek }),
   update_phase_expense: (goals, args) => update_phase_expense(goals, { phaseId: args.phaseId, expenseKey: args.expenseKey, renameFrom: args.renameFrom, amount: args.amount }),

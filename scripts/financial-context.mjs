@@ -203,7 +203,7 @@ export function loadTransactionDetail(budgetTrackingPath) {
 // files the same "degrade quietly" way dining-recommendation.mjs's context
 // loader does (a fresh checkout before these files exist shouldn't crash
 // the bot, just report emptier answers).
-export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath, cycleHistoryPath }) {
+export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPath, cycleHistoryPath, transactionsLedgerPath = null }) {
   let budgetStatus = { joint: null, personal: {}, travel: [] };
   try { budgetStatus = loadBudgetStatus(budgetTrackingPath, goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let savingsGoals = [];
@@ -222,5 +222,8 @@ export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPa
       );
     }
   } catch { /* missing/unparseable — degrade to empty */ }
-  return { budgetStatus, savingsGoals, decisions, transactions, budgetHabits };
+  // Path, not contents: the ledger accumulates every line item the household
+  // has ever had, and only a search that explicitly asks for a past window
+  // should pay to read it. `transactions` above stays the current cycle.
+  return { budgetStatus, savingsGoals, decisions, transactions, budgetHabits, ledgerPath: transactionsLedgerPath };
 }

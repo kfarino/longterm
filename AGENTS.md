@@ -28,7 +28,7 @@ These are gitignored. **Do not add exceptions. Do not `git add -f` them.**
 |---------------|-----|
 | `data/goals.json`, `accounts.json`, `budget_tracking.json` | Live plan + balances + cycle spend |
 | `data/cycle_history.json` | Closed joint-cycle snapshots (totals + category amounts, no merchants) |
-| `data/transactions_ledger.json` | Accumulating Monarch line items (when ledger feature is enabled) |
+| `data/transactions_ledger.json` | Accumulating Monarch line items — every merchant, every closed cycle |
 | `data/transaction_overrides.json` | Personal routing rules + cash/manual charges |
 | `data/bot-capability-requests.json` | Bot "I can't do that" coding requests |
 | `data/data.js`, `kevin_hanna_goal_plan.md` | Generated views of real numbers |
@@ -81,8 +81,19 @@ file — usually no code change.
 ### Current-cycle view vs accumulating ledger
 - `budget_tracking.json` is **fully rebuilt** each pull for the **current**
   joint/personal/travel windows. Hand-edits there die on the next morning pull.
-- When `transactions_ledger.json` exists, it **accumulates** (upsert by Monarch
-  id). Prefer that for history search; do not treat the cycle JSON as a ledger.
+- `transactions_ledger.json` **accumulates** (upsert by Monarch id,
+  `scripts/transactions-store.mjs`), written by the same daily pull. Prefer it
+  for history search; do not treat the cycle JSON as a ledger. Never drop an id
+  the current fetch window didn't return — that id *is* last month.
+- Do **not** "simplify" this by widening the daily fetch window instead. The
+  live loop's trip matching, its pre-cycle reassignment fold-in, and
+  `refreshFavoritePlaces` all read the same fetched array, so a wider window
+  there silently changes live tracker numbers. Backfill history with
+  `--ledger-backfill-days N` (`npm run ledger:backfill`), which touches nothing
+  but the ledger.
+- A search over a window older than the ledger reaches must say so. "No
+  matching transactions" and "I have no record of that month" are different
+  answers and only one of them is true — see `searchStoredHistory`.
 - Durable spend fixes belong in `transaction_overrides.json` (or Telegram
   override tools) — not hard-coded lists in pull scripts, and not hand-edits to
   regenerated tracker files.

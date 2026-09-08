@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { refreshFavoritePlaces, computeFavoritePlacesHistory, collapsePendingPostedDiningDuplicates } from '../scripts/budget-tracking-pull.mjs';
+import { refreshFavoritePlaces, computeFavoritePlacesHistory, collapsePendingPostedDiningDuplicates, ledgerRowsFromTransactions } from '../scripts/budget-tracking-pull.mjs';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'budget-tracking-pull-test-'));
 
@@ -652,4 +652,118 @@ test('applyManualChargesToTracking skips a duplicate joint charge and charges be
   assert.equal(tracking.joint.weeks[0].actual, 80);
   assert.equal(tracking.joint.categories[0].transactions.length, 1);
 });
+
+// --- ledgerRowsFromTransactions: what gets kept for later cycles ---
+//
+// budget_tracking.json is rebuilt for the current window on every pull, so
+// last month's line items only survive if something else stores them. These
+// rows are that something (see scripts/transactions-store.mjs). Routing here
+// deliberately mirrors the live pull loop's card/travel/reassignment rules,
+// the same way collectJointCharges already does for closed-cycle backfill.
+
+const LEDGER_TRACKING = {
+  mapping: {
+    jointAccountLabels: ['FIXTURE JOINT (...0001)'],
+    personalAccountLabels: { kevin: ['FIXTURE KEVIN (...0002)'], hanna: ['FIXTURE HANNA (...0003)'] },
+    travelCategoryNames: ['Travel & Vacation'],
+  },
+};
+const NO_OVERRIDES = { categoryRules: [], reassignments: [], amountRules: [], manualCharges: [] };
+
+function ledgerRows(transactions, overrides = NO_OVERRIDES) {
+  return ledgerRowsFromTransactions(transactions, LEDGER_TRACKING, { overrides });
+}
+
+test('a joint-card charge is stored against the joint tracker, with its category and Monarch id', () => {
+  const rows = ledgerRows([
+    txn({ id: 'j1', date: '2026-07-28', amount: -84.25, merchant: 'Test Bistro', account: 'FIXTURE JOINT (...0001)' }),
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, 'j1', 'the Monarch id is what makes the next pull upsert instead of duplicate');
+  assert.equal(rows[0].tracker, 'joint');
+  assert.equal(rows[0].ownerId, null);
+  assert.equal(rows[0].amount, 84.25, 'stored as positive dollars, like every other spend surface');
+  assert.equal(rows[0].category, 'Restaurants & Bars');
+  assert.equal(rows[0].type, 'spend');
+});
+
+test('a personal-card charge is stored against that owner', () => {
+  const rows = ledgerRows([
+    txn({ id: 'p1', date: '2026-07-28', amount: -12, merchant: 'Fixture Coffee', account: 'FIXTURE KEVIN (...0002)' }),
+  ]);
+  assert.equal(rows[0].tracker, 'personal');
+  assert.equal(rows[0].ownerId, 'kevin');
+});
+
+test('a Travel & Vacation charge is tagged travel, never joint or personal', () => {
+  const rows = ledgerRows([
+    txn({ id: 't1', date: '2026-07-28', amount: -640, merchant: 'Sample Air', category: 'Travel & Vacation', account: 'FIXTURE KEVIN (...0002)' }),
+  ]);
+  assert.equal(rows[0].tracker, 'travel');
+  assert.equal(rows[0].ownerId, null, 'travel is the household trip budget, not the cardholder\'s personal spend');
+});
+
+test('a one-off tracker reassignment moves the stored row too, so history matches the tracker it counted toward', () => {
+  const overrides = {
+    ...NO_OVERRIDES,
+    reassignments: [{ merchantMatch: 'test bistro', date: '2026-07-28', reassignTo: 'joint' }],
+  };
+  const rows = ledgerRows([
+    txn({ id: 'r1', date: '2026-07-28', amount: -60, merchant: 'Test Bistro', account: 'FIXTURE KEVIN (...0002)' }),
+  ], overrides);
+  assert.equal(rows[0].tracker, 'joint');
+  assert.equal(rows[0].ownerId, null);
+});
+
+test('a charge marked reassignTo "exclude" is stored nowhere, same as the live pull drops it', () => {
+  const overrides = {
+    ...NO_OVERRIDES,
+    reassignments: [{ merchantMatch: 'fixture transfer', date: '2026-07-28', reassignTo: 'exclude' }],
+  };
+  const rows = ledgerRows([
+    txn({ id: 'x1', date: '2026-07-28', amount: 145, merchant: 'Fixture Transfer', account: 'FIXTURE JOINT (...0001)' }),
+  ], overrides);
+  assert.equal(rows.length, 0);
+});
+
+test('a positive joint amount is stored as a refund, not as spend', () => {
+  const rows = ledgerRows([
+    txn({ id: 'f1', date: '2026-07-28', amount: 39.5, merchant: 'Fixture Retailer', category: 'Shopping', account: 'FIXTURE JOINT (...0001)' }),
+  ]);
+  assert.equal(rows[0].type, 'refund');
+  assert.equal(rows[0].amount, 39.5, 'a refund is stored positive and labelled, so a search can never read it as money going out');
+});
+
+test('the card paying off its own balance is not a refund and is not stored', () => {
+  const rows = ledgerRows([
+    txn({ id: 'f2', date: '2026-07-28', amount: 1200, merchant: 'Fixture Bank', category: 'Credit Card Payment', account: 'FIXTURE JOINT (...0001)' }),
+  ]);
+  assert.equal(rows.length, 0);
+});
+
+test('a non-spend account (brokerage, savings) is ignored entirely', () => {
+  const rows = ledgerRows([
+    txn({ id: 'n1', date: '2026-07-28', amount: -500, merchant: 'Fixture Brokerage', account: 'FIXTURE BROKERAGE (...0009)' }),
+  ]);
+  assert.equal(rows.length, 0);
+});
+
+test('a charge with no Monarch id still gets a stable id, so re-pulling it does not double it', () => {
+  const one = ledgerRows([txn({ id: undefined, date: '2026-07-28', amount: -20, merchant: 'Test Bistro', account: 'FIXTURE JOINT (...0001)' })]);
+  const two = ledgerRows([txn({ id: undefined, date: '2026-07-28', amount: -20, merchant: 'Test Bistro', account: 'FIXTURE JOINT (...0001)' })]);
+  assert.ok(one[0].id, 'a row always carries an id');
+  assert.equal(one[0].id, two[0].id);
+});
+
+test('an amount override is respected, so the ledger agrees with the tracker on what was spent', () => {
+  const overrides = {
+    ...NO_OVERRIDES,
+    amountRules: [{ merchantMatch: 'test bistro', date: '2026-07-28', amount: 201.11 }],
+  };
+  const rows = ledgerRows([
+    txn({ id: 'a1', date: '2026-07-28', amount: -171.11, merchant: 'Test Bistro', account: 'FIXTURE JOINT (...0001)' }),
+  ], overrides);
+  assert.equal(rows[0].amount, 201.11);
+});
+
 console.log('All budget-tracking-pull tests passed.');

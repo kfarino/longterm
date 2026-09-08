@@ -69,6 +69,7 @@ function parseArgs(argv) {
     transactionOverridesPath: path.join(repoDataDir, 'transaction_overrides.json'),
     capabilityRequestsPath: path.join(repoDataDir, 'bot-capability-requests.json'),
     cycleHistoryPath: path.join(repoDataDir, 'cycle_history.json'),
+    transactionsLedgerPath: path.join(repoDataDir, 'transactions_ledger.json'),
     updatesFixture: null,
     dryRun: false,
     once: false,
@@ -104,6 +105,7 @@ function parseArgs(argv) {
       else if (key === 'transaction-overrides-path') args.transactionOverridesPath = value;
       else if (key === 'capability-requests-path') args.capabilityRequestsPath = value;
       else if (key === 'cycle-history-path') args.cycleHistoryPath = value;
+      else if (key === 'transactions-ledger-path') args.transactionsLedgerPath = value;
       else if (key === 'updates-fixture') args.updatesFixture = value;
       else if (key === 'max-duration-ms') args.maxDurationMs = Number(value);
       else if (key === 'max-iterations') args.maxIterations = Number(value);
@@ -914,7 +916,7 @@ If the message clearly asks for more than one distinct thing ("add milk to the l
 ## Questions (change nothing)
 If the message is a question answerable from current state, call the relevant read-only tool and answer conversationally: list_todos, get_dining_plan, get_budget_status, get_savings_goals, get_decisions, get_calendar_events, get_upcoming_shows, search_transactions, list_reminders, get_sync_status.
 - Shows, concerts, comedy nights → get_upcoming_shows (it checks the household's followed venues, not a general search).
-- Whether a specific charge/merchant is in a budget, or a category's individual line items → search_transactions, not a guess from aggregate pace numbers. It only covers the current cycle; say so when that matters.
+- Whether a specific charge/merchant is in a budget, or a category's individual line items → search_transactions, not a guess from aggregate pace numbers. It answers about the current cycle by default; when the question is about a past month ("last month", "back in July", "how much did we spend there before"), pass period: "last_month" or an explicit since/until so it searches stored history instead of silently answering about this cycle. History only goes back as far as it has been recorded — the tool says so itself when a window predates that, so never pad the answer with a guess.
 - A general "give me an update", "how are we doing", "where do we stand" with no subject named → get_budget_status and list_todos, and nothing else. Do NOT call get_decisions or get_savings_goals for a generic update: an update means this month's spend and what's still open on the list, not the long-term plan.
 - get_decisions and get_savings_goals belong to a message that explicitly asks about decisions, milestones, savings goals, or the long-term plan — including an update asked about one of those ("update on our goals").
 - Anyone's schedule, "my schedule," "what's on the calendar" → get_calendar_events. Hanna's calendar IS readable (shared into Kevin's Google account). Never claim you lack access to it. Kevin's work calendar is deliberately excluded.

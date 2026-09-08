@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT, BOT_SYSTEM_PROMPT, isGenericUpdateRequest } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, request_capability } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-bot-test-'));
@@ -93,7 +93,7 @@ const seedAccounts = () => ({
   balances: { brokerage: { kevin: { amount: 100000 }, hanna: { amount: 50000 } } },
 });
 
-function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, routineOverrides, conversationLog, pendingClarifications, reminders, transactionOverrides, capabilityRequests }) {
+function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, monthPlanEvents, budgetTracking, accounts, routineOverrides, conversationLog, pendingClarifications, reminders, transactionOverrides, capabilityRequests, transactionsLedger }) {
   fs.mkdirSync(dir, { recursive: true });
   const todosPath = path.join(dir, 'todos.json');
   const updatesPath = path.join(dir, 'updates.json');
@@ -112,6 +112,12 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   const remindersPath = path.join(dir, 'reminders.json');
   const transactionOverridesPath = path.join(dir, 'transaction_overrides.json');
   const capabilityRequestsPath = path.join(dir, 'bot-capability-requests.json');
+  // Only written when a test asks for it. Left absent, this is a
+  // guaranteed-nonexistent path, so every existing test keeps exercising the
+  // current-cycle budget_tracking fallback and no developer's real ledger can
+  // ever reach an assertion (AGENTS.md §3).
+  const transactionsLedgerPath = path.join(dir, 'transactions_ledger.json');
+  if (transactionsLedger) fs.writeFileSync(transactionsLedgerPath, JSON.stringify(transactionsLedger, null, 2));
   fs.writeFileSync(todosPath, JSON.stringify(todos ?? seedTodos(), null, 2));
   fs.writeFileSync(updatesPath, JSON.stringify(updates, null, 2));
   fs.writeFileSync(ownersPath, JSON.stringify(owners ?? { '111': 'hanna', '222': 'kevin' }, null, 2));
@@ -126,7 +132,7 @@ function writeFixture(dir, { todos, updates, owners, goals, favoritePlaces, mont
   fs.writeFileSync(remindersPath, JSON.stringify({ meta: { description: 'test' }, items: reminders || [] }, null, 2));
   fs.writeFileSync(transactionOverridesPath, JSON.stringify(transactionOverrides ?? { manualCharges: [] }, null, 2));
   fs.writeFileSync(capabilityRequestsPath, JSON.stringify(capabilityRequests ?? { items: [] }, null, 2));
-  return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath, remindersPath, transactionOverridesPath, capabilityRequestsPath };
+  return { todosPath, updatesPath, ownersPath, offsetPath, unparsedPath, goalsPath, favoritePlacesPath, monthPlanEventsPath, budgetTrackingPath, accountsPath, routineOverridesPath, conversationLogPath, goalsChangelogPath, pendingClarificationsPath, remindersPath, transactionOverridesPath, capabilityRequestsPath, transactionsLedgerPath };
 }
 
 function msg(updateId, { fromId = 111, text, replyToBot = false }) {
@@ -161,6 +167,7 @@ function baseOpts(paths, extra = {}) {
     remindersPath: paths.remindersPath,
     transactionOverridesPath: paths.transactionOverridesPath,
     capabilityRequestsPath: paths.capabilityRequestsPath,
+    transactionsLedgerPath: paths.transactionsLedgerPath,
     // Points at a guaranteed-nonexistent path by default, so a test isn't
     // accidentally reading this machine's real google-calendar.env (2026-08-02:
     // this file now genuinely exists once Calendar was actually set up, which
@@ -2578,6 +2585,200 @@ test('BOT_SYSTEM_PROMPT reserves get_decisions for an explicit long-term-plan as
   assert.ok(lower.includes('get_budget_status and list_todos'), 'must name the two tools a generic update is allowed to use');
   assert.ok(/do not call get_decisions/.test(lower), 'must rule get_decisions out of a generic update explicitly');
   assert.ok(lower.includes('get_savings_goals'), 'savings-goal progress is long-term too and must be named');
+});
+
+
+// --- search_transactions over closed cycles (2026-09-08) ---
+//
+// budget_tracking.json only ever describes the live windows, so once a cycle
+// rolled over "what did we spend at X last month" had nothing to read. The
+// accumulating ledger (scripts/transactions-store.mjs) is that history, and
+// these tests pin the two halves that matter: a historical ask really reads it,
+// and an ask with no history says so instead of reporting an empty result as if
+// nothing had been spent.
+
+const NOW_SEPT = new Date(2026, 8, 8); // current joint cycle started Aug 25
+
+const seedLedger = () => ({
+  meta: { description: 'test ledger', lastUpdated: '2026-09-07', transactionCount: 4 },
+  byId: {
+    l1: { id: 'l1', date: '2026-08-04', merchant: 'Test Bistro', amount: 84.25, category: 'Restaurants & Bars', group: 'Restaurants & Bars', tracker: 'joint', ownerId: null, type: 'spend' },
+    l2: { id: 'l2', date: '2026-08-19', merchant: 'Test Bistro', amount: 120, category: 'Restaurants & Bars', group: 'Restaurants & Bars', tracker: 'joint', ownerId: null, type: 'spend' },
+    l3: { id: 'l3', date: '2026-09-02', merchant: 'Test Bistro', amount: 60, category: 'Restaurants & Bars', group: 'Restaurants & Bars', tracker: 'joint', ownerId: null, type: 'spend' },
+    l4: { id: 'l4', date: '2026-08-06', merchant: 'Fixture Coffee', amount: 9, category: 'Coffee Shops', group: 'Coffee Shops', tracker: 'personal', ownerId: 'kevin', type: 'spend' },
+  },
+});
+
+await asyncTest('search_transactions: a "last month" ask reads closed-cycle line items out of the ledger', async () => {
+  const dir = path.join(tmpRoot, 'search-last-month');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot what did we spend at Test Bistro last month?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', period: 'last_month' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('2026-08-04'), 'a prior-cycle charge should be found');
+  assert.ok(reply.includes('2026-08-19'), 'every prior-cycle charge in the window, not just the first');
+  assert.ok(!reply.includes('2026-09-02'), 'a charge from the CURRENT cycle is outside last month and must not be counted in');
+});
+
+await asyncTest('search_transactions: a historical reply names the window it actually searched', async () => {
+  // The joint cycle runs 25th-to-24th, so "last month" is not the calendar
+  // month. Stating the dates is what keeps that convention from being an
+  // invisible assumption in the answer.
+  const dir = path.join(tmpRoot, 'search-names-window');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot Test Bistro last month?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', period: 'last_month' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  assert.match(result.sentReplies[0], /Jul 25/);
+  assert.match(result.sentReplies[0], /Aug 24/);
+});
+
+await asyncTest('search_transactions: a historical reply totals what it found', async () => {
+  const dir = path.join(tmpRoot, 'search-total');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot how much at Test Bistro last month?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', period: 'last_month' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  assert.ok(result.sentReplies[0].includes('$204'), 'the answer to "how much" is a total: 84.25 + 120');
+});
+
+await asyncTest('search_transactions: explicit since/until searches exactly that range', async () => {
+  const dir = path.join(tmpRoot, 'search-explicit-range');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot Test Bistro between Aug 1 and Aug 10?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', since: '2026-08-01', until: '2026-08-10' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('2026-08-04'));
+  assert.ok(!reply.includes('2026-08-19'), 'Aug 19 is outside the requested range');
+});
+
+await asyncTest('search_transactions: a personal "last month" uses the calendar month, not the joint cycle', async () => {
+  const dir = path.join(tmpRoot, 'search-personal-month');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot what did I spend on coffee last month?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { tracker: 'personal', period: 'last_month' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('Fixture Coffee'), 'the personal row from August should be found');
+  assert.match(reply, /Aug 1/, 'personal runs on calendar months, so the window starts Aug 1');
+  assert.ok(reply.includes('personal:kevin'), 'the reply should say whose tracker it was on');
+});
+
+await asyncTest('search_transactions: with no period, the answer is still the current cycle only', async () => {
+  // The historical path is opt-in. A bare merchant question keeps reading the
+  // live tracker, which is the only thing that carries manual cash charges.
+  const dir = path.join(tmpRoot, 'search-default-current');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot any Test Bistro charges?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  assert.ok(result.sentReplies[0].includes('No matching current-cycle transactions found.'), 'ledger rows must not leak into a current-cycle answer');
+});
+
+await asyncTest('search_transactions: no stored history says so, rather than reporting an empty month', async () => {
+  // "No transactions found" and "I have no record of that month" are different
+  // answers, and only one of them is true here.
+  const dir = path.join(tmpRoot, 'search-no-ledger');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot what did we spend at Test Bistro last month?' })] },
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', period: 'last_month' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  const reply = result.sentReplies[0];
+  assert.ok(/no stored transaction history/i.test(reply), 'should say history is missing: ' + reply);
+  assert.ok(!/no matching/i.test(reply), 'must not imply nothing was spent');
+});
+
+await asyncTest('search_transactions: a window older than stored history says how far back it goes', async () => {
+  const dir = path.join(tmpRoot, 'search-before-coverage');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot what did we spend at Test Bistro in March?' })] },
+    transactionsLedger: seedLedger(),
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', since: '2026-03-01', until: '2026-03-31' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('2026-08-04'), 'the reply should state where stored history actually begins');
+});
+
+await asyncTest('search_transactions: a refund in a closed cycle is reported as money coming back', async () => {
+  const dir = path.join(tmpRoot, 'search-history-refund');
+  const ledger = seedLedger();
+  ledger.byId.l5 = { id: 'l5', date: '2026-08-14', merchant: 'Fixture Retailer', amount: 39.5, category: 'Shopping', group: 'Shopping', tracker: 'joint', ownerId: null, type: 'refund' };
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot any Fixture Retailer refund last month?' })] },
+    transactionsLedger: ledger,
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Fixture Retailer', period: 'last_month' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  const reply = result.sentReplies[0];
+  assert.ok(reply.includes('+$40'), 'a refund keeps its + prefix in history too');
+  assert.ok(reply.includes('(refund)'));
+});
+
+await asyncTest('search_transactions: a window running past what has been recorded says where history stops', async () => {
+  // The mirror of the "starts at" caveat, and the one that actually bites: a
+  // ledger that stopped updating still answers, and a partial month reads
+  // exactly like a cheap month unless the reply says where the data ends.
+  const dir = path.join(tmpRoot, 'search-after-coverage');
+  const ledger = seedLedger();
+  delete ledger.byId.l3; // nothing recorded after Aug 19
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot Test Bistro this cycle so far?' })] },
+    transactionsLedger: ledger,
+  });
+  const mockClient = async () => ({
+    content: [{ type: 'tool_use', name: 'search_transactions', input: { merchant: 'Test Bistro', since: '2026-08-25', until: '2026-09-08' } }],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
+  assert.ok(result.sentReplies[0].includes('2026-08-19'), 'the reply should state the last date it actually has');
+});
+
+test('TOOL_DEFS: search_transactions exposes the historical window, or the model can never reach it', () => {
+  const def = TOOL_DEFS.find((d) => d.name === 'search_transactions');
+  const props = def.input_schema.properties;
+  assert.ok(props.period, 'a named period is what a message like "last month" maps onto');
+  assert.deepEqual(props.period.enum, ['current', 'last_month', 'last_3_months', 'all']);
+  assert.ok(props.since, 'an explicit date range should be reachable too');
+  assert.ok(props.until);
+  assert.ok(!/current cycle only/i.test(def.description), 'the description must stop claiming history is unavailable');
+});
+
+test('BOT_SYSTEM_PROMPT: the bot is told prior cycles are searchable now', () => {
+  assert.match(BOT_SYSTEM_PROMPT, /search_transactions/);
+  assert.ok(/last month|prior cycle/i.test(BOT_SYSTEM_PROMPT), 'the prompt should name the historical case the tool now covers');
 });
 
 console.log('All tests passed.');
