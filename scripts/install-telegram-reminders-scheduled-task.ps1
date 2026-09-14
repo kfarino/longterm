@@ -47,20 +47,22 @@ if ($IntervalMinutes -lt 1) {
     throw 'IntervalMinutes must be at least 1.'
 }
 
+. (Join-Path $PSScriptRoot 'hidden-task-action.ps1')
 $nodeExe = Resolve-Node
 # Validated the same way the old daily trigger validated it, even though the
 # value is now passed to the script rather than used as the trigger time.
 $atTime = [datetime]::ParseExact($At, 'HH:mm', $null)
 $defaultTime = $atTime.ToString('HH:mm')
-$taskArgs = ('"{0}" --default-time {1}' -f $scriptPath, $defaultTime)
+# wscript + Run window 0 so the 5-minute tick does not flash a console.
+$launch = Get-HiddenTaskLaunch -Execute $nodeExe -Argument ('"{0}" --default-time {1}' -f $scriptPath, $defaultTime)
 
 if ($WhatIf) {
     Write-Host ('Would create scheduled task "{0}" running every {1} minute(s); day-level reminders go out at {2}' -f $TaskName, $IntervalMinutes, $defaultTime)
-    Write-Host ('Task command: {0} {1}' -f $nodeExe, $taskArgs)
+    Write-Host ('Task command: {0} {1}' -f $launch.Execute, $launch.Argument)
     exit 0
 }
 
-$action = New-ScheduledTaskAction -Execute $nodeExe -Argument $taskArgs
+$action = New-ScheduledTaskAction -Execute $launch.Execute -Argument $launch.Argument
 # Start from today's midnight so the repetition covers the whole day, and give
 # it a long duration rather than a day -- a one-day duration silently stops
 # repeating after 24h if the machine never re-triggers the start.

@@ -33,17 +33,18 @@ if (-not (Test-Path -LiteralPath $scriptPath)) {
     throw "Missing script at $scriptPath"
 }
 
+. (Join-Path $PSScriptRoot 'hidden-task-action.ps1')
 $nodeExe = Resolve-Node
-$taskArgs = ('"{0}"' -f $scriptPath)
+$launch = Get-HiddenTaskLaunch -Execute $nodeExe -Argument ('"{0}"' -f $scriptPath)
 $atTime = [datetime]::ParseExact($At, 'HH:mm', $null)
 
 if ($WhatIf) {
     Write-Host ('Would create scheduled task "{0}" running Sun+Thu at {1}' -f $TaskName, $At)
-    Write-Host ('Task command: {0} {1}' -f $nodeExe, $taskArgs)
+    Write-Host ('Task command: {0} {1}' -f $launch.Execute, $launch.Argument)
     exit 0
 }
 
-$action = New-ScheduledTaskAction -Execute $nodeExe -Argument $taskArgs
+$action = New-ScheduledTaskAction -Execute $launch.Execute -Argument $launch.Argument
 $trigger = @(
     New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At $atTime
     New-ScheduledTaskTrigger -Weekly -DaysOfWeek Thursday -At $atTime

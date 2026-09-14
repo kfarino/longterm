@@ -16,9 +16,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $logDir = Join-Path $env:USERPROFILE '.longterm\logs'
 $logPath = Join-Path $logDir 'monthly-spotify-profile.log'
 $tasteDir = Join-Path $repoRoot 'data\spotify'
-$nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-if ($null -eq $nodeCmd) { throw 'Node.js not found on PATH' }
-$nodeExe = $nodeCmd.Source
+. (Join-Path $PSScriptRoot 'hidden-node.ps1')
 
 function Write-ProfileLog {
     param([string]$Message)
@@ -56,9 +54,9 @@ function Invoke-NodeScript {
     Write-ProfileLog ("Starting node {0} {1}" -f $RelPath, ($ScriptArgs -join ' '))
     Push-Location $repoRoot
     try {
-        & $nodeExe $scriptPath @ScriptArgs
-        if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw ("{0} exited with code {1}" -f $RelPath, $LASTEXITCODE)
+        $exit = Invoke-HiddenNode -ScriptPath $scriptPath -ArgumentList $ScriptArgs
+        if ($null -ne $exit -and $exit -ne 0) {
+            throw ("{0} exited with code {1}" -f $RelPath, $exit)
         }
         Write-ProfileLog ("OK {0}" -f $RelPath)
     } finally {

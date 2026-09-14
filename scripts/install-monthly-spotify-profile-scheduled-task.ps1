@@ -53,19 +53,21 @@ if ((Get-Date).Day -ne `$dueDay) { exit 0 }
 "@
 Set-Content -LiteralPath $wrapperPath -Value $wrapper -Encoding UTF8
 
+. (Join-Path $PSScriptRoot 'hidden-task-action.ps1')
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$taskArgs = ('-NoProfile -ExecutionPolicy Bypass -File {0}' -f (Quote-TaskArg $wrapperPath))
+$psArgs = ('-NoProfile -ExecutionPolicy Bypass -File {0}' -f (Quote-TaskArg $wrapperPath))
+$launch = Get-HiddenTaskLaunch -Execute $powershell -Argument $psArgs
 $parts = $At.Split(':')
 $atDate = Get-Date -Hour ([int]$parts[0]) -Minute ([int]$parts[1]) -Second 0
 
 if ($WhatIf) {
     Write-Host ('Would create monthly scheduled task "{0}" on day {1} at {2}' -f $TaskName, $DayOfMonth, $At)
-    Write-Host ('Task command: {0} {1}' -f $powershell, $taskArgs)
+    Write-Host ('Task command: {0} {1}' -f $launch.Execute, $launch.Argument)
     exit 0
 }
 
 $trigger = New-ScheduledTaskTrigger -Daily -At $atDate
-$action = New-ScheduledTaskAction -Execute $powershell -Argument $taskArgs -WorkingDirectory $PSScriptRoot
+$action = New-ScheduledTaskAction -Execute $launch.Execute -Argument $launch.Argument -WorkingDirectory $PSScriptRoot
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -WakeToRun `

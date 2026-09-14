@@ -140,6 +140,14 @@ Control blocked it 2026-08-17; the dialog may say "monarch.exe"). Spawn
 Oura refresh tokens are **single-use** — always persist the new refresh token
 after a refresh or the next pull breaks.
 
+### Scheduled-task consoles
+Never register `node.exe` (or a visible `powershell.exe`) as the task Action.
+`powershell -WindowStyle Hidden` is not enough: node is a console app and still
+opens a window — the Telegram poller sat in one for its whole 15-minute loop,
+and reminders flashed every 5 minutes. Installers use `wscript.exe` +
+`scripts/run-hidden.vbs` (`Run ..., 0`). Editing the script alone does not
+update the live task; re-run the matching `install-*-scheduled-task.ps1`.
+
 ### A dead integration that still reports success
 The worst one so far, and the reason several rules below exist. Google auth
 expired; calendar sync wrote a pause file, logged one line, and **skipped every

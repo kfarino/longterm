@@ -1,6 +1,6 @@
 # Wrapper so Task Scheduler can launch the Telegram poller without a flashing
-# console window (node.exe as the task Action shows a window on every tick /
-# long-poll iteration that writes to stderr).
+# console window. -WindowStyle Hidden on this host is not enough — see
+# hidden-node.ps1.
 param(
     [switch]$Once
 )
@@ -8,16 +8,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$node = Get-Command node -ErrorAction SilentlyContinue
-if ($null -eq $node) { throw 'Node.js is required to run the Telegram bot poller.' }
+. (Join-Path $PSScriptRoot 'hidden-node.ps1')
 
 $scriptPath = Join-Path $PSScriptRoot 'telegram-bot-poll.mjs'
-if (-not (Test-Path -LiteralPath $scriptPath)) {
-    throw "Missing script at $scriptPath"
-}
-
-$argsList = @($scriptPath)
-if ($Once) { $argsList += '--once' }
-
-& $node.Source @argsList
-exit $LASTEXITCODE
+$extra = @()
+if ($Once) { $extra += '--once' }
+exit (Invoke-HiddenNode -ScriptPath $scriptPath -ArgumentList $extra)

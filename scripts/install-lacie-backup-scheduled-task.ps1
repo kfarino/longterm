@@ -34,9 +34,11 @@ if (-not (Test-Path -LiteralPath $scriptPath)) {
     throw "Missing script at $scriptPath"
 }
 
+. (Join-Path $PSScriptRoot 'hidden-task-action.ps1')
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$taskArgs = ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File {0}' -f (Quote-TaskArg $scriptPath))
-$taskRun = ('{0} {1}' -f (Quote-TaskArg $powershell), $taskArgs)
+$psArgs = ('-NoProfile -ExecutionPolicy Bypass -File {0}' -f (Quote-TaskArg $scriptPath))
+$launch = Get-HiddenTaskLaunch -Execute $powershell -Argument $psArgs
+$taskRun = ('{0} {1}' -f (Quote-TaskArg $launch.Execute), $launch.Argument)
 
 if ($WhatIf) {
     Write-Host ('Would create daily scheduled task "{0}" at {1}' -f $TaskName, $Time)
@@ -47,7 +49,7 @@ if ($WhatIf) {
 
 $parts = $Time.Split(':')
 $trigger = New-ScheduledTaskTrigger -Daily -At (Get-Date -Hour ([int]$parts[0]) -Minute ([int]$parts[1]) -Second 0)
-$action = New-ScheduledTaskAction -Execute $powershell -Argument $taskArgs -WorkingDirectory $PSScriptRoot
+$action = New-ScheduledTaskAction -Execute $launch.Execute -Argument $launch.Argument -WorkingDirectory $PSScriptRoot
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -MultipleInstances IgnoreNew `

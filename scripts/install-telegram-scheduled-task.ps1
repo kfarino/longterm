@@ -52,29 +52,25 @@ if ($IntervalMinutes -le 0) {
     $IntervalMinutes = if ($Legacy) { 2 } else { 1 }
 }
 
-# Fail early if node isn't on PATH — the wrapper also checks, but installing
-# a broken task is worse than a clear installer error.
-[void](Resolve-Node)
-$wrapperPath = Join-Path $PSScriptRoot 'run-telegram-bot-poll.ps1'
-if (-not (Test-Path -LiteralPath $wrapperPath)) {
-    throw "Missing wrapper at $wrapperPath"
-}
-# Hidden PowerShell host so node.exe stderr (and normal logs) do not flash a
-# console on every Task Scheduler tick / long-poll iteration.
-$taskArgs = if ($Legacy) {
-    ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Once' -f $wrapperPath)
+. (Join-Path $PSScriptRoot 'hidden-task-action.ps1')
+$nodeExe = Resolve-Node
+# wscript.exe has no console. Hidden PowerShell is not enough — node.exe is a
+# console app and still opens a window for the whole 15-minute poll loop.
+$nodeArgs = if ($Legacy) {
+    ('"{0}" --once' -f $scriptPath)
 } else {
-    ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}"' -f $wrapperPath)
+    ('"{0}"' -f $scriptPath)
 }
+$launch = Get-HiddenTaskLaunch -Execute $nodeExe -Argument $nodeArgs
 $modeLabel = if ($Legacy) { 'legacy short-poll (--once)' } else { 'long-poll loop' }
 
 if ($WhatIf) {
     Write-Host ('Would create scheduled task "{0}" - {1}, checked/relaunched every {2} minute(s)' -f $TaskName, $modeLabel, $IntervalMinutes)
-    Write-Host ('Task command: powershell.exe {0}' -f $taskArgs)
+    Write-Host ('Task command: {0} {1}' -f $launch.Execute, $launch.Argument)
     exit 0
 }
 
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArgs
+$action = New-ScheduledTaskAction -Execute $launch.Execute -Argument $launch.Argument
 # [TimeSpan]::MaxValue overflows Task Scheduler's XML duration format
 # (P99999999DT23H59M59S is out of range) — 10 years is effectively
 # "indefinitely" for this purpose and stays within a valid duration.
