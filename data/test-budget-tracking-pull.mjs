@@ -794,6 +794,35 @@ test('Ally debit: tennis Zelle is spend, not a skipped Transfer', () => {
   assert.equal(categoryName(tennis, rules), 'Tennis');
 });
 
+test('Ally debit: tennis paid to the instructor by name is spend even when Monarch calls it Transfer', () => {
+  const zelleOnly = {
+    categoryRules: [{ merchantMatch: 'zelle', amount: 135, category: 'Tennis' }],
+    reassignments: [],
+    amountRules: [],
+  };
+  const named = txn({ amount: -135, merchant: 'Fixture Coach', category: 'Transfer', account: 'FIXTURE ALLY (...2524)' });
+  assert.equal(categoryName(named, zelleOnly), 'Transfer');
+  assert.equal(isBalanceMovement(named, zelleOnly), true);
+
+  const rules = {
+    categoryRules: [{ merchantMatch: 'fixture coach', category: 'Tennis' }],
+    reassignments: [],
+    amountRules: [],
+  };
+  assert.equal(categoryName(named, rules), 'Tennis');
+  assert.equal(isBalanceMovement(named, rules), false);
+  const rows = ledgerRowsFromTransactions([named], {
+    mapping: {
+      jointAccountLabels: ['FIXTURE JOINT (...0001)'],
+      personalAccountLabels: { kevin: ['FIXTURE ALLY (...2524)'] },
+      travelCategoryNames: ['Travel & Vacation'],
+    },
+  }, { overrides: rules });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].category, 'Tennis');
+  assert.equal(rows[0].amount, 135);
+});
+
 test('a mapped Ally debit purchase is stored on that owner\'s personal tracker', () => {
   const tracking = {
     mapping: {
