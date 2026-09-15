@@ -20,6 +20,7 @@ import {
   DEFAULT_LEDGER_PATH,
   transactionId,
   upsertLedgerRows,
+  loadLedger,
 } from './transactions-store.mjs';
 import {
   loadCycleHistory,
@@ -295,7 +296,7 @@ function overridesPath() {
 
 export function loadTransactionOverrides(filePath = overridesPath()) {
   if (!fs.existsSync(filePath)) {
-    return { categoryRules: [], reassignments: [], amountRules: [], manualCharges: [] };
+    return { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], manualCharges: [] };
   }
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -303,13 +304,14 @@ export function loadTransactionOverrides(filePath = overridesPath()) {
       categoryRules: raw.categoryRules || [],
       reassignments: raw.reassignments || [],
       amountRules: raw.amountRules || [],
+      tripAssignments: raw.tripAssignments || [],
       // Phantom / not-yet-in-Monarch spend that should still hit a personal
       // tracker (e.g. cash/Venmo RAM buy). Merged after the Monarch loop;
       // skipped when Monarch already has the same date+merchant+amount.
       manualCharges: raw.manualCharges || [],
     };
   } catch {
-    return { categoryRules: [], reassignments: [], amountRules: [], manualCharges: [] };
+    return { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], manualCharges: [] };
   }
 }
 
@@ -372,12 +374,92 @@ export function collapsePendingPostedDiningDuplicates(entries) {
 export function categoryName(transaction, overrides = null) {
   const rules = overrides || loadTransactionOverrides();
   const merchant = merchantName(transaction).toLowerCase();
-  const fromFile = (rules.categoryRules || []).find((o) => merchant.includes(String(o.merchantMatch || '').toLowerCase()));
+  const matches = (rules.categoryRules || []).filter((o) => merchant.includes(String(o.merchantMatch || '').toLowerCase()));
+  const abs = Math.abs(Number(transaction.amount));
+  const withAmount = Number.isFinite(abs)
+    ? matches.find((o) => o.amount != null && Math.abs(abs - Number(o.amount)) < 0.011)
+    : null;
+  const fromFile = withAmount || matches.find((o) => o.amount == null);
   if (fromFile?.category) return fromFile.category;
   const fromCode = MERCHANT_CATEGORY_OVERRIDES.find((o) => merchant.includes(o.match));
   if (fromCode) return fromCode.category;
   if (typeof transaction.category === 'string') return transaction.category;
   return transaction.category?.name || '';
+}
+
+/** Card payments and bank transfers (Venmo/Vanguard/Zelle leftovers) are
+ *  balance-sheet moves, not new spend — except when categoryName has already
+ *  relabelled a standing payment (tennis Zelle → Tennis). */
+export function isBalanceMovement(transaction, overrides = null) {
+  const cat = (categoryName(transaction, overrides) || '').toLowerCase();
+  return cat === 'credit card payment' || cat === 'transfer';
+}
+
+export function tripAssignment(transaction, overrides = null) {
+  const rules = overrides || loadTransactionOverrides();
+  const merchant = merchantName(transaction).toLowerCase();
+  return (rules.tripAssignments || []).find(
+    (r) => merchant.includes(String(r.merchantMatch || '').toLowerCase()) && transaction.date === r.date,
+  ) || null;
+}
+
+const BOOKING_LOOKBACK_DAYS = 300;
+
+export function buildTripWindows(travel, bookingLookbackDays = BOOKING_LOOKBACK_DAYS) {
+  return (travel || [])
+    .filter((t) => t.startDate && t.endDate)
+    .map((t) => {
+      const start = new Date(t.startDate);
+      const lookbackDays = t.budgetedAmount != null ? bookingLookbackDays : 0;
+      const bookingStart = new Date(start);
+      bookingStart.setDate(bookingStart.getDate() - lookbackDays);
+      return { ...t, start, end: new Date(t.endDate), bookingStart };
+    });
+}
+
+/** Pin via tripAssignments when a charge sits in two lookbacks; otherwise the
+ *  unique window match, or unmatched (never guess). */
+export function resolveTravelTrip(transaction, trips, overrides = null) {
+  const assigned = tripAssignment(transaction, overrides);
+  if (assigned?.tripId) {
+    const trip = (trips || []).find((t) => t.id === assigned.tripId);
+    if (trip) return { trip };
+  }
+  const txnDate = new Date(`${transaction.date}T12:00:00`);
+  const candidates = (trips || []).filter((t) => txnDate >= t.bookingStart && txnDate <= t.end);
+  if (candidates.length === 1) return { trip: candidates[0] };
+  if (candidates.length > 1) {
+    return { trip: null, unmatched: true, ambiguousBetween: candidates.map((t) => t.id) };
+  }
+  return { trip: null, unmatched: true };
+}
+
+function tripTxnKey(row) {
+  return `${row.date}|${String(row.merchant || '').toLowerCase()}|${Math.round((Math.abs(Number(row.amount) || 0)) * 100)}`;
+}
+
+/** Fold stored travel rows (older than this fetch) into live trip buckets so a
+ *  budgeted trip is not zeroed when its original flights leave the pull window. */
+export function mergeLedgerIntoTripBuckets(buckets, ledgerRows, skipKeys = new Set()) {
+  for (const row of ledgerRows || []) {
+    if (row.tracker !== 'travel' || !row.tripId) continue;
+    if (!buckets.has(row.tripId)) buckets.set(row.tripId, { actual: 0, transactions: [] });
+    const bucket = buckets.get(row.tripId);
+    const amount = Math.round(Math.abs(Number(row.amount) || 0) * 100) / 100;
+    if (!(amount > 0)) continue;
+    const isCredit = row.type === 'credit' || row.type === 'refund';
+    const summary = {
+      date: row.date,
+      merchant: row.merchant,
+      amount,
+      ...(isCredit ? { type: 'credit' } : {}),
+    };
+    if (skipKeys.has(tripTxnKey(summary))) continue;
+    if (bucket.transactions.some((t) => tripTxnKey(t) === tripTxnKey(summary))) continue;
+    bucket.transactions.push(summary);
+    bucket.actual = Math.round((bucket.actual + (isCredit ? -amount : amount)) * 100) / 100;
+  }
+  return buckets;
 }
 
 export function trackerReassignment(transaction, overrides = null) {
@@ -581,12 +663,9 @@ function collectJointCharges(transactions, tracking) {
 // same spirit (and for the same reason) as collectJointCharges above: a second,
 // simpler pass rather than a refactor of the money loop itself. It is
 // deliberately NOT week-bucketed and NOT cycle-clipped — a charge from before
-// the current cycle start is precisely what this is here to keep. Trip
-// attribution is left out too: matching a charge to a trip needs the
-// booking-lookback windows in the live loop, and getting that wrong silently
-// is the failure AGENTS.md warns about, so a travel charge is stored as
-// `travel` and no more than that.
-export function ledgerRowsFromTransactions(transactions, tracking, { overrides = null } = {}) {
+// the current cycle start is precisely what this is here to keep. Travel rows
+// carry tripId when resolveTravelTrip can pin them (including tripAssignments).
+export function ledgerRowsFromTransactions(transactions, tracking, { overrides = null, trips = [] } = {}) {
   const rules = overrides || loadTransactionOverrides();
   const travelCategories = new Set((tracking?.mapping?.travelCategoryNames || []).map((c) => c.toLowerCase()));
   const jointLabels = new Set(tracking?.mapping?.jointAccountLabels || []);
@@ -620,8 +699,13 @@ export function ledgerRowsFromTransactions(transactions, tracking, { overrides =
     } else if (jointLabels.has(acct)) {
       tracker = 'joint';
     }
-    // Anything else (Ally, Vanguard, Trinet, Ascensus, ...) isn't a spend card.
+    // Anything else (Vanguard brokerage, 401k, savings, ...) isn't a spend card.
     if (!tracker) continue;
+
+    // Paying a card off from a debit account is not new spend — it already
+    // counted on the card. Same for Transfer (Venmo/Vanguard) unless
+    // categoryName relabelled it (tennis Zelle → Tennis).
+    if (tracker !== 'travel' && isBalanceMovement(txn, rules)) continue;
 
     // A positive amount is money coming back. The card paying off its own
     // balance is not a refund and is not spend — same exclusion, and the same
@@ -633,6 +717,12 @@ export function ledgerRowsFromTransactions(transactions, tracking, { overrides =
       : spendAmount(txn, rules);
     if (amount === 0) continue;
 
+    let tripId = null;
+    if (tracker === 'travel') {
+      const resolved = resolveTravelTrip(txn, trips, rules);
+      if (resolved.trip) tripId = resolved.trip.id;
+    }
+
     rows.push({
       id: transactionId({ ...txn, accountLabel: acct }),
       date: txn.date,
@@ -640,9 +730,10 @@ export function ledgerRowsFromTransactions(transactions, tracking, { overrides =
       amount,
       accountLabel: acct,
       category: catDisplay,
-      group: catDisplay,
+      group: tripId || catDisplay,
       tracker,
       ownerId,
+      tripId,
       type: isCredit ? (tracker === 'travel' ? 'credit' : 'refund') : 'spend',
     });
   }
@@ -1248,39 +1339,19 @@ async function main() {
     const jointCategoryTransactions = new Map();
     // Flights/hotels get booked well ahead of the trip itself — matching only
     // the stay window (startDate..endDate) misses every booking charge. Widen
-    // to a lookback before startDate too. Trips here are spaced far enough
-    // apart that overlap is rare, but if two lookback windows both contain a
-    // charge, attribute it to whichever trip happens soonest (you book your
-    // nearest trip first).
-    const BOOKING_LOOKBACK_DAYS = 300;
-    const trips = goals.travel
-      // A trip needs dates to be a match candidate at all. It's still a
-      // candidate even with no budgetedAmount (e.g. Boston, already paid) —
-      // family-trip charges (on either card) should still route to it
-      // instead of polluting joint/personal totals, per Kevin: Boston is a
-      // family trip even though it happened to be booked on his own card.
-      .filter((t) => t.startDate && t.endDate)
-      .map((t) => {
-        const start = new Date(t.startDate);
-        // A trip with no budgetedAmount is already fully settled (e.g. Boston,
-        // "Already paid") — its booking activity is done, so it only matches
-        // its own stay dates. Widening its lookback too would make it compete
-        // with real upcoming trips (Zagreb, Europe, ...) for every new charge
-        // that happens to fall within its broad pre-trip window, exactly the
-        // collision that mis-flagged real Zagreb charges as ambiguous.
-        const lookbackDays = t.budgetedAmount != null ? BOOKING_LOOKBACK_DAYS : 0;
-        const bookingStart = new Date(start); bookingStart.setDate(bookingStart.getDate() - lookbackDays);
-        return { ...t, start, end: new Date(t.endDate), bookingStart };
-      });
+    // to a lookback before startDate too. If two lookback windows both contain
+    // a charge, do not guess — unmatched, unless a tripAssignment pins it.
+    const overrides = loadTransactionOverrides();
+    const trips = buildTripWindows(goals.travel);
     const tripActuals = new Map(trips.map((t) => [t.id, { actual: 0, transactions: [] }]));
     const unmatched = [];
 
     for (const txn of transactions) {
       const acct = accountLabel(txn);
-      const catDisplay = categoryName(txn) || 'Uncategorized';
+      const catDisplay = categoryName(txn, overrides) || 'Uncategorized';
       const cat = catDisplay.toLowerCase();
       const txnDate = new Date(txn.date);
-      const reassignment = trackerReassignment(txn);
+      const reassignment = trackerReassignment(txn, overrides);
 
       if (travelCategories.has(cat)) {
         // Net spend toward the trip: Monarch spend is negative, credits
@@ -1296,22 +1367,21 @@ async function main() {
           amount: Math.abs(net),
           ...(net < 0 ? { type: 'credit' } : {}),
         };
-        // If more than one trip's window contains this charge, don't guess —
-        // flag it for manual review instead of risking silent misattribution.
-        const candidates = trips.filter((t) => txnDate >= t.bookingStart && txnDate <= t.end);
-        if (candidates.length === 1) {
-          const bucket = tripActuals.get(candidates[0].id);
+        const resolved = resolveTravelTrip(txn, trips, overrides);
+        if (resolved.trip) {
+          const bucket = tripActuals.get(resolved.trip.id);
           bucket.actual = Math.round((bucket.actual + net) * 100) / 100;
           bucket.transactions.push(summary);
-        } else if (candidates.length > 1) {
-          unmatched.push({ ...summary, ambiguousBetween: candidates.map((t) => t.id) });
         } else {
-          unmatched.push(summary);
+          unmatched.push(resolved.ambiguousBetween
+            ? { ...summary, ambiguousBetween: resolved.ambiguousBetween }
+            : summary);
         }
         continue; // travel never counts toward joint/personal totals
       }
 
-      const amount = spendAmount(txn);
+      if (isBalanceMovement(txn, overrides)) continue;
+      const amount = spendAmount(txn, overrides);
       if (amount === 0) continue;
       if (reassignment?.reassignTo === 'exclude') continue;
       const summary = { date: txn.date, merchant: txn.merchant || txn.plaidName || '', amount: Math.round(amount * 100) / 100 };
@@ -1356,10 +1426,10 @@ async function main() {
           jointCategoryTransactions.get(catDisplay).push(summary);
         }
       }
-      // Anything else (Ally, Vanguard, Trinet, Ascensus, etc.) isn't a spend card — ignored here.
+      // Unmapped accounts (401k, brokerage, savings) stay ignored. Ally checking
+      // is a Kevin spend card when listed in personalAccountLabels.
     }
 
-    const overrides = loadTransactionOverrides();
     applyManualCharges(
       personalState,
       overrides.manualCharges,
@@ -1380,11 +1450,21 @@ async function main() {
     // this project has had).
     let ledgerRowCount = null;
     try {
-      const rows = ledgerRowsFromTransactions(transactions, tracking, { overrides });
+      const rows = ledgerRowsFromTransactions(transactions, tracking, { overrides, trips });
       upsertLedgerRows(args.transactionsLedgerPath, rows, { asOf: isoDate(today) });
       ledgerRowCount = rows.length;
     } catch (err) {
       console.error('transaction ledger update failed (budget pull still ok):', sanitize(err.message || err));
+    }
+    try {
+      const skipKeys = new Set();
+      for (const trip of tracking.travel.trips || []) {
+        if (trip.budgetedAmount != null) continue;
+        for (const t of trip.transactions || []) skipKeys.add(tripTxnKey(t));
+      }
+      mergeLedgerIntoTripBuckets(tripActuals, Object.values(loadLedger(args.transactionsLedgerPath).byId || {}), skipKeys);
+    } catch (err) {
+      console.error('travel ledger fold-in failed (budget pull still ok):', sanitize(err.message || err));
     }
 
     const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);

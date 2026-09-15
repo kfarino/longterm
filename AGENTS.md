@@ -102,7 +102,16 @@ file — usually no code change.
 Travel & Vacation charges match `goals.travel` by stay dates + 300-day
 lookback — **except** `budgetedAmount: null` (settled trips) get **no**
 lookback. Ambiguous or unmatched → `travel.unmatched` (ask a human). Never
-guess a trip.
+guess a trip. A confirmed pin lives in `transaction_overrides.json`
+`tripAssignments` (merchant + date → trip id). Budgeted-trip actuals are
+folded from the accumulating ledger so flights booked months ago are not
+zeroed when they leave the daily fetch window.
+
+Ally checking (`Spending Account`) is Kevin's debit spend card, mapped in
+`personalAccountLabels`. Credit-card payments and leftover `Transfer`
+category rows (Venmo, Vanguard) are not personal spend — they already
+counted on the card or are not consumption. A standing tennis Zelle is
+relabelled `Tennis` first so it is not skipped as a Transfer.
 
 ### Joint cycle snapshots
 The daily budget pull must archive `budget_tracking.json`'s joint tracker into

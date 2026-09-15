@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -764,6 +764,106 @@ test('an amount override is respected, so the ledger agrees with the tracker on 
     txn({ id: 'a1', date: '2026-07-28', amount: -171.11, merchant: 'Test Bistro', account: 'FIXTURE JOINT (...0001)' }),
   ], overrides);
   assert.equal(rows[0].amount, 201.11);
+});
+
+test('categoryName: a Zelle at the tennis amount is Tennis, other Zelles stay Transfer', () => {
+  const rules = {
+    categoryRules: [{ merchantMatch: 'zelle', amount: 135, category: 'Tennis' }],
+    reassignments: [],
+    amountRules: [],
+  };
+  assert.equal(categoryName({ merchant: 'Zelle', category: 'Transfer', amount: -135 }, rules), 'Tennis');
+  assert.equal(categoryName({ merchant: 'Zelle', category: 'Transfer', amount: -270 }, rules), 'Transfer');
+});
+
+test('Ally debit: paying the credit card or a Vanguard transfer is not personal spend', () => {
+  const debit = 'FIXTURE ALLY (...2524)';
+  assert.equal(isBalanceMovement(txn({ amount: -400, merchant: 'Chase', category: 'Credit Card Payment', account: debit })), true);
+  assert.equal(isBalanceMovement(txn({ amount: -1770, merchant: 'Vanguard', category: 'Transfer', account: debit })), true);
+  assert.equal(isBalanceMovement(txn({ amount: -22, merchant: 'Fixture Coffee', category: 'Restaurants & Bars', account: debit })), false);
+});
+
+test('Ally debit: tennis Zelle is spend, not a skipped Transfer', () => {
+  const rules = {
+    categoryRules: [{ merchantMatch: 'zelle', amount: 135, category: 'Tennis' }],
+    reassignments: [],
+    amountRules: [],
+  };
+  const tennis = txn({ amount: -135, merchant: 'Zelle', category: 'Transfer', account: 'FIXTURE ALLY (...2524)' });
+  assert.equal(isBalanceMovement(tennis, rules), false);
+  assert.equal(categoryName(tennis, rules), 'Tennis');
+});
+
+test('a mapped Ally debit purchase is stored on that owner\'s personal tracker', () => {
+  const tracking = {
+    mapping: {
+      jointAccountLabels: ['FIXTURE JOINT (...0001)'],
+      personalAccountLabels: { kevin: ['FIXTURE KEVIN (...0002)', 'FIXTURE ALLY (...2524)'] },
+      travelCategoryNames: ['Travel & Vacation'],
+    },
+  };
+  const rows = ledgerRowsFromTransactions([
+    txn({ id: 'd1', date: '2026-09-10', amount: -22, merchant: 'Fixture Coffee', category: 'Restaurants & Bars', account: 'FIXTURE ALLY (...2524)' }),
+  ], tracking, { overrides: NO_OVERRIDES });
+  assert.equal(rows[0].tracker, 'personal');
+  assert.equal(rows[0].ownerId, 'kevin');
+});
+
+test('paying a card off from Ally is not stored as personal spend (already counted on the card)', () => {
+  const tracking = {
+    mapping: {
+      jointAccountLabels: ['FIXTURE JOINT (...0001)'],
+      personalAccountLabels: { kevin: ['FIXTURE ALLY (...2524)'] },
+      travelCategoryNames: ['Travel & Vacation'],
+    },
+  };
+  const rows = ledgerRowsFromTransactions([
+    txn({ id: 'cc1', date: '2026-09-10', amount: -400, merchant: 'Chase', category: 'Credit Card Payment', account: 'FIXTURE ALLY (...2524)' }),
+  ], tracking, { overrides: NO_OVERRIDES });
+  assert.equal(rows.length, 0);
+});
+
+const ZAGREB = { id: '2026-zagreb', start: new Date('2026-12-18'), end: new Date('2027-01-04'), bookingStart: new Date('2026-02-21') };
+const EUROPE = { id: '2027-europe', start: new Date('2027-06-01'), end: new Date('2027-06-30'), bookingStart: new Date('2026-08-05') };
+
+test('a Christmas-season flight that sits in two lookbacks stays unmatched until assigned', () => {
+  const result = resolveTravelTrip({ date: '2026-09-09' }, [ZAGREB, EUROPE], { tripAssignments: [] });
+  assert.equal(result.trip, null);
+  assert.deepEqual(result.ambiguousBetween, ['2026-zagreb', '2027-europe']);
+});
+
+test('a tripAssignment pins that Lufthansa charge to Christmas Zagreb', () => {
+  const result = resolveTravelTrip(
+    { date: '2026-09-09', merchant: 'Lufthansa' },
+    [ZAGREB, EUROPE],
+    { tripAssignments: [{ merchantMatch: 'lufthansa', date: '2026-09-09', tripId: '2026-zagreb' }] },
+  );
+  assert.equal(result.trip.id, '2026-zagreb');
+  assert.equal(result.ambiguousBetween, undefined);
+});
+
+test('mergeLedgerIntoTripBuckets restores older trip flights the current fetch window no longer sees', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 1487.73, transactions: [{ date: '2026-09-09', merchant: 'Lufthansa', amount: 1487.73 }] }]]);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'old1', date: '2026-07-27', merchant: 'Lufthansa', amount: 2370, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+    { id: 'new1', date: '2026-09-09', merchant: 'Lufthansa', amount: 1487.73, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+  ]);
+  const zagreb = buckets.get('2026-zagreb');
+  assert.equal(zagreb.transactions.length, 2, 'the live Sep charge is not duplicated from the ledger');
+  assert.equal(zagreb.actual, 1487.73 + 2370);
+});
+
+test('mergeLedgerIntoTripBuckets skips charges already on a settled trip (Boston flights must not land on Zagreb)', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 0, transactions: [] }]]);
+  const skipKeys = new Set(['2026-05-05|united airlines|53401']);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'bos', date: '2026-05-05', merchant: 'United Airlines', amount: 534.01, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+    { id: 'lh', date: '2026-07-27', merchant: 'Lufthansa', amount: 2370, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+  ], skipKeys);
+  const zagreb = buckets.get('2026-zagreb');
+  assert.equal(zagreb.transactions.length, 1);
+  assert.equal(zagreb.transactions[0].merchant, 'Lufthansa');
+  assert.equal(zagreb.actual, 2370);
 });
 
 console.log('All budget-tracking-pull tests passed.');
