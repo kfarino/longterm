@@ -103,9 +103,12 @@ Travel & Vacation charges match `goals.travel` by stay dates + 300-day
 lookback — **except** `budgetedAmount: null` (settled trips) get **no**
 lookback. Ambiguous or unmatched → `travel.unmatched` (ask a human). Never
 guess a trip. A confirmed pin lives in `transaction_overrides.json`
-`tripAssignments` (merchant + date → trip id). Budgeted-trip actuals are
-folded from the accumulating ledger so flights booked months ago are not
-zeroed when they leave the daily fetch window.
+`tripAssignments` (merchant + date → trip id). `skip: true` means not a
+family trip (work, reimbursed, or a refunded original booking) — do not
+fold it onto a trip and do not leave it unmatched. Posted travel refunds
+that left the fetch window live in `travelCredits`. Budgeted-trip actuals
+are folded from the accumulating ledger so flights booked months ago are
+not zeroed when they leave the daily fetch window.
 
 Ally checking (`Spending Account`) is Kevin's debit spend card, mapped in
 `personalAccountLabels`. Credit-card payments and leftover `Transfer`

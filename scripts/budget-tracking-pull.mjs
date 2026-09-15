@@ -295,8 +295,9 @@ function overridesPath() {
 }
 
 export function loadTransactionOverrides(filePath = overridesPath()) {
+  const empty = { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], travelCredits: [], manualCharges: [] };
   if (!fs.existsSync(filePath)) {
-    return { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], manualCharges: [] };
+    return empty;
   }
   try {
     const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -305,13 +306,11 @@ export function loadTransactionOverrides(filePath = overridesPath()) {
       reassignments: raw.reassignments || [],
       amountRules: raw.amountRules || [],
       tripAssignments: raw.tripAssignments || [],
-      // Phantom / not-yet-in-Monarch spend that should still hit a personal
-      // tracker (e.g. cash/Venmo RAM buy). Merged after the Monarch loop;
-      // skipped when Monarch already has the same date+merchant+amount.
+      travelCredits: raw.travelCredits || [],
       manualCharges: raw.manualCharges || [],
     };
   } catch {
-    return { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], manualCharges: [] };
+    return empty;
   }
 }
 
@@ -421,6 +420,7 @@ export function buildTripWindows(travel, bookingLookbackDays = BOOKING_LOOKBACK_
  *  unique window match, or unmatched (never guess). */
 export function resolveTravelTrip(transaction, trips, overrides = null) {
   const assigned = tripAssignment(transaction, overrides);
+  if (assigned?.skip) return { trip: null, skip: true };
   if (assigned?.tripId) {
     const trip = (trips || []).find((t) => t.id === assigned.tripId);
     if (trip) return { trip };
@@ -438,11 +438,24 @@ function tripTxnKey(row) {
   return `${row.date}|${String(row.merchant || '').toLowerCase()}|${Math.round((Math.abs(Number(row.amount) || 0)) * 100)}`;
 }
 
+function alreadyOnTrip(bucket, summary, row = null) {
+  if (row?.id && bucket.transactions.some((t) => t.id && t.id === row.id)) return true;
+  const key = tripTxnKey(summary);
+  const same = bucket.transactions.filter((t) => tripTxnKey(t) === key);
+  if (same.length === 0) return false;
+  // Two real tickets can share date+merchant+amount (Hanna's two $1,154.83
+  // Lufthansa charges on 2026-07-27). Distinct ids stay distinct. A live
+  // fetch row with no id is the same charge as a later ledger fold.
+  if (row?.id && same.every((t) => t.id && t.id !== row.id)) return false;
+  return true;
+}
+
 /** Fold stored travel rows (older than this fetch) into live trip buckets so a
  *  budgeted trip is not zeroed when its original flights leave the pull window. */
-export function mergeLedgerIntoTripBuckets(buckets, ledgerRows, skipKeys = new Set()) {
+export function mergeLedgerIntoTripBuckets(buckets, ledgerRows, skipKeys = new Set(), overrides = null) {
   for (const row of ledgerRows || []) {
     if (row.tracker !== 'travel' || !row.tripId) continue;
+    if (tripAssignment({ date: row.date, merchant: row.merchant, amount: row.amount }, overrides)?.skip) continue;
     if (!buckets.has(row.tripId)) buckets.set(row.tripId, { actual: 0, transactions: [] });
     const bucket = buckets.get(row.tripId);
     const amount = Math.round(Math.abs(Number(row.amount) || 0) * 100) / 100;
@@ -455,9 +468,25 @@ export function mergeLedgerIntoTripBuckets(buckets, ledgerRows, skipKeys = new S
       ...(isCredit ? { type: 'credit' } : {}),
     };
     if (skipKeys.has(tripTxnKey(summary))) continue;
-    if (bucket.transactions.some((t) => tripTxnKey(t) === tripTxnKey(summary))) continue;
+    if (alreadyOnTrip(bucket, summary, row)) continue;
+    if (row.id) summary.id = row.id;
     bucket.transactions.push(summary);
     bucket.actual = Math.round((bucket.actual + (isCredit ? -amount : amount)) * 100) / 100;
+  }
+  return buckets;
+}
+
+export function applyTravelCredits(buckets, credits) {
+  for (const c of credits || []) {
+    if (!c?.tripId) continue;
+    const amount = Math.round(Math.abs(Number(c.amount) || 0) * 100) / 100;
+    if (!(amount > 0)) continue;
+    if (!buckets.has(c.tripId)) buckets.set(c.tripId, { actual: 0, transactions: [] });
+    const bucket = buckets.get(c.tripId);
+    const summary = { date: c.date, merchant: c.merchant, amount, type: 'credit' };
+    if (bucket.transactions.some((t) => tripTxnKey(t) === tripTxnKey(summary))) continue;
+    bucket.transactions.push(summary);
+    bucket.actual = Math.round((bucket.actual - amount) * 100) / 100;
   }
   return buckets;
 }
@@ -720,7 +749,11 @@ export function ledgerRowsFromTransactions(transactions, tracking, { overrides =
     let tripId = null;
     if (tracker === 'travel') {
       const resolved = resolveTravelTrip(txn, trips, rules);
-      if (resolved.trip) tripId = resolved.trip.id;
+      if (resolved.skip) {
+        // Keep the row so a later upsert clears a stale tripId; do not pin it.
+      } else if (resolved.trip) {
+        tripId = resolved.trip.id;
+      }
     }
 
     rows.push({
@@ -1365,9 +1398,11 @@ async function main() {
           date: txn.date,
           merchant: txn.merchant || txn.plaidName || '',
           amount: Math.abs(net),
+          ...(transactionId(txn) ? { id: transactionId(txn) } : {}),
           ...(net < 0 ? { type: 'credit' } : {}),
         };
         const resolved = resolveTravelTrip(txn, trips, overrides);
+        if (resolved.skip) continue;
         if (resolved.trip) {
           const bucket = tripActuals.get(resolved.trip.id);
           bucket.actual = Math.round((bucket.actual + net) * 100) / 100;
@@ -1462,7 +1497,8 @@ async function main() {
         if (trip.budgetedAmount != null) continue;
         for (const t of trip.transactions || []) skipKeys.add(tripTxnKey(t));
       }
-      mergeLedgerIntoTripBuckets(tripActuals, Object.values(loadLedger(args.transactionsLedgerPath).byId || {}), skipKeys);
+      mergeLedgerIntoTripBuckets(tripActuals, Object.values(loadLedger(args.transactionsLedgerPath).byId || {}), skipKeys, overrides);
+      applyTravelCredits(tripActuals, overrides.travelCredits);
     } catch (err) {
       console.error('travel ledger fold-in failed (budget pull still ok):', sanitize(err.message || err));
     }

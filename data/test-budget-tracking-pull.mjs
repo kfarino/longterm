@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -834,12 +834,23 @@ test('a Christmas-season flight that sits in two lookbacks stays unmatched until
 
 test('a tripAssignment pins that Lufthansa charge to Christmas Zagreb', () => {
   const result = resolveTravelTrip(
-    { date: '2026-09-09', merchant: 'Lufthansa' },
+    { date: '2026-07-27', merchant: 'Lufthansa' },
     [ZAGREB, EUROPE],
-    { tripAssignments: [{ merchantMatch: 'lufthansa', date: '2026-09-09', tripId: '2026-zagreb' }] },
+    { tripAssignments: [{ merchantMatch: 'lufthansa', date: '2026-07-27', tripId: '2026-zagreb' }] },
   );
   assert.equal(result.trip.id, '2026-zagreb');
   assert.equal(result.ambiguousBetween, undefined);
+});
+
+test('a work flight marked skip is not a family trip and is not unmatched', () => {
+  const result = resolveTravelTrip(
+    { date: '2026-09-09', merchant: 'Lufthansa' },
+    [ZAGREB, EUROPE],
+    { tripAssignments: [{ merchantMatch: 'lufthansa', date: '2026-09-09', skip: true }] },
+  );
+  assert.equal(result.skip, true);
+  assert.equal(result.trip, null);
+  assert.equal(result.unmatched, undefined);
 });
 
 test('mergeLedgerIntoTripBuckets restores older trip flights the current fetch window no longer sees', () => {
@@ -864,6 +875,36 @@ test('mergeLedgerIntoTripBuckets skips charges already on a settled trip (Boston
   assert.equal(zagreb.transactions.length, 1);
   assert.equal(zagreb.transactions[0].merchant, 'Lufthansa');
   assert.equal(zagreb.actual, 2370);
+});
+
+test('mergeLedgerIntoTripBuckets honors skip assignments so a refunded/work Lufthansa is not folded back onto Zagreb', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 0, transactions: [] }]]);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'may', date: '2026-05-27', merchant: 'Lufthansa', amount: 1581.95, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+    { id: 'jul', date: '2026-07-27', merchant: 'Lufthansa', amount: 2370, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+  ], new Set(), { tripAssignments: [{ merchantMatch: 'lufthansa', date: '2026-05-27', skip: true }] });
+  const zagreb = buckets.get('2026-zagreb');
+  assert.equal(zagreb.transactions.length, 1);
+  assert.equal(zagreb.actual, 2370);
+});
+
+test('two same-day Lufthansa tickets at the same amount both count (distinct ids)', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 0, transactions: [] }]]);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'lh-a', date: '2026-07-27', merchant: 'Lufthansa', amount: 1154.83, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+    { id: 'lh-b', date: '2026-07-27', merchant: 'Lufthansa', amount: 1154.83, tracker: 'travel', tripId: '2026-zagreb', type: 'spend' },
+  ]);
+  assert.equal(buckets.get('2026-zagreb').transactions.length, 2);
+  assert.equal(buckets.get('2026-zagreb').actual, 2309.66);
+});
+
+test('applyTravelCredits subtracts a posted Lufthansa refund from the trip actual', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 6678.49, transactions: [] }]]);
+  applyTravelCredits(buckets, [
+    { tripId: '2026-zagreb', date: '2026-08-09', merchant: 'Lufthansa', amount: 1617.83 },
+  ]);
+  assert.equal(buckets.get('2026-zagreb').actual, 5060.66);
+  assert.equal(buckets.get('2026-zagreb').transactions[0].type, 'credit');
 });
 
 console.log('All budget-tracking-pull tests passed.');
