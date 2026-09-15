@@ -82,8 +82,13 @@ test('rebuildShowsWithLivenation also recovers promoter from existing.shows when
 });
 
 test('discoveryShowsFromFindings ignores livenation text-less blocks (uses rebuild for those)', () => {
+  // parseShowsFromText drops dates before today — a hardcoded Sep 2026
+  // fixture started failing the day after that show, taking CI with it.
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 60);
+  const future = d.toISOString().slice(0, 10);
   const findings = [
-    { label: 'venues', text: 'Indie Band — The Echo — 2026-09-11 — https://example.com/indie' },
+    { label: 'venues', text: `Indie Band — The Echo — ${future} — https://example.com/indie` },
     {
       label: 'livenation',
       shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' }],
