@@ -105,10 +105,24 @@ lookback. Ambiguous or unmatched → `travel.unmatched` (ask a human). Never
 guess a trip. A confirmed pin lives in `transaction_overrides.json`
 `tripAssignments` (merchant + date → trip id). `skip: true` means not a
 family trip (work, reimbursed, or a refunded original booking) — do not
-fold it onto a trip and do not leave it unmatched. Posted travel refunds
-that left the fetch window live in `travelCredits`. Budgeted-trip actuals
-are folded from the accumulating ledger so flights booked months ago are
-not zeroed when they leave the daily fetch window.
+fold it onto a trip and do not leave it unmatched.
+
+Posted travel refunds that left the fetch window live in `travelCredits`.
+Budgeted-trip actuals are folded from the accumulating ledger so flights
+booked months ago are not zeroed when they leave the daily fetch window.
+
+A pin naming a `tripId` does two jobs, not one (2026-09-17): it picks the
+trip **and** it reroutes the charge into travel even when Monarch filed it
+under an ordinary category (airport parking posts as `Parking & Tolls`).
+That is `tripReroute()`, and it must be checked at **every** place a tracker
+is decided — the live loop, `ledgerRowsFromTransactions`,
+`collectJointCharges`, and `mergeLedgerIntoTripBuckets` — or the charge
+comes back onto the joint budget by whichever path was missed. Adding a fifth
+routing site means adding the check there too. `skip: true` never reroutes.
+The bot surface is `reassign_transaction`; the live-view half is
+`applyTripReassignmentsToTracking`, and it is the only thing that can put a
+charge on a **settled** trip (`budgetedAmount: null`), since the pull
+deliberately never rebuilds those.
 
 Ally checking (`Spending Account`) is Kevin's debit spend card, mapped in
 `personalAccountLabels`. Credit-card payments and leftover `Transfer`
@@ -206,6 +220,10 @@ the reply path could see Google at all. Rules that follow from it:
 - Cash / Venmo / not-on-a-card spend on the current cycle → `add_manual_charge`
   (stored in `transaction_overrides.json` `manualCharges`, survives the morning
   pull). Do not dump that into `log_decision`.
+- A charge that **already exists** and belongs to a trip → `reassign_transaction`,
+  never `add_manual_charge` (that creates a second copy and double-counts).
+  It writes a `tripAssignments` pin, refuses to write one for a charge it cannot
+  find recorded anywhere, and asks rather than guessing an ambiguous trip.
 - A decision that has been **settled** (an expected refund that posted, a
   question that got answered) → `resolve_decision`, not a second `log_decision`
   entry saying the first is done. It sets `status: "resolved"` and every "open

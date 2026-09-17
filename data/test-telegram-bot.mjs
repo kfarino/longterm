@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT, BOT_SYSTEM_PROMPT, isGenericUpdateRequest } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-bot-test-'));
@@ -2779,6 +2779,258 @@ test('TOOL_DEFS: search_transactions exposes the historical window, or the model
 test('BOT_SYSTEM_PROMPT: the bot is told prior cycles are searchable now', () => {
   assert.match(BOT_SYSTEM_PROMPT, /search_transactions/);
   assert.ok(/last month|prior cycle/i.test(BOT_SYSTEM_PROMPT), 'the prompt should name the historical case the tool now covers');
+});
+
+// --- reassign_transaction (2026-09-17) ---
+//
+// Asked to move two already-recorded parking charges onto two different trips,
+// the bot had nothing to call: add_manual_charge only creates new cash lines
+// and search_transactions is read-only, so a real trip cost that Monarch filed
+// under an ordinary category sat on the joint budget permanently. This tool is
+// the move. It writes a transaction_overrides.json tripAssignments pin — the
+// same durable mechanism the pull already consults — rather than editing the
+// regenerated tracker file, which tomorrow's pull would overwrite.
+
+const REASSIGN_TRIPS = [
+  { id: '2026-boston', label: 'Boston (Aug)', budgetedAmount: null },
+  { id: '2026-zagreb', label: 'Christmas Zagreb', budgetedAmount: 8000 },
+  { id: '2027-europe', label: 'Europe Summer', budgetedAmount: 12000 },
+];
+
+function reassignContext(extra = {}) {
+  return {
+    trips: REASSIGN_TRIPS,
+    transactions: [
+      { tracker: 'joint', group: 'Transportation', date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99 },
+      { tracker: 'joint', group: 'Transportation', date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 },
+      { tracker: 'joint', group: 'Groceries', date: '2026-08-27', merchant: 'Test Market', amount: 200 },
+    ],
+    ledgerPath: null,
+    ...extra,
+  };
+}
+
+test('reassign_transaction pins a joint charge to the named trip and says what moved', () => {
+  const overrides = { tripAssignments: [] };
+  const result = reassign_transaction(overrides, {
+    merchant: 'Fixture Airport Parking', date: '2026-08-26', amount: 198.99, trip: 'Boston',
+  }, 'kevin', reassignContext());
+  assert.equal(result.overrides.tripAssignments.length, 1);
+  const pin = result.overrides.tripAssignments[0];
+  assert.equal(pin.tripId, '2026-boston');
+  assert.equal(pin.date, '2026-08-26');
+  assert.equal(pin.merchantMatch, 'Fixture Airport Parking');
+  assert.equal(pin.amount, 198.99);
+  assert.equal(pin.addedBy, 'kevin');
+  assert.equal(pin.skip, undefined);
+  assert.match(result.reply, /Moved ✓/);
+  assert.match(result.reply, /Boston \(Aug\)/);
+  assert.match(result.reply, /joint/i);
+  assert.match(result.reply, /198\.99/);
+  assert.doesNotMatch(result.reply, /review/i);
+});
+
+test('reassign_transaction matches a trip by id as well as by label', () => {
+  const result = reassign_transaction({ tripAssignments: [] }, {
+    merchant: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, trip: '2026-zagreb',
+  }, 'kevin', reassignContext());
+  assert.equal(result.overrides.tripAssignments[0].tripId, '2026-zagreb');
+  assert.match(result.reply, /Moved ✓/);
+});
+
+test('reassign_transaction asks which trip when the name matches more than one', () => {
+  const overrides = { tripAssignments: [] };
+  const result = reassign_transaction(overrides, {
+    merchant: 'Fixture Airport Parking', date: '2026-08-26', trip: 'u',
+  }, 'kevin', reassignContext());
+  assert.equal(result.overrides.tripAssignments.length, 0, 'never guess a trip');
+  assert.equal(result.needsClarification, true);
+  assert.match(result.reply, /more than one trip/i);
+});
+
+test('reassign_transaction names the tracked trips when the trip is unknown', () => {
+  const overrides = { tripAssignments: [] };
+  const result = reassign_transaction(overrides, {
+    merchant: 'Fixture Airport Parking', date: '2026-08-26', trip: 'Tokyo',
+  }, 'kevin', reassignContext());
+  assert.equal(result.overrides.tripAssignments.length, 0);
+  assert.match(result.reply, /Christmas Zagreb/);
+  assert.doesNotMatch(result.reply, /Moved ✓/);
+});
+
+test('reassign_transaction writes nothing when no recorded charge matches', () => {
+  const overrides = { tripAssignments: [] };
+  const result = reassign_transaction(overrides, {
+    merchant: 'Fixture Airport Parking', date: '2026-08-01', trip: 'Boston',
+  }, 'kevin', reassignContext());
+  assert.equal(result.overrides.tripAssignments.length, 0, 'a pin for a charge that does not exist is dead weight');
+  assert.doesNotMatch(result.reply, /Moved ✓/);
+  assert.match(result.reply, /couldn't find/i);
+});
+
+test('reassign_transaction asks for the amount when two charges share merchant and date', () => {
+  const overrides = { tripAssignments: [] };
+  const context = reassignContext();
+  context.transactions.push({ tracker: 'joint', group: 'Transportation', date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 45 });
+  const result = reassign_transaction(overrides, {
+    merchant: 'Fixture Airport Parking', date: '2026-08-26', trip: 'Boston',
+  }, 'kevin', context);
+  assert.equal(result.overrides.tripAssignments.length, 0);
+  assert.equal(result.needsClarification, true);
+  assert.match(result.reply, /45/);
+  assert.match(result.reply, /198\.99/);
+});
+
+test('reassign_transaction reports a charge already on that trip instead of pinning it twice', () => {
+  const context = reassignContext();
+  context.transactions = [
+    { tracker: 'travel', group: 'Christmas Zagreb', date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 },
+  ];
+  const result = reassign_transaction({ tripAssignments: [] }, {
+    merchant: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, trip: 'Zagreb',
+  }, 'kevin', context);
+  assert.equal(result.overrides.tripAssignments.length, 0);
+  assert.match(result.reply, /already on Christmas Zagreb/i);
+});
+
+test('reassign_transaction moves a charge sitting on the wrong trip', () => {
+  const context = reassignContext();
+  context.transactions = [
+    { tracker: 'travel', group: 'Christmas Zagreb', date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 },
+  ];
+  const result = reassign_transaction({ tripAssignments: [] }, {
+    merchant: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, trip: 'Boston',
+  }, 'kevin', context);
+  assert.equal(result.overrides.tripAssignments[0].tripId, '2026-boston');
+  assert.match(result.reply, /Moved ✓/);
+  assert.match(result.reply, /Christmas Zagreb/, 'say where it came from');
+});
+
+test('reassign_transaction resolves a travel charge that matched no trip', () => {
+  const context = reassignContext();
+  context.transactions = [
+    { tracker: 'travel', group: 'unmatched', date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 },
+  ];
+  const result = reassign_transaction({ tripAssignments: [] }, {
+    merchant: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, trip: 'Zagreb',
+  }, 'kevin', context);
+  assert.equal(result.overrides.tripAssignments[0].tripId, '2026-zagreb');
+  assert.match(result.reply, /Moved ✓/);
+});
+
+test('reassign_transaction replaces an existing pin for the same charge rather than stacking a second', () => {
+  const overrides = {
+    tripAssignments: [
+      { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', skip: true, note: 'thought it was a work trip' },
+    ],
+  };
+  const result = reassign_transaction(overrides, {
+    merchant: 'Fixture Airport Parking', date: '2026-08-26', amount: 198.99, trip: 'Boston',
+  }, 'kevin', reassignContext());
+  assert.equal(result.overrides.tripAssignments.length, 1, 'tripAssignment() takes the FIRST match — a stale pin left in front would win');
+  assert.equal(result.overrides.tripAssignments[0].tripId, '2026-boston');
+  assert.equal(result.overrides.tripAssignments[0].skip, undefined, 'skip and a tripId are contradictory claims');
+});
+
+test('reassign_transaction requires a merchant, a real date, and a trip', () => {
+  const context = reassignContext();
+  const noMerchant = reassign_transaction({ tripAssignments: [] }, { date: '2026-08-26', trip: 'Boston' }, 'kevin', context);
+  assert.match(noMerchant.reply, /merchant/i);
+  assert.equal(noMerchant.overrides.tripAssignments.length, 0);
+  const noDate = reassign_transaction({ tripAssignments: [] }, { merchant: 'Fixture Airport Parking', trip: 'Boston' }, 'kevin', context);
+  assert.match(noDate.reply, /date/i);
+  const badDate = reassign_transaction({ tripAssignments: [] }, { merchant: 'Fixture Airport Parking', date: 'Aug 26', trip: 'Boston' }, 'kevin', context);
+  assert.match(badDate.reply, /date/i);
+  const noTrip = reassign_transaction({ tripAssignments: [] }, { merchant: 'Fixture Airport Parking', date: '2026-08-26' }, 'kevin', context);
+  assert.match(noTrip.reply, /trip/i);
+});
+
+test('reassign_transaction finds a charge from a closed cycle in stored history and says the monthly total is unchanged', () => {
+  const ledgerPath = path.join(tmpRoot, 'reassign-ledger.json');
+  fs.writeFileSync(ledgerPath, JSON.stringify({
+    meta: { lastUpdated: '2026-09-17', transactionCount: 1 },
+    byId: {
+      old1: { id: 'old1', date: '2026-06-14', merchant: 'Fixture Airport Parking', amount: 88.5, tracker: 'joint', category: 'Transportation', type: 'spend' },
+    },
+  }, null, 2));
+  const result = reassign_transaction({ tripAssignments: [] }, {
+    merchant: 'Fixture Airport Parking', date: '2026-06-14', amount: 88.5, trip: 'Boston',
+  }, 'kevin', reassignContext({ transactions: [], ledgerPath }));
+  assert.equal(result.overrides.tripAssignments[0].tripId, '2026-boston');
+  assert.match(result.reply, /Pinned ✓/);
+  assert.match(result.reply, /closed cycle|this cycle/i);
+  assert.doesNotMatch(result.reply, /off the joint budget/i, "a closed cycle's joint total is not being changed");
+});
+
+await asyncTest('reassign_transaction via the bot persists the pin and moves the charge in live tracking', async () => {
+  const dir = path.join(tmpRoot, 'reassign-transaction-joint');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 222, text: 'move the airport parking charges onto the trips' })] },
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-08-25',
+        cycleDays: 30,
+        weeks: [
+          { weekOf: 'Aug 25-31', actual: 398.99, days: 7 },
+          { weekOf: 'Sep 1-7', actual: 100, days: 7 },
+          { weekOf: 'Sep 8-14', actual: 312.99, days: 7 },
+        ],
+        categories: [
+          {
+            name: 'Transportation',
+            amount: 511.98,
+            transactions: [
+              { date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 },
+              { date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99 },
+            ],
+          },
+          { name: 'Groceries', amount: 200, transactions: [{ date: '2026-08-27', merchant: 'Test Market', amount: 200 }] },
+        ],
+      },
+      personal: { kevin: { cycleStart: '2026-09-01', weeks: [{ actual: 0, days: 7 }], categories: [] } },
+      travel: {
+        trips: [
+          { id: '2026-boston', label: 'Boston (Aug)', budgetedAmount: null, actual: 1200, transactions: [{ date: '2026-05-05', merchant: 'Fixture Air', amount: 1200 }] },
+          { id: '2026-zagreb', label: 'Christmas Zagreb', budgetedAmount: 8000, actual: 2370, transactions: [{ date: '2026-07-27', merchant: 'Fixture Air', amount: 2370 }] },
+        ],
+        unmatched: [],
+      },
+    },
+  });
+  const mockAnthropic = async () => ({
+    content: [
+      { type: 'tool_use', name: 'reassign_transaction', input: { merchant: 'Fixture Airport Parking', date: '2026-08-26', amount: 198.99, trip: 'Boston' } },
+      { type: 'tool_use', name: 'reassign_transaction', input: { merchant: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, trip: 'Christmas Zagreb' } },
+    ],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic, dryRun: false }));
+  assert.match(result.sentReplies[0], /Moved ✓/);
+
+  const overrides = JSON.parse(fs.readFileSync(paths.transactionOverridesPath, 'utf8'));
+  assert.equal(overrides.tripAssignments.length, 2);
+  assert.deepEqual(
+    overrides.tripAssignments.map((p) => `${p.date}:${p.tripId}`).sort(),
+    ['2026-08-26:2026-boston', '2026-09-08:2026-zagreb'],
+  );
+
+  const tracking = JSON.parse(fs.readFileSync(paths.budgetTrackingPath, 'utf8'));
+  const transport = tracking.joint.categories.find((c) => c.name === 'Transportation');
+  assert.equal(transport, undefined, 'both charges left, so the category is gone');
+  assert.equal(tracking.joint.weeks[0].actual, 200);
+  assert.equal(tracking.joint.weeks[2].actual, 0);
+  const boston = tracking.travel.trips.find((t) => t.id === '2026-boston');
+  const zagreb = tracking.travel.trips.find((t) => t.id === '2026-zagreb');
+  assert.equal(boston.actual, 1398.99);
+  assert.equal(zagreb.actual, 2682.99);
+});
+
+test('TOOL_DEFS declares reassign_transaction and points capability filing away from it', () => {
+  const def = TOOL_DEFS.find((t) => t.name === 'reassign_transaction');
+  assert.ok(def, 'the bot cannot call a tool it was never told about');
+  assert.deepEqual(def.input_schema.required, ['merchant', 'date', 'trip']);
+  const capability = TOOL_DEFS.find((t) => t.name === 'request_capability');
+  assert.match(capability.description, /reassign_transaction/);
 });
 
 console.log('All tests passed.');

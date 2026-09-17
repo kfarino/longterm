@@ -661,6 +661,181 @@ export function add_manual_charge(overrides, { tracker, merchant, amount, date, 
 
 export const MANUAL_CHARGE_TOOL_NAMES = new Set(['add_manual_charge']);
 
+// --- reassign_transaction (2026-09-17) ---
+//
+// Move an ALREADY-RECORDED charge onto a trip. Until this existed, nothing
+// could: add_manual_charge only creates new cash lines, search_transactions is
+// read-only, and tripAssignments could only pick which trip an already-travel
+// charge belonged to. So a genuine trip cost that Monarch filed under an
+// ordinary category (airport parking → Transportation) counted against the
+// joint budget with no way out short of hand-editing a regenerated file.
+//
+// It writes a transaction_overrides.json `tripAssignments` pin, which is the
+// durable half — budget-tracking-pull.mjs's tripReroute() reads it on every
+// pull, so the move survives the nightly rebuild instead of being erased by
+// it (AGENTS.md §1/§2: durable overrides, never a hand-edit to the tracker).
+// The poller applies applyTripReassignmentsToTracking() right after, which is
+// the live half: the charge leaves the joint total now, not tomorrow morning.
+//
+// Two rules it does not bend:
+//   - Never guess a trip. An ambiguous trip name, or two charges sharing a
+//     merchant and date, asks — same contract as remove_event/resolve_decision.
+//   - Never write a pin for a charge that isn't recorded anywhere. A pin keyed
+//     to a merchant/date that doesn't exist is silent dead weight, and the
+//     reply would be claiming a move that never happened.
+
+// Whole dollars are wrong here, unlike everywhere else in this file: the
+// amount is how a charge is identified, and "$199" cannot tell two nearby
+// parking charges apart in a confirmation.
+function fmtMoneyExact(n) {
+  return `$${Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Trip by id, exact label, then unique partial. More than one match asks. */
+export function resolveTripByName(trips, query) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return {};
+  const all = trips || [];
+  const byId = all.filter((t) => String(t.id || '').toLowerCase() === q);
+  if (byId.length === 1) return { trip: byId[0] };
+  const exact = all.filter((t) => String(t.label || '').toLowerCase() === q);
+  if (exact.length === 1) return { trip: exact[0] };
+  const partial = all.filter((t) => String(t.label || '').toLowerCase().includes(q)
+    || String(t.id || '').toLowerCase().includes(q));
+  if (partial.length === 1) return { trip: partial[0] };
+  if (partial.length > 1) return { ambiguous: partial };
+  return {};
+}
+
+function chargeMatches(row, needle, date, amount) {
+  if (!row || row.date !== date) return false;
+  if (!String(row.merchant || '').toLowerCase().includes(needle)) return false;
+  if (amount == null) return true;
+  return Math.abs(Math.abs(Number(row.amount) || 0) - amount) < 0.011;
+}
+
+/**
+ * The live cycle first, stored history second — the same two-source split
+ * search_transactions uses, and for the same reason: the live tracker is the
+ * only place a cash charge exists, and the ledger is the only place a closed
+ * cycle still exists. Which one matched changes what the reply may claim.
+ */
+function findChargeToReassign(context, { merchant, date, amount }) {
+  const needle = String(merchant).trim().toLowerCase();
+  const current = (context?.transactions || []).filter((r) => chargeMatches(r, needle, date, amount));
+  if (current.length) return { rows: current, source: 'current' };
+  if (!context?.ledgerPath) return { rows: [], source: 'current' };
+  let stored = [];
+  try {
+    stored = queryLedger(context.ledgerPath, { merchant, startDate: date, endDate: date }).rows;
+  } catch {
+    stored = [];
+  }
+  return { rows: stored.filter((r) => chargeMatches(r, needle, date, amount)), source: 'stored' };
+}
+
+function trackerPhrase(row) {
+  const tracker = String(row.tracker || '');
+  if (tracker === 'joint') return 'the joint budget';
+  if (tracker.startsWith('personal:')) return `${tracker.slice('personal:'.length)}'s personal budget`;
+  if (tracker === 'personal') return 'a personal budget';
+  if (row.group && row.group !== 'unmatched') return row.group;
+  return 'unassigned travel';
+}
+
+export function reassign_transaction(overrides, { merchant, date, amount, trip, note }, owner, context) {
+  if (!overrides) overrides = { tripAssignments: [] };
+  if (!Array.isArray(overrides.tripAssignments)) overrides.tripAssignments = [];
+  if (!merchant || !String(merchant).trim()) {
+    return { overrides, reply: "Couldn't move that — which merchant was the charge? (a few words of the name)" };
+  }
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return { overrides, reply: "Couldn't move that — need the charge's exact date (YYYY-MM-DD)." };
+  }
+  if (!trip || !String(trip).trim()) {
+    return { overrides, reply: "Couldn't move that — say which trip it belongs to." };
+  }
+
+  const trips = context?.trips || [];
+  if (!trips.length) {
+    return { overrides, reply: "Couldn't move that — I can't read the trip list right now, so I won't guess which trip you meant." };
+  }
+  const { trip: target, ambiguous } = resolveTripByName(trips, trip);
+  if (ambiguous) {
+    return {
+      overrides,
+      reply: `More than one trip matches "${String(trip).trim()}": ${ambiguous.map((t) => t.label).join(', ')}. Say which one.`,
+      needsClarification: true,
+    };
+  }
+  if (!target) {
+    return {
+      overrides,
+      reply: `Couldn't find a trip matching "${String(trip).trim()}". Tracked trips are: ${trips.map((t) => t.label).join(', ')}.`,
+    };
+  }
+
+  const wanted = amount == null ? null : Math.round(Math.abs(Number(amount)) * 100) / 100;
+  const { rows, source } = findChargeToReassign(context, { merchant, date, amount: wanted });
+  if (!rows.length) {
+    return {
+      overrides,
+      reply: `Couldn't find a recorded charge matching "${String(merchant).trim()}" on ${date} — nothing moved. `
+        + 'Check the date and amount (ask me to search transactions if you want to see what is there).',
+    };
+  }
+  if (rows.length > 1) {
+    return {
+      overrides,
+      reply: `More than one charge matches "${String(merchant).trim()}" on ${date}: `
+        + `${rows.map((r) => fmtMoneyExact(r.amount)).join(', ')}. Say which amount.`,
+      needsClarification: true,
+    };
+  }
+
+  const row = rows[0];
+  const dollars = Math.round(Math.abs(Number(row.amount) || 0) * 100) / 100;
+  if (row.tracker === 'travel' && row.group === target.label) {
+    return { overrides, reply: `Already on ${target.label}: ${fmtMoneyExact(dollars)} at ${row.merchant} on ${date} — nothing to change.` };
+  }
+
+  // One pin per merchant+date, replaced in place. tripAssignment() takes the
+  // FIRST match, so appending next to a stale entry (e.g. an earlier
+  // skip: true) would leave the old claim winning and this one inert.
+  const merchantMatch = String(row.merchant || merchant).trim();
+  const pin = {
+    merchantMatch,
+    date,
+    amount: dollars,
+    tripId: target.id,
+    ...(note && String(note).trim() ? { note: String(note).trim() } : {}),
+    ...(owner ? { addedBy: owner } : {}),
+  };
+  const existing = overrides.tripAssignments.findIndex(
+    (r) => String(r.merchantMatch || '').toLowerCase() === merchantMatch.toLowerCase() && r.date === date,
+  );
+  if (existing >= 0) overrides.tripAssignments[existing] = pin;
+  else overrides.tripAssignments.push(pin);
+
+  if (source === 'stored') {
+    return {
+      overrides,
+      reply: `Pinned ✓ ${fmtMoneyExact(dollars)} at ${row.merchant} on ${date} to ${target.label}. `
+        + "That charge is from a closed cycle, so this cycle's budget doesn't change — the trip total picks it up on the next pull.",
+    };
+  }
+  return {
+    overrides,
+    reply: `Moved ✓ ${fmtMoneyExact(dollars)} at ${row.merchant} on ${date} off ${trackerPhrase(row)} onto ${target.label}.`,
+  };
+}
+
+// Writes transaction_overrides.json like add_manual_charge, but needs the
+// read-only financialContext too (the trip list, plus the recorded line items
+// it verifies against) — so it gets its own name set and its own dispatch
+// branch rather than being squeezed into MANUAL_CHARGE_TOOL_NAMES' signature.
+export const TRIP_REASSIGN_TOOL_NAMES = new Set(['reassign_transaction']);
+
 function nextCapabilityId(requests) {
   const max = (requests.items || []).reduce((m, r) => {
     const n = parseInt(String(r.id).replace(/^c/, ''), 10);
@@ -1275,8 +1450,23 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'reassign_transaction',
+    description: 'Move a charge that is ALREADY recorded onto a trip — use this whenever someone says an existing charge belongs to a trip, was really a travel cost, is on the wrong trip, or should not be counting against the monthly budget (e.g. "the airport parking on Aug 26 was for the Boston trip"). It takes the charge off whichever budget it currently sits on (joint or personal) and counts it toward that trip instead, permanently — the nightly Monarch pull respects it. This is a REAL immediate change with no review step. Do NOT use add_manual_charge for this: that one CREATES a new cash charge and would double-count. Give the exact date, and the amount too when you know it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        merchant: { type: 'string', description: 'Merchant name of the existing charge (a distinctive part of it is enough).' },
+        date: { type: 'string', description: "The charge's exact date, YYYY-MM-DD. Resolve a relative date against today first." },
+        amount: { type: 'number', description: 'Dollar amount, if known — the only way to tell two same-day charges at the same merchant apart. Omit if unknown; the tool will ask if it is ambiguous.' },
+        trip: { type: 'string', description: 'Which tracked trip it belongs to, by name (e.g. "Boston", "Christmas Zagreb"). The trips are listed in the travel context.' },
+        note: { type: 'string', description: 'Optional short note on why it was reassigned.' },
+      },
+      required: ['merchant', 'date', 'trip'],
+    },
+  },
+  {
     name: 'request_capability',
-    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
+    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not moving an existing charge onto a trip (that is reassign_transaction), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1384,6 +1574,7 @@ export const TOOL_IMPL = {
   log_decision: (goals, args) => log_decision(goals, { title: args.title, summary: args.summary, status: args.status }),
   resolve_decision: (goals, args) => resolve_decision(goals, { title: args.title, note: args.note }),
   add_manual_charge: (overrides, args, owner) => add_manual_charge(overrides, { tracker: args.tracker, merchant: args.merchant, amount: args.amount, date: args.date, category: args.category, note: args.note }, owner),
+  reassign_transaction: (overrides, args, owner, context) => reassign_transaction(overrides, { merchant: args.merchant, date: args.date, amount: args.amount, trip: args.trip, note: args.note }, owner, context),
   request_capability: (requests, args, owner) => request_capability(requests, { ask: args.ask, whyCant: args.whyCant, proposedChange: args.proposedChange }, owner),
   add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, time: args.time, owner }),
   list_reminders: (reminders) => list_reminders(reminders),

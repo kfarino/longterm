@@ -198,6 +198,20 @@ export function loadTransactionDetail(budgetTrackingPath) {
   return rows;
 }
 
+/**
+ * Trip id + label, which loadBudgetStatus deliberately drops (it reports only
+ * label/actual/budgeted for display). reassign_transaction needs the id: a pin
+ * in transaction_overrides.json is keyed by trip id, and resolving a spoken
+ * trip name to one must go through the real list so an unknown or ambiguous
+ * name is asked about rather than guessed (AGENTS.md §2: never guess a trip).
+ */
+export function loadTripCatalog(budgetTrackingPath) {
+  const bt = JSON.parse(fs.readFileSync(budgetTrackingPath, 'utf8'));
+  return (bt.travel?.trips || [])
+    .filter((t) => t.id)
+    .map((t) => ({ id: t.id, label: t.label || t.id, budgetedAmount: t.budgetedAmount ?? null }));
+}
+
 // Bundles all three for the recap script (Part B) and for the poller's
 // dispatch (Part C) — read-only, loaded fresh each run, tolerating missing
 // files the same "degrade quietly" way dining-recommendation.mjs's context
@@ -212,6 +226,8 @@ export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPa
   try { decisions = loadDecisions(goalsPath); } catch { /* missing/unparseable — degrade to empty */ }
   let transactions = [];
   try { transactions = loadTransactionDetail(budgetTrackingPath); } catch { /* missing/unparseable — degrade to empty */ }
+  let trips = [];
+  try { trips = loadTripCatalog(budgetTrackingPath); } catch { /* missing/unparseable — degrade to empty */ }
   let budgetHabits = { sampleSize: 0, headsUp: null, watchCategory: null };
   try {
     if (cycleHistoryPath) {
@@ -225,5 +241,5 @@ export function loadFinancialContext({ budgetTrackingPath, goalsPath, accountsPa
   // Path, not contents: the ledger accumulates every line item the household
   // has ever had, and only a search that explicitly asks for a past window
   // should pay to read it. `transactions` above stays the current cycle.
-  return { budgetStatus, savingsGoals, decisions, transactions, budgetHabits, ledgerPath: transactionsLedgerPath };
+  return { budgetStatus, savingsGoals, decisions, transactions, trips, budgetHabits, ledgerPath: transactionsLedgerPath };
 }

@@ -14,9 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, TRIP_REASSIGN_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
-import { applyManualChargesToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
+import { applyManualChargesToTracking, applyTripReassignmentsToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
 import { spawnDetachedLauncher } from './claude-code-run.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
@@ -506,7 +506,7 @@ async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, rem
       tools: TOOL_DEFS,
       system: BOT_SYSTEM_PROMPT,
       messages: [
-        { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nCurrent reminders:\n${JSON.stringify(reminders.items.filter((r) => !r.sent), null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; expenses shows current monthly figures):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
+        { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nCurrent reminders:\n${JSON.stringify(reminders.items.filter((r) => !r.sent), null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions; the trips and transactions lists are also what reassign_transaction matches against):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; expenses shows current monthly figures):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
       ],
     }),
   });
@@ -833,6 +833,14 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         const result = impl(newOverrides, toolUse.input, owner);
         newOverrides = result.overrides;
         rawReplies.push(result.reply);
+      } else if (TRIP_REASSIGN_TOOL_NAMES.has(toolUse.name)) {
+        // Writes overrides like a manual charge, but also reads the trip list
+        // and the recorded line items out of financialContext so it can verify
+        // the charge exists and refuse to guess a trip.
+        const result = impl(newOverrides, toolUse.input, owner, financialContext);
+        newOverrides = result.overrides;
+        rawReplies.push(result.reply);
+        if (result.needsClarification) stillNeedsClarification = result.reply;
       } else if (CAPABILITY_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(newRequests, toolUse.input, owner);
         newRequests = result.requests;
@@ -952,6 +960,7 @@ Budget and spending questions → get_budget_status. The household cares about *
 The tool reply already phrases leftover-days (under a week left: remaining for the rest of this cycle, not $X/wk) and may include a prior-cycle habit heads-up even before halfway. After halfway it may name one watch category. Do not invent a weekly rate when the tool used leftover-days copy, and do not invent a category cue that is not in the tool reply.
 Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.
 Cash, Venmo, babysitting cash, or any spend that will not come through a credit card / Monarch → add_manual_charge (tracker "joint" or an owner id). That is a real immediate budget line, not a decision note.
+A charge that ALREADY exists and belongs to a trip — "that parking was for the Boston trip", "this should count against Zagreb, not the monthly budget", "you put it on the wrong trip" → reassign_transaction. It moves the existing charge; add_manual_charge would create a second copy and double-count. Pass the exact date, and the amount when it was given. Never guess which trip: the tool asks if the name is ambiguous, and so should you if no trip was named at all.
 Babysitting is its own category — opt-in spend that enables date nights. Never label it Childcare. Childcare is the standing nanny/au pair cost on the long-term plan, not a current-cycle spend bucket for sitters.
 
 ## Changing the real financial plan
@@ -1309,19 +1318,21 @@ export async function runOnce(opts) {
   if (overridesChanged && !args.dryRun) {
     writeJson(args.transactionOverridesPath, transactionOverrides);
     // Patch the live cycle view so get_budget_status / the dashboard see
-    // the cash charge before tomorrow's Monarch pull rebuilds this file.
-    // Dedup inside applyManualChargesToTracking makes re-applying the full
-    // list safe. A missing/unreadable tracking file must not fail the poll.
+    // the cash charge (and any trip reassignment) before tomorrow's Monarch
+    // pull rebuilds this file. Both patches re-apply the FULL override list
+    // and are individually idempotent, which is what makes that safe. A
+    // missing/unreadable tracking file must not fail the poll.
     try {
       if (fs.existsSync(args.budgetTrackingPath)) {
         const tracking = JSON.parse(fs.readFileSync(args.budgetTrackingPath, 'utf8'));
         applyManualChargesToTracking(tracking, transactionOverrides.manualCharges);
+        applyTripReassignmentsToTracking(tracking, transactionOverrides.tripAssignments);
         writeJson(args.budgetTrackingPath, tracking);
         const buildScript = path.join(path.dirname(args.budgetTrackingPath), 'build-data.mjs');
         if (fs.existsSync(buildScript)) spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });
       }
     } catch (err) {
-      appendPollLog(args.logPath || telegramPollLogPath(), `manual charge tracking patch failed: ${err.message || err}`);
+      appendPollLog(args.logPath || telegramPollLogPath(), `transaction override tracking patch failed: ${err.message || err}`);
     }
   }
 

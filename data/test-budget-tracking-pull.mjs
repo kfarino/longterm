@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -934,6 +934,206 @@ test('applyTravelCredits subtracts a posted Lufthansa refund from the trip actua
   ]);
   assert.equal(buckets.get('2026-zagreb').actual, 5060.66);
   assert.equal(buckets.get('2026-zagreb').transactions[0].type, 'credit');
+});
+
+// --- Reclassifying an already-recorded charge onto a trip (2026-09-17) ---
+//
+// Monarch files airport parking under Transportation, not "Travel & Vacation",
+// so a real trip cost counted against the joint budget with no way to move it:
+// tripAssignments could only pick WHICH trip an already-travel charge belonged
+// to, never route a non-travel-category charge into travel at all. A pin that
+// names a tripId now does both, in every place that decides a tracker — the
+// live loop, the ledger rows, and the ledger fold-back for charges older than
+// the fetch window.
+
+const AIRPORT_PIN = {
+  tripAssignments: [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', tripId: '2026-zagreb' },
+  ],
+};
+
+test('tripReroute: a pin naming a tripId reroutes the charge; a bare skip pin does not', () => {
+  assert.equal(
+    tripReroute({ date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: -198.99 }, AIRPORT_PIN),
+    '2026-zagreb',
+  );
+  assert.equal(
+    tripReroute({ date: '2026-08-27', merchant: 'Fixture Airport Parking', amount: -198.99 }, AIRPORT_PIN),
+    null,
+    'a different date is a different charge',
+  );
+  assert.equal(
+    tripReroute({ date: '2026-05-27', merchant: 'Lufthansa' }, { tripAssignments: [{ merchantMatch: 'lufthansa', date: '2026-05-27', skip: true }] }),
+    null,
+    'skip means not a family trip - it must not reroute anything into travel',
+  );
+});
+
+test('a pinned Transportation charge on the joint card is stored as travel history, not joint', () => {
+  const rows = ledgerRows([
+    txn({ id: 'p1', date: '2026-08-26', amount: -198.99, merchant: 'Fixture Airport Parking', category: 'Transportation', account: 'FIXTURE JOINT (...0001)' }),
+  ], { ...NO_OVERRIDES, ...AIRPORT_PIN });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].tracker, 'travel');
+  assert.equal(rows[0].tripId, '2026-zagreb');
+  assert.equal(rows[0].group, '2026-zagreb', 'group is the trip, so a later search reports the trip not the old category');
+});
+
+test('an unpinned Transportation charge on the joint card stays joint', () => {
+  const rows = ledgerRows([
+    txn({ id: 'p2', date: '2026-08-26', amount: -198.99, merchant: 'Fixture Airport Parking', category: 'Transportation', account: 'FIXTURE JOINT (...0001)' }),
+  ]);
+  assert.equal(rows[0].tracker, 'joint');
+  assert.equal(rows[0].tripId, null);
+});
+
+test('mergeLedgerIntoTripBuckets folds a pinned charge still stored as joint onto its trip', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 0, transactions: [] }]]);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'p1', date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99, tracker: 'joint', category: 'Transportation', type: 'spend' },
+  ], new Set(), AIRPORT_PIN);
+  const zagreb = buckets.get('2026-zagreb');
+  assert.equal(zagreb.transactions.length, 1, 'a charge pinned after it left the fetch window still reaches the trip');
+  assert.equal(zagreb.actual, 198.99);
+});
+
+test('mergeLedgerIntoTripBuckets does not double-count a pinned charge the live pass already placed', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 198.99, transactions: [{ id: 'p1', date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99 }] }]]);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'p1', date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99, tracker: 'joint', category: 'Transportation', type: 'spend' },
+  ], new Set(), AIRPORT_PIN);
+  assert.equal(buckets.get('2026-zagreb').transactions.length, 1);
+  assert.equal(buckets.get('2026-zagreb').actual, 198.99);
+});
+
+// --- applyTripReassignmentsToTracking: the live-view half ---
+//
+// Same role applyManualChargesToTracking plays for a cash charge: patch the
+// live cycle view so the dashboard and get_budget_status stop counting the
+// charge against the joint budget now, rather than after tomorrow's pull.
+// Idempotent, because the poller re-applies the whole pin list on every write.
+
+function trackingWithParkingOnJoint() {
+  return {
+    joint: {
+      cycleStart: '2026-08-25',
+      cycleDays: 30,
+      weeks: [
+        { weekOf: 'Aug 25-31', actual: 398.99, days: 7 },
+        { weekOf: 'Sep 1-7', actual: 100, days: 7 },
+      ],
+      categories: [
+        {
+          name: 'Transportation',
+          amount: 248.99,
+          transactions: [
+            { date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99 },
+            { date: '2026-08-28', merchant: 'Fixture Gas Co', amount: 50 },
+          ],
+        },
+        { name: 'Groceries', amount: 200, transactions: [{ date: '2026-08-27', merchant: 'Test Market', amount: 200 }] },
+      ],
+    },
+    personal: {},
+    travel: {
+      trips: [
+        { id: '2026-boston', label: 'Boston (Aug)', budgetedAmount: null, actual: 1200, transactions: [{ date: '2026-05-05', merchant: 'Fixture Air', amount: 1200 }] },
+        { id: '2026-zagreb', label: 'Christmas Zagreb', budgetedAmount: 8000, actual: 2370, transactions: [{ date: '2026-07-27', merchant: 'Fixture Air', amount: 2370 }] },
+      ],
+      unmatched: [],
+    },
+  };
+}
+
+test('applyTripReassignmentsToTracking moves a joint line item onto the trip and off the joint total', () => {
+  const tracking = trackingWithParkingOnJoint();
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', amount: 198.99, tripId: '2026-boston' },
+  ]);
+  const transport = tracking.joint.categories.find((c) => c.name === 'Transportation');
+  assert.equal(transport.amount, 50, 'the category total drops by the moved charge');
+  assert.deepEqual(transport.transactions.map((t) => t.merchant), ['Fixture Gas Co']);
+  assert.equal(tracking.joint.weeks[0].actual, 200, 'the week bucket drops by the moved charge');
+  const boston = tracking.travel.trips.find((t) => t.id === '2026-boston');
+  assert.equal(boston.actual, 1398.99);
+  assert.equal(boston.transactions.length, 2);
+  assert.ok(boston.transactions.some((t) => t.merchant === 'Fixture Airport Parking' && t.amount === 198.99));
+});
+
+test('applyTripReassignmentsToTracking is idempotent - re-applying the same pin changes nothing', () => {
+  const tracking = trackingWithParkingOnJoint();
+  const pins = [{ merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', amount: 198.99, tripId: '2026-boston' }];
+  applyTripReassignmentsToTracking(tracking, pins);
+  const afterFirst = JSON.stringify(tracking);
+  applyTripReassignmentsToTracking(tracking, pins);
+  applyTripReassignmentsToTracking(tracking, pins);
+  assert.equal(JSON.stringify(tracking), afterFirst, 'the poller re-applies every pin on every write');
+});
+
+test('applyTripReassignmentsToTracking drops a category the move emptied rather than leaving a $0 row', () => {
+  const tracking = trackingWithParkingOnJoint();
+  tracking.joint.categories = [
+    { name: 'Transportation', amount: 198.99, transactions: [{ date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99 }] },
+  ];
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', amount: 198.99, tripId: '2026-zagreb' },
+  ]);
+  assert.equal(tracking.joint.categories.length, 0);
+});
+
+test('applyTripReassignmentsToTracking repins a charge sitting on the wrong trip', () => {
+  const tracking = trackingWithParkingOnJoint();
+  tracking.travel.trips[1].transactions.push({ date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 });
+  tracking.travel.trips[1].actual = 2682.99;
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, tripId: '2026-boston' },
+  ]);
+  const zagreb = tracking.travel.trips.find((t) => t.id === '2026-zagreb');
+  const boston = tracking.travel.trips.find((t) => t.id === '2026-boston');
+  assert.equal(zagreb.transactions.length, 1, 'the charge left the trip it was wrongly on');
+  assert.equal(zagreb.actual, 2370);
+  assert.ok(boston.transactions.some((t) => t.date === '2026-09-08'));
+  assert.equal(boston.actual, 1512.99);
+});
+
+test('applyTripReassignmentsToTracking resolves a travel.unmatched charge onto its trip', () => {
+  const tracking = trackingWithParkingOnJoint();
+  tracking.travel.unmatched = [
+    { date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99, ambiguousBetween: ['2026-zagreb', '2027-europe'] },
+  ];
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-09-08', amount: 312.99, tripId: '2026-zagreb' },
+  ]);
+  assert.equal(tracking.travel.unmatched.length, 0);
+  const zagreb = tracking.travel.trips.find((t) => t.id === '2026-zagreb');
+  assert.equal(zagreb.actual, 2682.99);
+});
+
+test('applyTripReassignmentsToTracking ignores skip pins and pins for an unknown trip', () => {
+  const tracking = trackingWithParkingOnJoint();
+  const before = JSON.stringify(tracking);
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', skip: true },
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', tripId: 'no-such-trip' },
+  ]);
+  assert.equal(JSON.stringify(tracking), before);
+});
+
+test('applyTripReassignmentsToTracking moves a personal-tracker line item too', () => {
+  const tracking = trackingWithParkingOnJoint();
+  tracking.personal = {
+    kevin: {
+      cycleStart: '2026-09-01',
+      weeks: [{ weekOf: 'Sep 1-7', actual: 312.99, days: 7 }],
+      categories: [{ name: 'Transportation', amount: 312.99, transactions: [{ date: '2026-09-05', merchant: 'Fixture Airport Parking', amount: 312.99 }] }],
+    },
+  };
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-09-05', amount: 312.99, tripId: '2026-zagreb' },
+  ]);
+  assert.equal(tracking.personal.kevin.categories.length, 0);
+  assert.equal(tracking.personal.kevin.weeks[0].actual, 0);
+  assert.equal(tracking.travel.trips.find((t) => t.id === '2026-zagreb').actual, 2682.99);
 });
 
 console.log('All budget-tracking-pull tests passed.');

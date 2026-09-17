@@ -402,6 +402,29 @@ export function tripAssignment(transaction, overrides = null) {
   ) || null;
 }
 
+/**
+ * The tripId a pin forces a charge onto regardless of the category Monarch
+ * filed it under — or null.
+ *
+ * tripAssignments started life as a tie-breaker: a charge Monarch had ALREADY
+ * put in a travel category, sitting in two trips' booking lookbacks, needed a
+ * human to say which trip owned it. But plenty of real trip costs never get a
+ * travel category at all — airport parking posts as Transportation, an airport
+ * meal as Restaurants & Bars — so they counted against the joint budget with
+ * nothing able to move them (2026-09-17). A pin naming a tripId now also
+ * *routes* the charge into travel, and is checked everywhere a tracker gets
+ * decided: the live loop, ledgerRowsFromTransactions, collectJointCharges, and
+ * mergeLedgerIntoTripBuckets' fold-back for charges older than the fetch window.
+ *
+ * A `skip: true` pin makes the opposite claim (not a family trip — work,
+ * reimbursed, a refunded original booking) and never reroutes anything.
+ */
+export function tripReroute(transaction, overrides = null) {
+  const assigned = tripAssignment(transaction, overrides);
+  if (!assigned || assigned.skip) return null;
+  return assigned.tripId || null;
+}
+
 const BOOKING_LOOKBACK_DAYS = 300;
 
 export function buildTripWindows(travel, bookingLookbackDays = BOOKING_LOOKBACK_DAYS) {
@@ -454,10 +477,16 @@ function alreadyOnTrip(bucket, summary, row = null) {
  *  budgeted trip is not zeroed when its original flights leave the pull window. */
 export function mergeLedgerIntoTripBuckets(buckets, ledgerRows, skipKeys = new Set(), overrides = null) {
   for (const row of ledgerRows || []) {
-    if (row.tracker !== 'travel' || !row.tripId) continue;
-    if (tripAssignment({ date: row.date, merchant: row.merchant, amount: row.amount }, overrides)?.skip) continue;
-    if (!buckets.has(row.tripId)) buckets.set(row.tripId, { actual: 0, transactions: [] });
-    const bucket = buckets.get(row.tripId);
+    const pin = tripAssignment({ date: row.date, merchant: row.merchant, amount: row.amount }, overrides);
+    if (pin?.skip) continue;
+    // A pin added *after* the charge was already stored still has to reach the
+    // trip: the stored row says tracker "joint" and the next pull can only
+    // retag it if it is still inside the fetch window. Honouring the pin here
+    // is what makes reassigning an older charge actually change a trip total.
+    const tripId = (row.tracker === 'travel' && row.tripId) ? row.tripId : (pin?.tripId || null);
+    if (!tripId) continue;
+    if (!buckets.has(tripId)) buckets.set(tripId, { actual: 0, transactions: [] });
+    const bucket = buckets.get(tripId);
     const amount = Math.round(Math.abs(Number(row.amount) || 0) * 100) / 100;
     if (!(amount > 0)) continue;
     const isCredit = row.type === 'credit' || row.type === 'refund';
@@ -612,6 +641,116 @@ export function applyManualChargesToTracking(tracking, manualCharges) {
   return tracking;
 }
 
+/** A pin identifies one charge: exact date, merchant substring, and the amount
+ *  when the pin carries one (two same-day charges at the same merchant are
+ *  otherwise indistinguishable in this view — no ids on tracker line items). */
+function pinMatchesRow(pin, row) {
+  if (!row || row.date !== pin.date) return false;
+  if (!String(row.merchant || '').toLowerCase().includes(String(pin.merchantMatch).toLowerCase())) return false;
+  if (pin.amount == null) return true;
+  const want = Math.round(Math.abs(Number(pin.amount)) * 100) / 100;
+  return Math.abs(Math.abs(Number(row.amount) || 0) - want) < 0.011;
+}
+
+function round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** Lift the pinned charge out of a joint/personal category, decrementing that
+ *  category total and its week bucket so the tracker still adds up. */
+function liftFromSpendTracker(tracker, pin) {
+  if (!tracker || !Array.isArray(tracker.categories)) return null;
+  for (const cat of tracker.categories) {
+    const idx = (cat.transactions || []).findIndex((t) => pinMatchesRow(pin, t));
+    if (idx < 0) continue;
+    const [row] = cat.transactions.splice(idx, 1);
+    const amount = round2(Math.abs(Number(row.amount) || 0));
+    cat.amount = round2((Number(cat.amount) || 0) - amount);
+    if (tracker.cycleStart && Array.isArray(tracker.weeks)) {
+      const b = weekBucket(new Date(`${row.date}T12:00:00`), new Date(`${tracker.cycleStart}T12:00:00`));
+      if (b >= 0 && tracker.weeks[b]) tracker.weeks[b].actual = round2((Number(tracker.weeks[b].actual) || 0) - amount);
+    }
+    // A category whose only line item just moved to a trip is not a $0 spend
+    // category, it is no category at all.
+    if (!cat.transactions.length && Math.abs(cat.amount) < 0.011) {
+      tracker.categories = tracker.categories.filter((c) => c !== cat);
+    }
+    tracker.categories.sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
+    return { date: row.date, merchant: row.merchant, amount, ...(row.id ? { id: row.id } : {}) };
+  }
+  return null;
+}
+
+/** Repin: the charge is on a trip, just the wrong one. Credits keep their sign
+ *  so moving a refund between trips moves the reduction with it. */
+function liftFromOtherTrip(trips, pin, targetId) {
+  for (const trip of trips || []) {
+    if (trip.id === targetId || !Array.isArray(trip.transactions)) continue;
+    const idx = trip.transactions.findIndex((t) => pinMatchesRow(pin, t));
+    if (idx < 0) continue;
+    const [row] = trip.transactions.splice(idx, 1);
+    const amount = round2(Math.abs(Number(row.amount) || 0));
+    const isCredit = row.type === 'credit';
+    trip.actual = round2((Number(trip.actual) || 0) - (isCredit ? -amount : amount));
+    return { date: row.date, merchant: row.merchant, amount, ...(row.id ? { id: row.id } : {}), ...(isCredit ? { type: 'credit' } : {}) };
+  }
+  return null;
+}
+
+/** The charge Monarch called travel but matched to no trip (or to two). */
+function liftFromUnmatched(travel, pin) {
+  if (!Array.isArray(travel?.unmatched)) return null;
+  const idx = travel.unmatched.findIndex((t) => pinMatchesRow(pin, t));
+  if (idx < 0) return null;
+  const [row] = travel.unmatched.splice(idx, 1);
+  const isCredit = row.type === 'credit';
+  return {
+    date: row.date,
+    merchant: row.merchant,
+    amount: round2(Math.abs(Number(row.amount) || 0)),
+    ...(row.id ? { id: row.id } : {}),
+    ...(isCredit ? { type: 'credit' } : {}),
+  };
+}
+
+/**
+ * Patch live budget_tracking.json by moving each pinned charge onto its trip
+ * (bot path) — the counterpart to applyManualChargesToTracking, and there for
+ * the same reason: the reroute above only takes effect on the next Monarch
+ * pull, and a charge should stop counting against the joint budget the moment
+ * someone says it was a trip cost, not tomorrow morning.
+ *
+ * Idempotent, because the poller re-applies the entire pin list on every
+ * overrides write: a charge already on its target trip is left alone. A pin
+ * whose charge isn't anywhere in this view (a closed cycle, or Monarch hasn't
+ * posted it) changes nothing here — the pin itself still governs future pulls.
+ *
+ * Settled trips (budgetedAmount: null, e.g. a past trip) are exactly why this
+ * has to write the trip too: the daily pull deliberately never rebuilds them,
+ * so this is the only thing that can add a charge to one.
+ */
+export function applyTripReassignmentsToTracking(tracking, tripAssignments) {
+  const trips = tracking?.travel?.trips || [];
+  for (const pin of tripAssignments || []) {
+    if (!pin || pin.skip || !pin.tripId || !pin.date || !pin.merchantMatch) continue;
+    const target = trips.find((t) => t.id === pin.tripId);
+    if (!target) continue;
+    if (!Array.isArray(target.transactions)) target.transactions = [];
+    if (target.transactions.some((t) => pinMatchesRow(pin, t))) continue;
+
+    const moved = liftFromSpendTracker(tracking?.joint, pin)
+      || Object.values(tracking?.personal || {}).reduce((found, t) => found || liftFromSpendTracker(t, pin), null)
+      || liftFromOtherTrip(trips, pin, target.id)
+      || liftFromUnmatched(tracking?.travel, pin);
+    if (!moved) continue;
+
+    target.transactions.push(moved);
+    target.transactions.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    target.actual = round2((Number(target.actual) || 0) + (moved.type === 'credit' ? -moved.amount : moved.amount));
+  }
+  return tracking;
+}
+
 /** Monarch: spend is negative, credits positive. Trip actual is net spend (credits reduce it). */
 export function travelNetSpend(rawAmount) {
   const n = Number(rawAmount);
@@ -664,7 +803,7 @@ function collectJointCharges(transactions, tracking) {
   for (const txn of transactions) {
     const catDisplay = categoryName(txn, overrides) || 'Uncategorized';
     const cat = catDisplay.toLowerCase();
-    if (travelCategories.has(cat)) continue;
+    if (travelCategories.has(cat) || tripReroute(txn, overrides)) continue;
     const amount = spendAmount(txn, overrides);
     if (amount === 0) continue;
     const reassignment = trackerReassignment(txn, overrides);
@@ -717,7 +856,7 @@ export function ledgerRowsFromTransactions(transactions, tracking, { overrides =
 
     let tracker = null;
     let ownerId = null;
-    if (travelCategories.has(cat)) {
+    if (travelCategories.has(cat) || tripReroute(txn, rules)) {
       tracker = 'travel';
     } else if (reassignment) {
       if (reassignment.reassignTo === 'joint') tracker = 'joint';
@@ -753,6 +892,13 @@ export function ledgerRowsFromTransactions(transactions, tracking, { overrides =
         // Keep the row so a later upsert clears a stale tripId; do not pin it.
       } else if (resolved.trip) {
         tripId = resolved.trip.id;
+      } else {
+        // resolveTravelTrip only accepts a pin whose trip is in the `trips`
+        // list it was handed, and `trips` is optional here. An explicit pin is
+        // a human naming the trip, so it is recorded either way — history
+        // should not lose the attribution just because a caller omitted the
+        // trip list. A tripId no live trip claims is inert downstream.
+        tripId = tripReroute(txn, rules);
       }
     }
 
@@ -1386,7 +1532,10 @@ async function main() {
       const txnDate = new Date(txn.date);
       const reassignment = trackerReassignment(txn, overrides);
 
-      if (travelCategories.has(cat)) {
+      // A pinned charge counts against its trip even when Monarch filed it
+      // under an ordinary category (airport parking as Transportation) — see
+      // tripReroute. Without this it stays on the joint budget forever.
+      if (travelCategories.has(cat) || tripReroute(txn, overrides)) {
         // Net spend toward the trip: Monarch spend is negative, credits
         // positive — travelNetSpend flips the sign so a Lufthansa credit
         // reduces Christmas Zagreb (etc.) instead of vanishing (found live
