@@ -181,6 +181,17 @@ function budgetRefundsThisCycle(financialContext) {
     .sort((a, b) => b.amount - a.amount);
 }
 
+// Travel that posted in the same window as the joint bar. Trip buckets keep
+// older flights (so a Zagreb total isn't zeroed), but the recap is about
+// what landed on the card this cycle — not lifetime trip spend.
+function travelChargesThisCycle(financialContext) {
+  const cycleStart = financialContext.budgetStatus?.joint?.cycleStart || null;
+  return (financialContext.transactions || [])
+    .filter((t) => t.tracker === 'travel')
+    .filter((t) => !cycleStart || (t.date && t.date >= cycleStart))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+}
+
 // Todos section (2026-08-05 recap redesign): every open item, grouped by
 // owner — replaces the single-oldest-item summary (oldestStaleTodo), since
 // each item already carries dateAdded and the LLM can note aging within the
@@ -262,7 +273,7 @@ function diningSummary(monthPlanEvents, diningContext, now = null) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now, healthContext, healthAffectsPlans }) {
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now }) {
   return {
     budgetStatus: financialContext.budgetStatus,
     // Forward-looking "what rate still hits the target". Always an object when
@@ -272,6 +283,7 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
     budgetHabits: financialContext.budgetHabits,
     budgetLineItems: budgetLineItemsOver100(financialContext),
     budgetRefunds: budgetRefundsThisCycle(financialContext),
+    travelThisCycle: travelChargesThisCycle(financialContext),
     decisions: financialContext.decisions,
     dining: diningSummary(monthPlanEvents, diningContext, now),
     todosByOwner: todosByOwner(todos),
@@ -279,12 +291,10 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
     calendarSummary,
     recentPlanChanges,
     openCapabilityRequests,
-    health: healthContext,
-    healthAffectsPlans,
   };
 }
 
-const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly four labeled sections in this order: "Budget:", "Todos:", "Planning:", "Health:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
+export const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
 
 Budget: report the joint tracker using real dollar figures from budgetStatus.joint — amount logged so far, the target, and what's left (target minus logged). Do NOT report a projected cycle total; a projection of where spending lands if nothing changes is not what the household wants to know.
 
@@ -294,13 +304,17 @@ budgetHabits.headsUp may appear even before halfway — one prior-cycle habit cu
 
 Then list every joint-card line item over $100 this cycle from budgetLineItems (merchant, amount, and its group/category) — if budgetLineItems is empty, say so briefly rather than omitting the line entirely. Always include a refunds line too, from budgetRefunds (merchant and amount for each) — if budgetRefunds is empty, say plainly that there were no refunds this cycle rather than skipping the line; refunds are a standing part of this section, not an optional trailing callout.
 
+Then report travel that posted this same cycle from travelThisCycle (merchant, amount, and its trip/group). These sit on the joint card but do NOT count against the family budget target — never fold them into the logged/target/left figures. If travelThisCycle is empty, say so briefly rather than omitting the line.
+
+Then report the joint card total from budgetStatus.joint.cardBalances. A negative balance is the amount owed — say it as owed, using the absolute value, and name the card. If several cards, one line each. If cardBalances is missing or empty, say the card total isn't available rather than inventing a number. The card total is allowed to disagree with the family-budget logged figure: travel on the card plus last-statement leftover is why.
+
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 
 Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick, a "looks already covered" note, or a traveling/away note is just mentioned in passing, not pushed for a reply.
 
-Health: one short line per person from health.perOwner — how this week compared to that person's own baseline, using the real figures in their reason string. Never a bare adjective like "poor" or "fine" on its own; the numbers are the point, exactly as with budget pace. If someone's reason is "insufficient_data", say plainly that their baseline is still building and give the night count, rather than implying anything at all about how they slept. If health is null or health.configured is false, skip this section entirely. If healthAffectsPlans is false, report only — do not suggest changing any plan on the basis of health, and do not imply the weekend should be different.
+Do not include a Health section. Do not mention sleep, baselines, readiness, HRV, or vitals even if they appear somewhere in the JSON.
 
-After the four sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
+After the three sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
 
 Then, only if there's something notable, add one or two short trailing lines for: an urgent open decision (decisions, only flag one with status "urgent" — don't list every open decision); decisions only ever contains decisions that are still open — a settled one is filtered out upstream, so never describe anything there as already resolved, a non-recurring event on either Google calendar this week (calendarSummary — name whose calendar and the date; skip if calendarSummary is null or nothing non-recurring is on either calendar), unprocessed messages since the last recap (unparsedMessages — one line, don't quote them all verbatim), a recent direct edit to the real financial plan (recentPlanChanges — if count is non-zero, mention briefly what changed using recentPlanChanges.recent as a hint), or an open bot capability request still running or failed (openCapabilityRequests — if count is non-zero, mention that a code update is in flight or needs a look, using openCapabilityRequests.recent as a hint). Skip any of these with nothing to report — don't force a line just to fill space.
 
@@ -410,8 +424,7 @@ export async function runOnce(opts) {
     console.error('live Oura pull before recap failed (recap itself still proceeds):', err.message);
   }
 
-  // Health is reported on both cadence days, but only Thursday lets it change
-  // the weekend's dining suggestions — Sunday is a summary, not a planner.
+  // Health still feeds Thursday dining swaps, but is not a recap section.
   const healthContext = loadHealthContext({
     now, storeDir: args.ouraStoreDir, overridesPath: args.healthOverridesPath, goalsPath: args.goalsPath,
   });
@@ -421,7 +434,7 @@ export async function runOnce(opts) {
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
   const openCapabilityRequests = loadOpenCapabilityRequests(args.capabilityRequestsPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now, healthContext, healthAffectsPlans });
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });

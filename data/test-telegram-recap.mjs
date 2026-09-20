@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runOnce } from '../scripts/telegram-bot-recap.mjs';
+import { runOnce, RECAP_SYSTEM_PROMPT } from '../scripts/telegram-bot-recap.mjs';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-recap-test-'));
 
@@ -634,7 +634,7 @@ function emptyHealthPaths(dir) {
   return { ouraStoreDir: storeDir, healthOverridesPath: path.join(dir, 'health_overrides.json') };
 }
 
-await asyncTest('Thursday puts health in the bundle and lets it shape plans', async () => {
+await asyncTest('Thursday still lets health shape dining but does not put it in the composer bundle', async () => {
   const dir = path.join(tmpRoot, 'health-thursday');
   const paths = writeFixture(dir, {});
   let capturedBundle = null;
@@ -644,12 +644,11 @@ await asyncTest('Thursday puts health in the bundle and lets it shape plans', as
     ...emptyHealthPaths(dir),
   }));
 
-  assert.ok(capturedBundle.health, 'health should be present on Thursday');
-  assert.ok('perOwner' in capturedBundle.health);
-  assert.equal(capturedBundle.healthAffectsPlans, true);
+  assert.equal(capturedBundle.health, undefined, 'Health is not a recap section — keep it out of the composer JSON');
+  assert.equal(capturedBundle.healthAffectsPlans, undefined);
 });
 
-await asyncTest('Sunday reports health but never lets it change suggestions', async () => {
+await asyncTest('Sunday does not put health in the composer bundle either', async () => {
   const dir = path.join(tmpRoot, 'health-sunday');
   const paths = writeFixture(dir, {});
   let capturedBundle = null;
@@ -659,8 +658,8 @@ await asyncTest('Sunday reports health but never lets it change suggestions', as
     ...emptyHealthPaths(dir),
   }));
 
-  assert.ok(capturedBundle.health, 'health should be present on Sunday too');
-  assert.equal(capturedBundle.healthAffectsPlans, false, 'Sunday must never shape plans');
+  assert.equal(capturedBundle.health, undefined);
+  assert.equal(capturedBundle.healthAffectsPlans, undefined);
 });
 
 // Builds a store a depletion verdict can actually be computed from: a long
@@ -700,8 +699,7 @@ await asyncTest('a genuinely depleted week reaches get_dining_plan and swaps the
     ...writeDepletedStore(dir, 'kevin'),
   }));
 
-  assert.ok(capturedBundle.health.worst, 'someone should read as depleted');
-  assert.equal(capturedBundle.health.worst.ownerId, 'kevin');
+  assert.equal(capturedBundle.health, undefined, 'depletion may change dining; it must not become a Health section');
   assert.match(capturedBundle.dining.date_night.reply, /Movie night at home/,
     'date night should fall back to the fixture\'s lowKeyHangIdeas entry');
   assert.match(capturedBundle.dining.date_night.reply, /depleted/);
@@ -721,9 +719,9 @@ await asyncTest('the same depleted week on a Sunday changes no suggestion', asyn
     ...writeDepletedStore(dir, 'kevin'),
   }));
 
-  assert.equal(capturedBundle.healthAffectsPlans, false);
+  assert.equal(capturedBundle.health, undefined);
   assert.doesNotMatch(capturedBundle.dining.date_night.reply, /Movie night at home/,
-    'Sunday reports health but must never send the weekend low-key');
+    'Sunday must never send the weekend low-key');
 });
 
 // Live Oura pull before composing (2026-08-07): the shared daily pull runs at
@@ -792,6 +790,58 @@ await asyncTest('bundle excludes decisions marked resolved, so a settled item st
     !JSON.stringify(capturedBundle.decisions).includes('Test Airline refund'),
     'the composer must not even be shown the settled decision — it cannot cite what it never sees'
   );
+});
+
+await asyncTest('recap prompt is three sections, Budget includes travel + card total, and never a Health section', () => {
+  assert.match(RECAP_SYSTEM_PROMPT, /exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:"/);
+  assert.doesNotMatch(RECAP_SYSTEM_PROMPT, /"Health:"/);
+  assert.match(RECAP_SYSTEM_PROMPT, /travelThisCycle/);
+  assert.match(RECAP_SYSTEM_PROMPT, /cardBalances/);
+  assert.match(RECAP_SYSTEM_PROMPT, /Do not include a Health section/);
+});
+
+await asyncTest('bundle includes this-cycle travel charges and the joint card total, not older trip history', async () => {
+  const dir = path.join(tmpRoot, 'travel-and-card');
+  const paths = writeFixture(dir, {
+    budgetTracking: {
+      joint: {
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-07-25',
+        cycleDays: 31,
+        weeks: [{ actual: 1000, days: 7 }],
+        cardBalances: [{ label: ' More Mastercard (...9054)', balance: -4622.79 }],
+      },
+      personal: { kevin: { label: 'Kevin personal', targetExpenseKey: 'Kevin personal', weeks: [{ actual: 900, days: 7 }], cycleDays: 30 } },
+      travel: {
+        trips: [{
+          id: 'zagreb',
+          label: 'Christmas — Zagreb',
+          actual: 2000,
+          budgetedAmount: 7500,
+          transactions: [
+            { date: '2026-05-27', merchant: 'Test Air', amount: 1555 },
+            { date: '2026-08-01', merchant: 'Test Airport Parking', amount: 312.99 },
+          ],
+        }],
+        unmatched: [
+          { date: '2026-08-02', merchant: 'Test Inn', amount: 322.29 },
+        ],
+      },
+    },
+  });
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, { now: SUNDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }) }));
+
+  assert.equal(capturedBundle.budgetStatus.joint.cardBalances.length, 1);
+  assert.equal(capturedBundle.budgetStatus.joint.cardBalances[0].balance, -4622.79);
+  assert.equal(capturedBundle.travelThisCycle.length, 2, 'May Test Air is before this cycle and must not appear');
+  assert.deepEqual(
+    capturedBundle.travelThisCycle.map((t) => t.merchant).sort(),
+    ['Test Airport Parking', 'Test Inn'],
+  );
+  assert.equal(capturedBundle.travelThisCycle.find((t) => t.merchant === 'Test Airport Parking').group, 'Christmas — Zagreb');
+  assert.equal(capturedBundle.travelThisCycle.find((t) => t.merchant === 'Test Inn').group, 'unmatched');
 });
 
 console.log('All tests passed.');

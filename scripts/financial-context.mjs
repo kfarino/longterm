@@ -121,6 +121,9 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       cycleStart: joint.cycleStart || null,
       cycleDays: joint.cycleDays || null,
       adjustments: joint.adjustments || null,
+      // Signed Monarch balances for the mapped joint cards (negative = owed).
+      // Display only — not folded into weeks/pacing (AGENTS.md §2).
+      cardBalances: Array.isArray(joint.cardBalances) ? joint.cardBalances : [],
       // Name+amount only — habits compare this cycle's mix to closed-cycle
       // usual shares. Merchant line items stay in loadTransactionDetail /
       // budgetLineItems, not in the financialContext dump the bot LLM sees.
