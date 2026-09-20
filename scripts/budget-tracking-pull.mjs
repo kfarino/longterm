@@ -295,7 +295,7 @@ function overridesPath() {
 }
 
 export function loadTransactionOverrides(filePath = overridesPath()) {
-  const empty = { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], travelCredits: [], manualCharges: [] };
+  const empty = { categoryRules: [], reassignments: [], amountRules: [], tripAssignments: [], travelCredits: [], manualCharges: [], budgetAdjustments: [] };
   if (!fs.existsSync(filePath)) {
     return empty;
   }
@@ -308,6 +308,7 @@ export function loadTransactionOverrides(filePath = overridesPath()) {
       tripAssignments: raw.tripAssignments || [],
       travelCredits: raw.travelCredits || [],
       manualCharges: raw.manualCharges || [],
+      budgetAdjustments: raw.budgetAdjustments || [],
     };
   } catch {
     return empty;
@@ -749,6 +750,79 @@ export function applyTripReassignmentsToTracking(tracking, tripAssignments) {
     target.actual = round2((Number(target.actual) || 0) + (moved.type === 'credit' ? -moved.amount : moved.amount));
   }
   return tracking;
+}
+
+/**
+ * Apply a household correction to a tracker's current-cycle logged total
+ * (2026-09-20) — the third and last thing that can change a live tracker,
+ * alongside applyManualChargesToTracking (a charge that exists in real life
+ * but not in Monarch) and applyTripReassignmentsToTracking (a charge on the
+ * wrong budget). A correction is neither of those: it is the residual between
+ * what Monarch has logged for this cycle and what the household says is true,
+ * and it deliberately names no merchant. Inventing a fake merchant to close
+ * that gap would put a charge that never happened into the category breakdown
+ * and, via the ledger, into history.
+ *
+ * Folded into the LAST week bucket, not carried as a separate figure: every
+ * consumer derives a tracker's total by summing weeks[].actual (the dashboard
+ * inline, financial-context.mjs's computeTrackerPacing, the recap through it).
+ * Teaching one of those about an `adjustments` term and not the other is the
+ * dual-math drift AGENTS.md §2 exists to prevent. `days` is untouched, so the
+ * day-weighted daily rate keeps its real denominator.
+ *
+ * Two rules keep it honest:
+ *   - The receipt for "already folded in" is `week.adjustment` on the week row
+ *     itself, never a flag on the tracker. The morning pull rebuilds weeks[]
+ *     from Monarch, so those fresh rows carry no receipt and this function
+ *     will not subtract a correction that isn't in them. Re-applying the whole
+ *     list is therefore safe on both paths, which is what the poller does on
+ *     every overrides write.
+ *   - An adjustment applies only to the cycle it was made for (`cycleStart`
+ *     must match the tracker's). A correction that silently carried into next
+ *     month would be an invisible, permanent offset on the family budget.
+ */
+export function applyBudgetAdjustmentsToTracking(tracking, budgetAdjustments) {
+  const entries = [['joint', tracking?.joint], ...Object.entries(tracking?.personal || {})];
+  for (const [key, tracker] of entries) {
+    if (!tracker) continue;
+    for (const week of tracker.weeks || []) {
+      if (week.adjustment == null) continue;
+      week.actual = round2((Number(week.actual) || 0) - Number(week.adjustment));
+      delete week.adjustment;
+    }
+    delete tracker.adjustments;
+
+    const applicable = (budgetAdjustments || []).filter((a) => (
+      a
+      && adjustmentTrackerKey(a) === key
+      && a.cycleStart
+      && a.cycleStart === tracker.cycleStart
+      && Number.isFinite(Number(a.amount))
+      && Number(a.amount) !== 0
+    ));
+    if (!applicable.length) continue;
+
+    if (!Array.isArray(tracker.weeks) || !tracker.weeks.length) {
+      tracker.weeks = [{ weekOf: 'week 1', actual: 0, days: 7 }];
+    }
+    const folded = applicable.reduce((sum, a) => round2(sum + Number(a.amount)), 0);
+    const last = tracker.weeks[tracker.weeks.length - 1];
+    last.actual = round2((Number(last.actual) || 0) + folded);
+    last.adjustment = folded;
+    tracker.adjustments = applicable.map((a) => ({
+      amount: round2(Number(a.amount)),
+      reason: a.reason || null,
+      ...(a.addedBy ? { addedBy: a.addedBy } : {}),
+      ...(a.at ? { at: a.at } : {}),
+    }));
+  }
+  return tracking;
+}
+
+/** `{ tracker: "joint" }` or `{ owner: "kevin" }`, same shape manualCharges use. */
+function adjustmentTrackerKey(adjustment) {
+  if (adjustment.tracker === 'joint') return 'joint';
+  return adjustment.owner || adjustment.tracker || null;
 }
 
 /** Monarch: spend is negative, credits positive. Trip actual is net spend (credits reduce it). */
@@ -1698,6 +1772,14 @@ async function main() {
       tracking.joint.cycleDays = 30;
       tracking.joint.cardBalances = cardBalancesForLabels(accounts, [...jointLabels]);
     }
+    // Household corrections (reconcile_tracker) go on LAST, after the weeks
+    // above were rebuilt from Monarch — that rebuild is exactly what would
+    // otherwise erase a correction made yesterday, which is why the durable
+    // record lives in transaction_overrides.json and is re-applied here every
+    // morning. Only entries whose cycleStart matches survive, so a correction
+    // stops at its own cycle boundary instead of quietly becoming permanent.
+    applyBudgetAdjustmentsToTracking(tracking, overrides.budgetAdjustments);
+
     // Reset every actively-tracked trip (not just ones this run matched) so a
     // trip excluded from matching this time doesn't keep a stale
     // actual/transactions from a previous run. A trip with budgetedAmount:

@@ -596,7 +596,15 @@ function renderCategoryDrilldown(categories, drillId) {
 function renderSpendTracker(label, tracker, drillId, plannedSpend) {
   const cycleRange = formatCycleRange(tracker.cycleStart, tracker.cycleDays);
   const balanceLine = formatCardBalanceLine(tracker.cardBalances);
-  const metaBits = [cycleRange ? `Cycle: ${cycleRange}` : null, balanceLine].filter(Boolean);
+  // A household correction (Telegram: reconcile_tracker) is already inside
+  // weeks[].actual, so the bar and the total need no special case — but a
+  // total that deliberately disagrees with Monarch has to say so here, with
+  // the reason, or it reads as a bug in the pull.
+  const corrections = (tracker.adjustments || []).filter((a) => Number(a && a.amount));
+  const correctionLine = corrections.length
+    ? `Includes a ${corrections.reduce((s, a) => s + Number(a.amount), 0) < 0 ? '−' : '+'}${fmt(Math.abs(corrections.reduce((s, a) => s + Number(a.amount), 0)))} correction: ${corrections.map((a) => a.reason).filter(Boolean).join('; ')}`
+    : null;
+  const metaBits = [cycleRange ? `Cycle: ${cycleRange}` : null, balanceLine, correctionLine].filter(Boolean);
   const metaHtml = metaBits.length
     ? `<div class="goal-note" style="margin-top:6px">${metaBits.join(' · ')}</div>`
     : '';

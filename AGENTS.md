@@ -224,6 +224,25 @@ the reply path could see Google at all. Rules that follow from it:
   never `add_manual_charge` (that creates a second copy and double-counts).
   It writes a `tripAssignments` pin, refuses to write one for a charge it cannot
   find recorded anywhere, and asks rather than guessing an ambiguous trip.
+- A tracker **total** that is wrong — the household says the cycle number itself
+  doesn't match reality — → `reconcile_tracker`, never `add_manual_charge`
+  (that invents a merchant and a charge that never happened, and it lands in
+  the category breakdown and the ledger) and never `reassign_transaction`
+  (that moves a real charge onto a trip). It writes a
+  `transaction_overrides.json` `budgetAdjustments` entry, folded into the last
+  `weeks[]` bucket by `applyBudgetAdjustmentsToTracking` so every surface that
+  sums `weeks[].actual` agrees without a second math path. `days` is untouched
+  (the daily rate keeps its denominator). **Scoped to one cycle** by
+  `cycleStart` — a correction that carried into the next month would be a
+  permanent invisible offset nobody would go looking for. The "already
+  applied" receipt is `week.adjustment` **on the week row**, so the morning
+  rebuild (fresh rows, no receipt) can never un-apply a correction that isn't
+  in those numbers; re-applying the whole list is therefore safe on both the
+  pull and poller paths. A re-reconcile diffs against the **uncorrected**
+  total, or the same money gets applied twice. A live correction must be
+  **stated** wherever the total is shown (`get_budget_status`, the dashboard
+  spend panel) — a number that deliberately disagrees with Monarch and says
+  nothing about why reads as a bug in the pull.
 - A decision that has been **settled** (an expected refund that posted, a
   question that got answered) → `resolve_decision`, not a second `log_decision`
   entry saying the first is done. It sets `status: "resolved"` and every "open

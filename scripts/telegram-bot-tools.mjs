@@ -836,6 +836,178 @@ export function reassign_transaction(overrides, { merchant, date, amount, trip, 
 // branch rather than being squeezed into MANUAL_CHARGE_TOOL_NAMES' signature.
 export const TRIP_REASSIGN_TOOL_NAMES = new Set(['reassign_transaction']);
 
+// --- reconcile_tracker (2026-09-20) ---
+//
+// Correct a tracker's current-cycle logged total when the household knows it
+// is wrong — "the joint budget says one thing, the card says another."
+//
+// The third and last way a tracker can change, and deliberately unlike the
+// other two: add_manual_charge CREATES a charge (which needs a real merchant,
+// and would otherwise mean inventing one that never existed just to close a
+// gap), reassign_transaction MOVES a charge that already exists. A reconcile
+// names no merchant at all — it is the residual between Monarch's view and the
+// household's, carried with a reason so it is never a mystery later.
+//
+// Durable half: a transaction_overrides.json `budgetAdjustments` entry, which
+// budget-tracking-pull.mjs re-applies on every pull — never a hand-edit to
+// budget_tracking.json, which tomorrow morning would erase (AGENTS.md §1).
+// Live half: the poller runs applyBudgetAdjustmentsToTracking right after the
+// write, the same pattern manual charges and trip pins already use.
+//
+// Rules it does not bend:
+//   - Never guess the current total. Without a readable tracker there is no
+//     honest delta to write, so it refuses instead of writing something.
+//   - One correction per tracker per cycle, scoped by cycleStart. A correction
+//     that carried into next month would be a permanent invisible offset on
+//     the family budget, and nobody would ever go looking for it.
+//   - A re-reconcile diffs against the UNCORRECTED total. The live total
+//     already contains the previous correction; diffing against that would
+//     apply the same money twice.
+
+/** `-$312.44` / `+$250.00` — sign carries the meaning, so it is never dropped. */
+function fmtSignedExact(n) {
+  const v = Number(n) || 0;
+  return `${v < 0 ? '−' : '+'}${fmtMoneyExact(v)}`;
+}
+
+function adjustmentMatches(adjustment, key, cycleStart) {
+  if (!adjustment || adjustment.cycleStart !== cycleStart) return false;
+  const adjKey = adjustment.tracker === 'joint' ? 'joint' : (adjustment.owner || adjustment.tracker);
+  return adjKey === key;
+}
+
+export function reconcile_tracker(overrides, { tracker, actualTotal, amount, reason, clear }, owner, context) {
+  if (!overrides) overrides = { budgetAdjustments: [] };
+  if (!Array.isArray(overrides.budgetAdjustments)) overrides.budgetAdjustments = [];
+
+  const status = context?.budgetStatus;
+  const key = String(tracker || '').trim().toLowerCase();
+  const known = ['joint', ...Object.keys(status?.personal || {})];
+  if (!key) {
+    return { overrides, reply: `Couldn't correct that — which budget? (${known.join(', ')})`, needsClarification: true };
+  }
+  if (!known.includes(key)) {
+    return { overrides, reply: `Couldn't correct that — I don't track a budget called "${String(tracker).trim()}". I have: ${known.join(', ')}.` };
+  }
+  const live = key === 'joint' ? status?.joint : status?.personal?.[key];
+  if (!live || !Number.isFinite(Number(live.total))) {
+    return { overrides, reply: `Couldn't correct that — I can't read the ${key === 'joint' ? 'joint' : key} budget's current total right now, so I won't guess at an adjustment.` };
+  }
+  if (!live.cycleStart) {
+    return {
+      overrides,
+      reply: `Couldn't correct that — the ${live.label || key} tracker has no cycle set, and a correction with no cycle to belong to would never expire.`,
+    };
+  }
+
+  const label = live.label || (key === 'joint' ? 'Joint' : `${key} personal`);
+  const cycleStart = live.cycleStart;
+  const existingIndex = overrides.budgetAdjustments.findIndex((a) => adjustmentMatches(a, key, cycleStart));
+  const existing = existingIndex >= 0 ? overrides.budgetAdjustments[existingIndex] : null;
+  const existingAmount = existing ? round2Money(Number(existing.amount)) : 0;
+  // What Monarch alone says: the live total already has any prior correction
+  // folded in by applyBudgetAdjustmentsToTracking.
+  const base = round2Money(Number(live.total) - existingAmount);
+
+  if (clear) {
+    if (!existing) {
+      return { overrides, reply: `No correction on the ${label} budget for this cycle — nothing to clear.` };
+    }
+    overrides.budgetAdjustments.splice(existingIndex, 1);
+    return {
+      overrides,
+      reply: `Cleared ✓ ${label} is back to ${fmtMoneyExact(base)} logged for this cycle — the ${fmtSignedExact(existingAmount)} correction is gone.`,
+    };
+  }
+
+  const hasTotal = actualTotal != null && actualTotal !== '';
+  const hasDelta = amount != null && amount !== '';
+  if (hasTotal && hasDelta) {
+    return {
+      overrides,
+      reply: 'Couldn\'t correct that — give me either the corrected total or the amount to adjust by, not both.',
+      needsClarification: true,
+    };
+  }
+  if (!hasTotal && !hasDelta) {
+    return {
+      overrides,
+      reply: `What should the ${label} total be for this cycle — or how much should I add or subtract? It's showing ${fmtMoneyExact(live.total)} right now.`,
+      needsClarification: true,
+    };
+  }
+
+  let newAmount;
+  if (hasTotal) {
+    const target = Number(actualTotal);
+    if (!Number.isFinite(target) || target < 0) {
+      return { overrides, reply: "Couldn't correct that — I need the corrected total as a plain number." };
+    }
+    newAmount = round2Money(target - base);
+  } else {
+    const delta = Number(amount);
+    if (!Number.isFinite(delta) || delta === 0) {
+      return { overrides, reply: "Couldn't correct that — I need a non-zero amount to add or subtract." };
+    }
+    // A further ±X rides on top of the running correction rather than
+    // replacing it: "take another $100 off" means another $100.
+    newAmount = round2Money(existingAmount + delta);
+  }
+
+  const newTotal = round2Money(base + newAmount);
+  if (newTotal < 0) {
+    return {
+      overrides,
+      reply: `Couldn't correct that — it would put ${label} at ${fmtSignedExact(newTotal)} for this cycle. It's showing ${fmtMoneyExact(live.total)} logged (${fmtMoneyExact(base)} before any correction).`,
+    };
+  }
+
+  if (Math.abs(newAmount) < 0.005) {
+    if (existing) {
+      overrides.budgetAdjustments.splice(existingIndex, 1);
+      return {
+        overrides,
+        reply: `Cleared ✓ ${label} is back to ${fmtMoneyExact(base)} logged for this cycle — that matches what you just gave me, so the ${fmtSignedExact(existingAmount)} correction is gone.`,
+      };
+    }
+    return { overrides, reply: `${label} already shows ${fmtMoneyExact(base)} logged for this cycle — nothing to correct.` };
+  }
+
+  const entry = {
+    ...(key === 'joint' ? { tracker: 'joint' } : { owner: key }),
+    cycleStart,
+    amount: newAmount,
+    reason: (reason && String(reason).trim()) || (hasTotal ? `Reconciled to a stated total of ${fmtMoneyExact(Number(actualTotal))}` : 'Manual correction'),
+    at: new Date().toISOString(),
+    ...(owner ? { addedBy: owner } : {}),
+  };
+  if (existingIndex >= 0) overrides.budgetAdjustments[existingIndex] = entry;
+  else overrides.budgetAdjustments.push(entry);
+
+  const replaced = existing ? ` (Replaces the earlier ${fmtSignedExact(existingAmount)} correction.)` : '';
+  // The cycle window, stated every time a total was given: a credit-card
+  // *balance* carries charges from before this cycle started, so it reads
+  // higher than cycle-to-date spend. Naming the start date is what makes that
+  // mistake catchable instead of silently baked into the budget.
+  const caveat = hasTotal
+    ? ` This cycle runs from ${cycleStart}, so a card balance that still carries older charges would read higher than the cycle total — tell me to undo it if that's what happened.`
+    : '';
+  return {
+    overrides,
+    reply: `Corrected ✓ ${label} now shows ${fmtMoneyExact(newTotal)} logged for this cycle, was ${fmtMoneyExact(live.total)} — a ${fmtSignedExact(newAmount)} correction. Reason: ${entry.reason}.${replaced}${caveat}`,
+  };
+}
+
+function round2Money(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+// Writes transaction_overrides.json like add_manual_charge, but needs the
+// read-only financialContext for the tracker's current total and cycle — so
+// it shares reassign_transaction's (overrides, args, owner, context) shape and
+// gets its own dispatch branch.
+export const BUDGET_ADJUST_TOOL_NAMES = new Set(['reconcile_tracker']);
+
 function nextCapabilityId(requests) {
   const max = (requests.items || []).reduce((m, r) => {
     const n = parseInt(String(r.id).replace(/^c/, ''), 10);
@@ -987,7 +1159,7 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
       ? `${fmtMoney(left)} left`
       : `${fmtMoney(Math.abs(left))} over budget`;
     const daysLabel = g ? ` with ${g.daysRemaining} day${g.daysRemaining === 1 ? '' : 's'} to go` : '';
-    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${guidanceSentence(g, financialContext.budgetHabits)}`;
+    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${guidanceSentence(g, financialContext.budgetHabits)}${correctionSentence(t)}`;
   };
   const personalLines = Object.values(personal || {})
     .map((p) => paceLine(p.label || p.displayName || 'Personal', p))
@@ -1002,6 +1174,23 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
     reply += `\n\nTravel:\n${travelLines}`;
   }
   return { reply };
+}
+
+/**
+ * A corrected total has to say it was corrected (2026-09-20).
+ *
+ * reconcile_tracker folds a household correction straight into the cycle
+ * total, which is what makes every surface agree on one number — but a total
+ * that silently disagrees with Monarch, with nothing on screen saying why, is
+ * the kind of unexplained figure this project keeps having to go dig out. The
+ * reason travels with the number.
+ */
+function correctionSentence(tracker) {
+  const list = (tracker?.adjustments || []).filter((a) => Number.isFinite(Number(a?.amount)) && Number(a.amount) !== 0);
+  if (!list.length) return '';
+  const total = Math.round(list.reduce((sum, a) => sum + Number(a.amount), 0) * 100) / 100;
+  const reasons = list.map((a) => a.reason).filter(Boolean).join('; ');
+  return ` Includes a ${total < 0 ? '−' : '+'}${fmtMoney(Math.abs(total))} correction${reasons ? ` (${reasons})` : ''}.`;
 }
 
 /**
@@ -1465,8 +1654,23 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'reconcile_tracker',
+    description: "Correct this cycle's logged total on the joint or a personal budget when the household says the number itself is wrong — \"the joint total doesn't match the card\", \"we're actually at $3,098\", \"the budget is off by $200\", \"reconcile the joint budget to the statement\". Give EITHER actualTotal (what the total should be) OR amount (a signed correction, negative to reduce), never both, plus a short reason. This is a REAL immediate change with no review step, and it lasts only for the current cycle. Do NOT use add_manual_charge for this: that invents a merchant and a charge that never happened. Do NOT use reassign_transaction: that moves an existing charge onto a trip. Use clear: true to undo the current cycle's correction. If someone only says the number looks off without giving a figure, ask for the real total first.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        tracker: { type: 'string', description: '"joint" for the family budget, or an owner id (kevin, hanna) for that person\'s personal tracker.' },
+        actualTotal: { type: 'number', description: 'What this cycle\'s logged total should actually be, in dollars. Use this when someone states the real figure.' },
+        amount: { type: 'number', description: 'A signed correction in dollars instead of a total — negative to reduce the logged total, positive to raise it. Never send this together with actualTotal.' },
+        reason: { type: 'string', description: 'Short reason for the correction, in the household\'s own words (e.g. "matched to the card statement"). Always include it — this is the only record of why the number moved.' },
+        clear: { type: 'boolean', description: 'Set true to remove the correction currently applied to this cycle and go back to what Monarch logged.' },
+      },
+      required: ['tracker', 'reason'],
+    },
+  },
+  {
     name: 'request_capability',
-    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not moving an existing charge onto a trip (that is reassign_transaction), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
+    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not moving an existing charge onto a trip (that is reassign_transaction), not correcting a tracker total (that is reconcile_tracker), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1575,6 +1779,7 @@ export const TOOL_IMPL = {
   resolve_decision: (goals, args) => resolve_decision(goals, { title: args.title, note: args.note }),
   add_manual_charge: (overrides, args, owner) => add_manual_charge(overrides, { tracker: args.tracker, merchant: args.merchant, amount: args.amount, date: args.date, category: args.category, note: args.note }, owner),
   reassign_transaction: (overrides, args, owner, context) => reassign_transaction(overrides, { merchant: args.merchant, date: args.date, amount: args.amount, trip: args.trip, note: args.note }, owner, context),
+  reconcile_tracker: (overrides, args, owner, context) => reconcile_tracker(overrides, { tracker: args.tracker, actualTotal: args.actualTotal, amount: args.amount, reason: args.reason, clear: args.clear }, owner, context),
   request_capability: (requests, args, owner) => request_capability(requests, { ask: args.ask, whyCant: args.whyCant, proposedChange: args.proposedChange }, owner),
   add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, time: args.time, owner }),
   list_reminders: (reminders) => list_reminders(reminders),

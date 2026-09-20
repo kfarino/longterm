@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -1134,6 +1134,171 @@ test('applyTripReassignmentsToTracking moves a personal-tracker line item too', 
   assert.equal(tracking.personal.kevin.categories.length, 0);
   assert.equal(tracking.personal.kevin.weeks[0].actual, 0);
   assert.equal(tracking.travel.trips.find((t) => t.id === '2026-zagreb').actual, 2682.99);
+});
+
+// --- applyBudgetAdjustmentsToTracking: reconciling a tracker total (2026-09-20) ---
+//
+// "The joint total doesn't match what's actually on the card." Nothing could
+// fix that — add_manual_charge only CREATES a charge (inventing a merchant to
+// paper over a gap is a lie in the ledger) and reassign_transaction only MOVES
+// one that already exists. A correction is neither: it is a signed delta on
+// the cycle's logged total, with a reason attached.
+//
+// Folded into the last week bucket rather than carried as a parallel total,
+// because every consumer (dashboard, get_budget_status, the recap) derives the
+// total by summing weeks[].actual. Adding an "adjustments" term to that math
+// in one place and not the other is exactly the dual-math drift AGENTS.md §2
+// warns about.
+//
+// The receipt for "already applied" lives on the WEEK ROW (week.adjustment),
+// not on the tracker: the daily pull rebuilds weeks[] from Monarch, so the
+// fresh rows carry no receipt and nothing gets wrongly un-applied. The poller
+// re-applies the whole list on every write, so it must be idempotent.
+
+function trackingForAdjustment() {
+  return {
+    joint: {
+      label: 'Joint household',
+      cycleStart: '2026-08-25',
+      cycleDays: 30,
+      weeks: [
+        { weekOf: 'Aug 25-31', actual: 1000, days: 7 },
+        { weekOf: 'Sep 1-7', actual: 500, days: 7 },
+      ],
+      categories: [{ name: 'Groceries', amount: 200, transactions: [{ date: '2026-08-27', merchant: 'Test Market', amount: 200 }] }],
+    },
+    personal: {
+      kevin: {
+        label: 'Kevin personal',
+        cycleStart: '2026-09-01',
+        cycleDays: 30,
+        weeks: [{ weekOf: 'Sep 1-7', actual: 300, days: 7 }],
+        categories: [],
+      },
+    },
+    travel: { trips: [], unmatched: [] },
+  };
+}
+
+function weeksTotal(tracker) {
+  return Math.round((tracker.weeks || []).reduce((s, w) => s + (Number(w.actual) || 0), 0) * 100) / 100;
+}
+
+test('applyBudgetAdjustmentsToTracking folds a correction into the joint cycle total', () => {
+  const tracking = trackingForAdjustment();
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'Reconciled to the card statement' },
+  ]);
+  assert.equal(weeksTotal(tracking.joint), 1187.56);
+  assert.equal(tracking.joint.adjustments.length, 1);
+  assert.equal(tracking.joint.adjustments[0].amount, -312.44);
+  assert.equal(tracking.joint.adjustments[0].reason, 'Reconciled to the card statement');
+});
+
+test('applyBudgetAdjustmentsToTracking leaves the day-weighted denominator alone', () => {
+  const tracking = trackingForAdjustment();
+  const daysBefore = tracking.joint.weeks.reduce((s, w) => s + w.days, 0);
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: 250, reason: 'Missing cash spend' },
+  ]);
+  assert.equal(tracking.joint.weeks.length, 2, 'no phantom week — the daily rate would drop for free');
+  assert.equal(tracking.joint.weeks.reduce((s, w) => s + w.days, 0), daysBefore);
+});
+
+test('applyBudgetAdjustmentsToTracking is idempotent - the poller re-applies the whole list every write', () => {
+  const tracking = trackingForAdjustment();
+  const list = [{ tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'Reconciled to the card statement' }];
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  const afterFirst = JSON.stringify(tracking);
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  assert.equal(JSON.stringify(tracking), afterFirst);
+  assert.equal(weeksTotal(tracking.joint), 1187.56);
+});
+
+test('applyBudgetAdjustmentsToTracking replaces a superseded correction instead of stacking it', () => {
+  const tracking = trackingForAdjustment();
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'first read of the statement' },
+  ]);
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: -100, reason: 'corrected again' },
+  ]);
+  assert.equal(weeksTotal(tracking.joint), 1400);
+  assert.equal(tracking.joint.adjustments.length, 1);
+  assert.equal(tracking.joint.adjustments[0].reason, 'corrected again');
+});
+
+test('applyBudgetAdjustmentsToTracking removes a cleared correction and its receipt', () => {
+  const tracking = trackingForAdjustment();
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'Reconciled to the card statement' },
+  ]);
+  applyBudgetAdjustmentsToTracking(tracking, []);
+  assert.equal(weeksTotal(tracking.joint), 1500, 'back to the Monarch-logged total');
+  assert.equal(tracking.joint.adjustments, undefined);
+  assert.ok(tracking.joint.weeks.every((w) => w.adjustment === undefined));
+});
+
+test('applyBudgetAdjustmentsToTracking does not carry a correction into the next cycle', () => {
+  const tracking = trackingForAdjustment();
+  const list = [{ tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'Reconciled to the card statement' }];
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  // The 25th rolls over: the pull rebuilds weeks[] (no receipt on the fresh
+  // rows) and moves cycleStart. A correction for the cycle that just closed
+  // must not follow the household into the new one.
+  tracking.joint.cycleStart = '2026-09-25';
+  tracking.joint.weeks = [{ weekOf: 'Sep 25-30', actual: 420, days: 6 }];
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  assert.equal(weeksTotal(tracking.joint), 420);
+  assert.equal(tracking.joint.adjustments, undefined);
+});
+
+test('applyBudgetAdjustmentsToTracking corrects a personal tracker by owner id', () => {
+  const tracking = trackingForAdjustment();
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { owner: 'kevin', cycleStart: '2026-09-01', amount: 45.5, reason: 'Missed a cash lunch' },
+  ]);
+  assert.equal(weeksTotal(tracking.personal.kevin), 345.5);
+  assert.equal(weeksTotal(tracking.joint), 1500, 'the joint tracker is untouched');
+});
+
+test('applyBudgetAdjustmentsToTracking ignores a zero, unreadable, or cycle-less amount', () => {
+  const tracking = trackingForAdjustment();
+  const before = JSON.stringify(tracking);
+  applyBudgetAdjustmentsToTracking(tracking, [
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: 0, reason: 'nothing to do' },
+    { tracker: 'joint', cycleStart: '2026-08-25', amount: 'oops', reason: 'not a number' },
+    { tracker: 'joint', amount: -50, reason: 'no cycle — could belong to any month' },
+  ]);
+  assert.equal(JSON.stringify(tracking), before);
+});
+
+test('applyBudgetAdjustmentsToTracking re-applies cleanly after the pull rebuilds weeks', () => {
+  const tracking = trackingForAdjustment();
+  const list = [{ tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'Reconciled to the card statement' }];
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  // What the morning pull does: brand new week rows straight from Monarch,
+  // carrying no `adjustment` receipt. Un-applying here would subtract a
+  // correction that was never added to these numbers.
+  tracking.joint.weeks = [
+    { weekOf: 'Aug 25-31', actual: 1000, days: 7 },
+    { weekOf: 'Sep 1-7', actual: 900, days: 7 },
+  ];
+  applyBudgetAdjustmentsToTracking(tracking, list);
+  assert.equal(weeksTotal(tracking.joint), 1587.56);
+});
+
+test('loadTransactionOverrides keeps budgetAdjustments - the poller writes back what it loaded', () => {
+  const file = path.join(tmpRoot, 'overrides-with-adjustments.json');
+  fs.writeFileSync(file, JSON.stringify({
+    manualCharges: [],
+    budgetAdjustments: [{ tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'Reconciled to the card statement' }],
+  }, null, 2));
+  const loaded = loadTransactionOverrides(file);
+  assert.equal(loaded.budgetAdjustments.length, 1);
+  assert.equal(loaded.budgetAdjustments[0].amount, -312.44);
+  assert.deepEqual(loadTransactionOverrides(path.join(tmpRoot, 'no-such-overrides.json')).budgetAdjustments, []);
 });
 
 console.log('All budget-tracking-pull tests passed.');

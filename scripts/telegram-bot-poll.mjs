@@ -14,9 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, TRIP_REASSIGN_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, TRIP_REASSIGN_TOOL_NAMES, BUDGET_ADJUST_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
-import { applyManualChargesToTracking, applyTripReassignmentsToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
+import { applyManualChargesToTracking, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
 import { spawnDetachedLauncher } from './claude-code-run.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
@@ -841,6 +841,15 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         newOverrides = result.overrides;
         rawReplies.push(result.reply);
         if (result.needsClarification) stillNeedsClarification = result.reply;
+      } else if (BUDGET_ADJUST_TOOL_NAMES.has(toolUse.name)) {
+        // Same (overrides, args, owner, context) shape as a trip pin: the
+        // correction is a delta against the tracker's CURRENT total, which
+        // only financialContext knows. Without it the tool refuses rather
+        // than writing a guessed adjustment.
+        const result = impl(newOverrides, toolUse.input, owner, financialContext);
+        newOverrides = result.overrides;
+        rawReplies.push(result.reply);
+        if (result.needsClarification) stillNeedsClarification = result.reply;
       } else if (CAPABILITY_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(newRequests, toolUse.input, owner);
         newRequests = result.requests;
@@ -961,6 +970,7 @@ The tool reply already phrases leftover-days (under a week left: remaining for t
 Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.
 Cash, Venmo, babysitting cash, or any spend that will not come through a credit card / Monarch → add_manual_charge (tracker "joint" or an owner id). That is a real immediate budget line, not a decision note.
 A charge that ALREADY exists and belongs to a trip — "that parking was for the Boston trip", "this should count against Zagreb, not the monthly budget", "you put it on the wrong trip" → reassign_transaction. It moves the existing charge; add_manual_charge would create a second copy and double-count. Pass the exact date, and the amount when it was given. Never guess which trip: the tool asks if the name is ambiguous, and so should you if no trip was named at all.
+A tracker TOTAL that is wrong — "the joint budget total is off", "the card actually says $3,098", "that number does not match the statement", "we are $200 higher than what you show" → reconcile_tracker. It writes a reasoned correction on this cycle only. add_manual_charge is wrong for this (it would invent a merchant and a charge that never happened) and so is reassign_transaction (that moves a real charge onto a trip). If they say the number looks off but give no figure, ask what the real total is instead of calling anything.
 Babysitting is its own category — opt-in spend that enables date nights. Never label it Childcare. Childcare is the standing nanny/au pair cost on the long-term plan, not a current-cycle spend bucket for sitters.
 
 ## Changing the real financial plan
@@ -1327,6 +1337,7 @@ export async function runOnce(opts) {
         const tracking = JSON.parse(fs.readFileSync(args.budgetTrackingPath, 'utf8'));
         applyManualChargesToTracking(tracking, transactionOverrides.manualCharges);
         applyTripReassignmentsToTracking(tracking, transactionOverrides.tripAssignments);
+        applyBudgetAdjustmentsToTracking(tracking, transactionOverrides.budgetAdjustments);
         writeJson(args.budgetTrackingPath, tracking);
         const buildScript = path.join(path.dirname(args.budgetTrackingPath), 'build-data.mjs');
         if (fs.existsSync(buildScript)) spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });

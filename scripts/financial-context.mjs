@@ -106,6 +106,10 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       // and for how long" from these; the pace numbers are unchanged.
       cycleStart: tracker.cycleStart || null,
       cycleDays: tracker.cycleDays || null,
+      // Passed through for the same reason: a total that no longer matches
+      // Monarch has to carry the reason it was corrected (reconcile_tracker,
+      // 2026-09-20). Display only — the money is already inside the weeks.
+      adjustments: tracker.adjustments || null,
     };
   }
 
@@ -116,6 +120,7 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       label: joint.label || 'Joint',
       cycleStart: joint.cycleStart || null,
       cycleDays: joint.cycleDays || null,
+      adjustments: joint.adjustments || null,
       // Name+amount only — habits compare this cycle's mix to closed-cycle
       // usual shares. Merchant line items stay in loadTransactionDetail /
       // budgetLineItems, not in the financialContext dump the bot LLM sees.

@@ -261,6 +261,24 @@ await test('renderSpendTracker: Joint folds in Month Plan\'s planned spend, Kevi
   assert.ok(!noPlan.includes('planned (dining'), 'should not mention planned dining spend when none was passed');
 });
 
+// A total the household corrected by hand (reconcile_tracker, 2026-09-20) is
+// folded straight into weeks[].actual, so this panel adds up without knowing
+// anything about it. That is the point — but a figure that no longer matches
+// Monarch and says nothing about why is how a number becomes a mystery.
+await test('renderSpendTracker: names a household correction folded into the total', () => {
+  const d = loadDashboard();
+  const corrected = d.renderSpendTracker(
+    'Joint (Barclays)',
+    { weeks: [{ actual: 494, days: 3, adjustment: -100 }], cycleDays: 30, target: 5500, adjustments: [{ amount: -100, reason: 'Matched to the card statement' }] },
+    'drill-adj',
+  );
+  assert.ok(corrected.includes('Matched to the card statement'), 'the reason has to travel with the corrected number');
+  assert.ok(/correction/i.test(corrected), 'and it has to be called a correction');
+
+  const plain = d.renderSpendTracker('Joint (Barclays)', { weeks: [{ actual: 494, days: 3 }], cycleDays: 30, target: 5500 }, 'drill-plain');
+  assert.ok(!/correction/i.test(plain), 'an untouched tracker says nothing about corrections');
+});
+
 await test('nav tab label reads "Planner" (renamed from "Budget")', () => {
   const html = readFileSync(join(here, '..', 'dashboard_v5.html'), 'utf8');
   assert.ok(html.includes('id="ntab-budget"    onclick="show(\'budget\',this)">Planner<'), 'the Budget tab\'s visible label should now read Planner');

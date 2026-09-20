@@ -11,7 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT, BOT_SYSTEM_PROMPT, isGenericUpdateRequest } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, reconcile_tracker, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
+import { loadBudgetStatus } from '../scripts/financial-context.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'telegram-bot-test-'));
@@ -3031,6 +3032,325 @@ test('TOOL_DEFS declares reassign_transaction and points capability filing away 
   assert.deepEqual(def.input_schema.required, ['merchant', 'date', 'trip']);
   const capability = TOOL_DEFS.find((t) => t.name === 'request_capability');
   assert.match(capability.description, /reassign_transaction/);
+});
+
+// --- reconcile_tracker (2026-09-20) ---
+//
+// "The joint total is wrong — the card actually says $X." No tool could touch
+// that: add_manual_charge CREATES a charge (a merchant that never existed,
+// which then lives in the category breakdown forever) and reassign_transaction
+// MOVES one that already exists. A reconcile is a third thing — a signed,
+// reasoned correction on this cycle's logged total, owned by the household
+// rather than by Monarch.
+//
+// Durable half: a transaction_overrides.json `budgetAdjustments` entry, so the
+// morning pull re-applies it instead of erasing it (AGENTS.md §1 — never
+// hand-patch a regenerated tracker). Live half: the poller runs
+// applyBudgetAdjustmentsToTracking right after the write, so the number moves
+// now. Scoped to one cycle by `cycleStart`: a correction that silently carried
+// into next month would be a permanent invisible offset.
+
+function reconcileContext(extra = {}) {
+  return {
+    budgetStatus: {
+      joint: { label: 'Joint household', total: 3410.44, target: 5500, cycleStart: '2026-08-25', cycleDays: 30 },
+      personal: {
+        kevin: { label: 'Kevin personal', displayName: 'Kevin', total: 820, target: 1000, cycleStart: '2026-09-01', cycleDays: 30 },
+      },
+      travel: [],
+    },
+    ...extra,
+  };
+}
+
+test('reconcile_tracker corrects the joint total to a stated figure and says what changed', () => {
+  const overrides = { budgetAdjustments: [] };
+  const result = reconcile_tracker(overrides, {
+    tracker: 'joint', actualTotal: 3098, reason: 'Matched to the card statement',
+  }, 'hanna', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 1);
+  const adj = result.overrides.budgetAdjustments[0];
+  assert.equal(adj.tracker, 'joint');
+  assert.equal(adj.cycleStart, '2026-08-25', 'scoped to this cycle, not forever');
+  assert.equal(adj.amount, -312.44);
+  assert.equal(adj.reason, 'Matched to the card statement');
+  assert.equal(adj.addedBy, 'hanna');
+  assert.match(adj.at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(result.reply, /Corrected ✓/);
+  assert.match(result.reply, /\$3,098\.00/);
+  assert.match(result.reply, /\$3,410.44/);
+  assert.match(result.reply, /312\.44/);
+  assert.match(result.reply, /Matched to the card statement/);
+  assert.doesNotMatch(result.reply, /review/i, 'there is no approval step — the edit already happened');
+});
+
+test('reconcile_tracker warns that a card balance can outrun the cycle window', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'joint', actualTotal: 3098, reason: 'Card balance',
+  }, 'hanna', reconcileContext());
+  assert.match(result.reply, /2026-08-25/, 'name the cycle start so a carryover balance is catchable');
+});
+
+test('reconcile_tracker adjusts by a signed amount when no corrected total is given', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'kevin', amount: 250, reason: 'Cash spend Monarch never saw',
+  }, 'kevin', reconcileContext());
+  const adj = result.overrides.budgetAdjustments[0];
+  assert.equal(adj.owner, 'kevin');
+  assert.equal(adj.tracker, undefined, 'a personal correction is keyed by owner, like a manual charge');
+  assert.equal(adj.cycleStart, '2026-09-01', "the personal tracker runs on its own clock");
+  assert.equal(adj.amount, 250);
+  assert.match(result.reply, /\$1,070\.00/);
+  assert.match(result.reply, /Kevin personal/);
+});
+
+test('reconcile_tracker recomputes against the uncorrected total instead of stacking', () => {
+  // The live total already includes the earlier correction (the poller folded
+  // it into the tracker). Diffing the new target against THAT would apply the
+  // same $312.44 twice — the whole reason one correction per cycle is replaced
+  // in place rather than appended.
+  const overrides = {
+    budgetAdjustments: [
+      { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'first read of the statement' },
+    ],
+  };
+  const context = reconcileContext();
+  context.budgetStatus.joint.total = 3098;
+  const result = reconcile_tracker(overrides, {
+    tracker: 'joint', actualTotal: 3200, reason: 'statement re-read',
+  }, 'hanna', context);
+  assert.equal(result.overrides.budgetAdjustments.length, 1, 'one correction per tracker per cycle');
+  assert.equal(result.overrides.budgetAdjustments[0].amount, -210.44, '3200 - 3410.44, not 3200 - 3098');
+  assert.match(result.reply, /replaces/i);
+});
+
+test('reconcile_tracker accumulates a second signed adjustment into the same correction', () => {
+  const overrides = {
+    budgetAdjustments: [
+      { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'statement' },
+    ],
+  };
+  const context = reconcileContext();
+  context.budgetStatus.joint.total = 3098;
+  const result = reconcile_tracker(overrides, {
+    tracker: 'joint', amount: -100, reason: 'one more refund posted',
+  }, 'hanna', context);
+  assert.equal(result.overrides.budgetAdjustments.length, 1);
+  assert.equal(result.overrides.budgetAdjustments[0].amount, -412.44, 'a further ±X is on top of the running correction');
+  assert.match(result.reply, /\$2,998.00/);
+});
+
+test('reconcile_tracker clears a correction and says what the tracker goes back to', () => {
+  const overrides = {
+    budgetAdjustments: [
+      { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'statement' },
+    ],
+  };
+  const context = reconcileContext();
+  context.budgetStatus.joint.total = 3098;
+  const result = reconcile_tracker(overrides, { tracker: 'joint', clear: true }, 'kevin', context);
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.match(result.reply, /Cleared ✓/);
+  assert.match(result.reply, /\$3,410.44/, 'back to what Monarch logged');
+});
+
+test('reconcile_tracker says so when asked to clear a correction that is not there', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, { tracker: 'joint', clear: true }, 'kevin', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.doesNotMatch(result.reply, /Cleared ✓/);
+  assert.match(result.reply, /no correction/i);
+});
+
+test('reconcile_tracker drops the correction when the stated total matches the logged one again', () => {
+  const overrides = {
+    budgetAdjustments: [
+      { tracker: 'joint', cycleStart: '2026-08-25', amount: -312.44, reason: 'statement' },
+    ],
+  };
+  const context = reconcileContext();
+  context.budgetStatus.joint.total = 3098;
+  const result = reconcile_tracker(overrides, {
+    tracker: 'joint', actualTotal: 3410.44, reason: 'the missing charges posted after all',
+  }, 'hanna', context);
+  assert.equal(result.overrides.budgetAdjustments.length, 0, 'a zero correction is no correction');
+  assert.match(result.reply, /\$3,410.44/);
+});
+
+test('reconcile_tracker writes nothing when the tracker already matches', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'joint', actualTotal: 3410.44, reason: 'checking',
+  }, 'hanna', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.match(result.reply, /nothing to correct/i);
+});
+
+test('reconcile_tracker refuses to guess when it cannot read the current total', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'joint', actualTotal: 3098, reason: 'statement',
+  }, 'hanna', { budgetStatus: { joint: null, personal: {}, travel: [] } });
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.doesNotMatch(result.reply, /Corrected ✓/);
+  assert.match(result.reply, /can't read|cannot read/i);
+});
+
+test('reconcile_tracker refuses a tracker with no cycle configured', () => {
+  const context = reconcileContext();
+  delete context.budgetStatus.joint.cycleStart;
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'joint', actualTotal: 3098, reason: 'statement',
+  }, 'hanna', context);
+  assert.equal(result.overrides.budgetAdjustments.length, 0, 'an unscoped correction would never expire');
+  assert.doesNotMatch(result.reply, /Corrected ✓/);
+});
+
+test('reconcile_tracker names the budgets it has when the tracker is unknown', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'barclays', actualTotal: 3098, reason: 'statement',
+  }, 'hanna', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.match(result.reply, /joint/);
+  assert.match(result.reply, /kevin/);
+});
+
+test('reconcile_tracker asks rather than guessing when given no figure at all', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, { tracker: 'joint', reason: 'it looks off' }, 'hanna', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.equal(result.needsClarification, true);
+  assert.match(result.reply, /total|adjust/i);
+});
+
+test('reconcile_tracker asks which figure was meant when given both', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'joint', actualTotal: 3098, amount: -100, reason: 'statement',
+  }, 'hanna', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.equal(result.needsClarification, true);
+  assert.match(result.reply, /not both/i);
+});
+
+test('reconcile_tracker refuses a correction that would drive the cycle total negative', () => {
+  const result = reconcile_tracker({ budgetAdjustments: [] }, {
+    tracker: 'joint', amount: -6000, reason: 'fat finger',
+  }, 'hanna', reconcileContext());
+  assert.equal(result.overrides.budgetAdjustments.length, 0);
+  assert.doesNotMatch(result.reply, /Corrected ✓/);
+  assert.match(result.reply, /\$3,410.44/);
+});
+
+test('reconcile_tracker refuses a negative or unreadable corrected total', () => {
+  const negative = reconcile_tracker({ budgetAdjustments: [] }, { tracker: 'joint', actualTotal: -20, reason: 'x' }, 'hanna', reconcileContext());
+  assert.equal(negative.overrides.budgetAdjustments.length, 0);
+  const nonsense = reconcile_tracker({ budgetAdjustments: [] }, { tracker: 'joint', actualTotal: 'about 3098', reason: 'x' }, 'hanna', reconcileContext());
+  assert.equal(nonsense.overrides.budgetAdjustments.length, 0);
+  assert.doesNotMatch(nonsense.reply, /Corrected ✓/);
+});
+
+test('get_budget_status reports an active correction rather than quietly folding it in', () => {
+  const context = budgetCtx({
+    total: 3098,
+    adjustments: [{ amount: -312.44, reason: 'Matched to the card statement' }],
+  });
+  const { reply } = get_budget_status(context, {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /correction/i);
+  assert.match(reply, /312/);
+  assert.match(reply, /Matched to the card statement/);
+});
+
+test('loadBudgetStatus carries an active correction through to the bot reply', () => {
+  // The unit test above hands get_budget_status a hand-built context. This is
+  // the real path: budget_tracking.json -> loadBudgetStatus -> the reply. A
+  // pass-through dropped here would silently strip the reason off a total that
+  // no longer matches Monarch.
+  const dir = path.join(tmpRoot, 'load-budget-status-adjustments');
+  fs.mkdirSync(dir, { recursive: true });
+  const btPath = path.join(dir, 'budget_tracking.json');
+  const goalsPath = path.join(dir, 'goals.json');
+  fs.writeFileSync(btPath, JSON.stringify({
+    joint: {
+      label: 'Joint household',
+      targetExpenseKey: 'Family budget',
+      cycleStart: '2026-08-25',
+      cycleDays: 30,
+      weeks: [{ weekOf: 'Aug 25-31', actual: 3098, days: 7 }],
+      categories: [],
+      adjustments: [{ amount: -312.44, reason: 'Matched to the card statement' }],
+    },
+    personal: {
+      kevin: {
+        label: 'Kevin personal',
+        targetExpenseKey: 'Kevin personal',
+        cycleStart: '2026-09-01',
+        cycleDays: 30,
+        weeks: [{ weekOf: 'Sep 1-7', actual: 100, days: 7 }],
+        categories: [],
+        adjustments: [{ amount: 45.5, reason: 'Missed a cash lunch' }],
+      },
+    },
+    travel: { trips: [] },
+  }, null, 2));
+  fs.writeFileSync(goalsPath, JSON.stringify(seedGoals(), null, 2));
+
+  const status = loadBudgetStatus(btPath, goalsPath);
+  assert.equal(status.joint.adjustments[0].reason, 'Matched to the card statement');
+  assert.equal(status.personal.kevin.adjustments[0].amount, 45.5);
+
+  const { reply } = get_budget_status({ budgetStatus: status }, {}, new Date('2026-09-05T12:00:00'));
+  assert.match(reply, /Matched to the card statement/);
+  assert.match(reply, /Missed a cash lunch/);
+});
+
+test('BOT_SYSTEM_PROMPT routes a wrong tracker total to reconcile_tracker, not a made-up charge', () => {
+  assert.match(BOT_SYSTEM_PROMPT, /reconcile_tracker/);
+  const rule = BOT_SYSTEM_PROMPT.split('\n').find((l) => l.includes('reconcile_tracker') && l.includes('add_manual_charge'));
+  assert.ok(rule, 'the prompt has to say which of the two money-writing tools this is, or it will invent a charge');
+});
+
+test('TOOL_DEFS declares reconcile_tracker and steers the other money tools away from it', () => {
+  const def = TOOL_DEFS.find((t) => t.name === 'reconcile_tracker');
+  assert.ok(def, 'the bot cannot call a tool it was never told about');
+  assert.deepEqual(def.input_schema.required, ['tracker', 'reason']);
+  assert.match(def.description, /add_manual_charge/, 'the confusable neighbour has to be named');
+  const capability = TOOL_DEFS.find((t) => t.name === 'request_capability');
+  assert.match(capability.description, /reconcile_tracker/);
+});
+
+await asyncTest('reconcile_tracker via the bot persists the correction and moves the live total', async () => {
+  const dir = path.join(tmpRoot, 'reconcile-tracker-joint');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'the joint total is off, the card actually says 3098' })] },
+    budgetTracking: {
+      joint: {
+        label: 'Joint household',
+        targetExpenseKey: 'Family budget',
+        cycleStart: '2026-08-25',
+        cycleDays: 30,
+        weeks: [
+          { weekOf: 'Aug 25-31', actual: 2000, days: 7 },
+          { weekOf: 'Sep 1-7', actual: 1410.44, days: 7 },
+        ],
+        categories: [{ name: 'Groceries', amount: 200, transactions: [{ date: '2026-08-27', merchant: 'Test Market', amount: 200 }] }],
+      },
+      personal: { kevin: { cycleStart: '2026-09-01', weeks: [{ actual: 0, days: 7 }], categories: [] } },
+      travel: { trips: [], unmatched: [] },
+    },
+  });
+  const mockAnthropic = async () => ({
+    content: [
+      { type: 'tool_use', name: 'reconcile_tracker', input: { tracker: 'joint', actualTotal: 3098, reason: 'Matched to the card statement' } },
+    ],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic, dryRun: false }));
+  assert.match(result.sentReplies[0], /Corrected ✓/);
+
+  const overrides = JSON.parse(fs.readFileSync(paths.transactionOverridesPath, 'utf8'));
+  assert.equal(overrides.budgetAdjustments.length, 1);
+  assert.equal(overrides.budgetAdjustments[0].amount, -312.44);
+  assert.equal(overrides.budgetAdjustments[0].cycleStart, '2026-08-25');
+
+  const tracking = JSON.parse(fs.readFileSync(paths.budgetTrackingPath, 'utf8'));
+  const total = tracking.joint.weeks.reduce((s, w) => s + w.actual, 0);
+  assert.equal(Math.round(total * 100) / 100, 3098, 'the live view moves now, not tomorrow morning');
+  assert.equal(tracking.joint.adjustments[0].reason, 'Matched to the card statement');
 });
 
 console.log('All tests passed.');
