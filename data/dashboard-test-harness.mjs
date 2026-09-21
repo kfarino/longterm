@@ -81,6 +81,7 @@ const exportNames = [
   'renderSpendTracker', 'renderTravelSummary', 'renderJointKevinTrackers',
   'toggleExpPanel', 'initReady', 'showRowHTML',
   'groupShowsByAct', 'showsFindingsHTML',
+  'formatCardBalanceLine', 'cardDebtOwed', 'liquidCashBreakdown',
 ];
 
 export function loadDashboard(dataOverride, monthPlanEventsSeed, routineOverridesSeed) {

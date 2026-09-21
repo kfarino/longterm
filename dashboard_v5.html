@@ -275,9 +275,34 @@ function ownerAmountsNote(bucket) {
   return ownersList().map((o) => `${o.displayName} ${fmtM(bucket?.[o.id] || 0)}`).join(' · ');
 }
 
-/** Absolute dollars owed on mapped spend cards (Monarch balances are typically negative). */
+/** Credit-card rows only: Monarch credit balances are negative (owed). Checking/cash is positive and is not debt. */
+function debtCardRows(cardBalances) {
+  return (cardBalances || []).filter((r) => Number(r.balance) < 0);
+}
+
 function cardDebtOwed(cardBalances) {
-  return (cardBalances || []).reduce((s, r) => s + Math.abs(Number(r.balance) || 0), 0);
+  return debtCardRows(cardBalances).reduce((s, r) => s + Math.abs(Number(r.balance) || 0), 0);
+}
+
+function formatDueShort(iso) {
+  const [y, m, d] = String(iso || '').split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatDueDateClause(rows) {
+  const seen = new Set();
+  const parts = [];
+  for (const r of rows) {
+    if (!r.dueDate || seen.has(r.dueDate)) continue;
+    seen.add(r.dueDate);
+    const short = formatDueShort(r.dueDate);
+    if (short) parts.push(short);
+  }
+  if (!parts.length) return null;
+  if (parts.length === 1) return `due ${parts[0]}`;
+  if (parts.length === 2) return `due ${parts[0]} / ${parts[1]}`;
+  return `due ${parts.join(', ')}`;
 }
 
 /** Gross cash, personal + joint CC debt, and net liquid — household and per adult. */
@@ -791,15 +816,17 @@ function formatCycleRange(cycleStartISO, cycleDays) {
   return `${startStr} – ${endStr}`;
 }
 
-/** Credit-card balances from Monarch are typically negative (amount owed). */
+/** Credit-card balances from Monarch are typically negative (amount owed). Positive checking is ignored. */
 function formatCardBalanceLine(cardBalances) {
-  const rows = cardBalances || [];
+  const rows = debtCardRows(cardBalances);
   if (!rows.length) return null;
-  const totalOwed = rows.reduce((s, r) => s + Math.abs(Number(r.balance) || 0), 0);
+  const totalOwed = cardDebtOwed(rows);
+  const due = formatDueDateClause(rows);
   if (rows.length === 1) {
-    return `Card balance: ${fmt(totalOwed)} owed`;
+    return due ? `Card balance: ${fmt(totalOwed)} owed (${due})` : `Card balance: ${fmt(totalOwed)} owed`;
   }
-  return `Card balances: ${fmt(totalOwed)} owed total (${rows.length} cards)`;
+  const countBit = due ? `${rows.length} cards, ${due}` : `${rows.length} cards`;
+  return `Card balances: ${fmt(totalOwed)} owed total (${countBit})`;
 }
 
 // Decides what happens on every remaining day of the current cycle. Fixed

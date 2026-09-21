@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, resolvePersonalCycle, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -530,6 +530,77 @@ test('cardBalancesForLabels matches mapped display names and keeps Monarch signe
   const joint = cardBalancesForLabels(accounts, [' More Mastercard (...9054)']);
   assert.equal(joint[0].balance, -2000);
   assert.deepEqual(cardBalancesForLabels(accounts, ['CREDIT CARD (...9999)']), []);
+});
+
+test('cardBalancesForLabels copies a Monarch due date when the account object has one', () => {
+  const accounts = [
+    { displayName: 'CREDIT CARD (...1111)', balance: -1500, statementDueDate: '2026-10-03' },
+    { displayName: 'CREDIT CARD (...2222)', currentBalance: -800, nextPaymentDate: '2026-10-12' },
+    { displayName: 'Spending Account (...3333)', balance: 2911, statementDueDate: '2026-10-01' },
+  ];
+  const rows = cardBalancesForLabels(accounts, [
+    'CREDIT CARD (...1111)',
+    'CREDIT CARD (...2222)',
+    'Spending Account (...3333)',
+  ]);
+  assert.equal(rows.find((r) => r.label === 'CREDIT CARD (...1111)').dueDate, '2026-10-03');
+  assert.equal(rows.find((r) => r.label === 'CREDIT CARD (...2222)').dueDate, '2026-10-12');
+  assert.equal(rows.find((r) => r.label === 'Spending Account (...3333)').dueDate, '2026-10-01');
+  assert.equal(rows.find((r) => r.label === 'Spending Account (...3333)').balance, 2911);
+});
+
+test('resolvePersonalCycle uses mapping startDay on the first credit card, never Ally checking', () => {
+  const labels = [
+    'CREDIT CARD (...1111)',
+    'CREDIT CARD (...2222)',
+    'Spending Account (...3333)',
+  ];
+  const mapping = {
+    personalAccountLabels: { kevin: labels, hanna: ['CREDIT CARD (...4444)'] },
+    personalCycle: {
+      kevin: { accountLabel: 'CREDIT CARD (...1111)', startDay: 16 },
+    },
+  };
+
+  const midCycle = resolvePersonalCycle(new Date(2026, 8, 20), 'kevin', mapping);
+  assert.equal(midCycle.anchorLabel, 'CREDIT CARD (...1111)');
+  assert.equal(midCycle.cycleStart, '2026-09-16');
+  assert.equal(midCycle.cycleDays, 30);
+
+  const beforeStart = resolvePersonalCycle(new Date(2026, 8, 10), 'kevin', mapping);
+  assert.equal(beforeStart.cycleStart, '2026-08-16');
+
+  const allyOnly = resolvePersonalCycle(new Date(2026, 8, 20), 'kevin', {
+    personalAccountLabels: { kevin: ['Spending Account (...3333)'] },
+  });
+  assert.equal(allyOnly.anchorLabel, null);
+  assert.equal(allyOnly.cycleStart, '2026-09-01');
+  assert.equal(allyOnly.cycleDays, 30);
+
+  const hanna = resolvePersonalCycle(new Date(2026, 8, 20), 'hanna', mapping);
+  assert.equal(hanna.anchorLabel, 'CREDIT CARD (...4444)');
+  assert.equal(hanna.cycleStart, '2026-09-01', 'Hanna has no personalCycle startDay — calendar month');
+  assert.equal(hanna.cycleDays, 30);
+});
+
+test('resolvePersonalCycle picks the first credit-card label when two cards share no designated main', () => {
+  const mapping = {
+    personalAccountLabels: {
+      kevin: ['CREDIT CARD (...2222)', 'CREDIT CARD (...1111)', 'Spending Account (...3333)'],
+    },
+  };
+  const resolved = resolvePersonalCycle(new Date(2026, 8, 20), 'kevin', mapping);
+  assert.equal(resolved.anchorLabel, 'CREDIT CARD (...2222)', 'first listed credit card, not Ally');
+  assert.equal(resolved.cycleStart, '2026-09-01', 'no startDay → calendar month, not a guessed Chase close day');
+});
+
+test('resolvePersonalCycle accepts closeDay as startDay + 1', () => {
+  const mapping = {
+    personalAccountLabels: { kevin: ['CREDIT CARD (...1111)'] },
+    personalCycle: { kevin: { closeDay: 15 } },
+  };
+  const resolved = resolvePersonalCycle(new Date(2026, 8, 20), 'kevin', mapping);
+  assert.equal(resolved.cycleStart, '2026-09-16');
 });
 
 test('applyManualCharges merges a not-yet-in-Monarch personal charge into week + category totals', () => {

@@ -279,6 +279,130 @@ await test('renderSpendTracker: names a household correction folded into the tot
   assert.ok(!/correction/i.test(plain), 'an untouched tracker says nothing about corrections');
 });
 
+// Checking cash is not credit-card debt (2026-09-20). Kevin's personal
+// mapping is two Chase cards (negative = owed) plus Ally checking (positive
+// = cash). Math.abs() on every mapped row used to add the cash to the owe
+// total and count it as a third "card".
+const MIXED_CARD_BALANCES = [
+  { label: 'CREDIT CARD (...1111)', balance: -1500 },
+  { label: 'CREDIT CARD (...2222)', balance: -800 },
+  { label: 'Spending Account (...3333)', balance: 2911 },
+];
+
+await test('formatCardBalanceLine: two debt cards + checking cash counts only the debts', () => {
+  const d = loadDashboard();
+  assert.equal(
+    d.formatCardBalanceLine(MIXED_CARD_BALANCES),
+    'Card balances: $2,300 owed total (2 cards)',
+    'Ally-style positive checking must not join the owe total or the card count',
+  );
+  assert.equal(d.cardDebtOwed(MIXED_CARD_BALANCES), 2300);
+});
+
+await test('formatCardBalanceLine: checking-only mapping hides the card-owe line', () => {
+  const d = loadDashboard();
+  assert.equal(d.formatCardBalanceLine([{ label: 'Spending Account (...3333)', balance: 2911 }]), null);
+  assert.equal(d.cardDebtOwed([{ label: 'Spending Account (...3333)', balance: 2911 }]), 0);
+});
+
+await test('formatCardBalanceLine: a single debt card stays singular', () => {
+  const d = loadDashboard();
+  assert.equal(
+    d.formatCardBalanceLine([{ label: 'CREDIT CARD (...1111)', balance: -450 }]),
+    'Card balance: $450 owed',
+  );
+});
+
+await test('formatCardBalanceLine: shared due date rides on the owe line; checking has none', () => {
+  const d = loadDashboard();
+  const sameDue = [
+    { label: 'CREDIT CARD (...1111)', balance: -1500, dueDate: '2026-10-03' },
+    { label: 'CREDIT CARD (...2222)', balance: -800, dueDate: '2026-10-03' },
+    { label: 'Spending Account (...3333)', balance: 2911 },
+  ];
+  assert.equal(
+    d.formatCardBalanceLine(sameDue),
+    'Card balances: $2,300 owed total (2 cards, due Oct 3)',
+  );
+
+  const splitDue = [
+    { label: 'CREDIT CARD (...1111)', balance: -1500, dueDate: '2026-10-03' },
+    { label: 'CREDIT CARD (...2222)', balance: -800, dueDate: '2026-10-12' },
+  ];
+  assert.equal(
+    d.formatCardBalanceLine(splitDue),
+    'Card balances: $2,300 owed total (2 cards, due Oct 3 / Oct 12)',
+  );
+
+  assert.equal(
+    d.formatCardBalanceLine([{ label: 'CREDIT CARD (...1111)', balance: -450, dueDate: '2026-10-03' }]),
+    'Card balance: $450 owed (due Oct 3)',
+  );
+});
+
+await test('renderSpendTracker: mixed cards+checking meta uses statement cycle + debt-only owe line', () => {
+  const d = loadDashboard();
+  const html = d.renderSpendTracker('Kevin personal', {
+    weeks: [{ actual: 104, days: 7 }],
+    cycleStart: '2026-09-16',
+    cycleDays: 30,
+    target: 1000,
+    cardBalances: [
+      { label: 'CREDIT CARD (...1111)', balance: -1500, dueDate: '2026-10-03' },
+      { label: 'CREDIT CARD (...2222)', balance: -800, dueDate: '2026-10-03' },
+      { label: 'Spending Account (...3333)', balance: 2911 },
+    ],
+  }, 'drill-cards');
+  assert.ok(html.includes('Cycle: Sep 16 – Oct 15, 2026'), 'personal cycle is the statement window, not a calendar month');
+  assert.ok(html.includes('Card balances: $2,300 owed total (2 cards, due Oct 3)'));
+  assert.ok(!html.includes('3 cards'), 'checking is not a card');
+  assert.ok(!html.includes('$5,211'), 'checking cash must not be added to owed');
+});
+
+await test('liquidCashBreakdown: personal CC debt ignores positive checking', async () => {
+  const d = loadDashboard({
+    owners: [
+      { id: 'kevin', displayName: 'Kevin' },
+      { id: 'hanna', displayName: 'Hanna' },
+    ],
+    assets: { cash: { kevin: 4200, hanna: 1800 } },
+    budgetTracking: {
+      personal: {
+        kevin: {
+          cardBalances: MIXED_CARD_BALANCES,
+          weeks: [{ actual: 0, days: 1 }],
+          cycleStart: '2026-09-16',
+          cycleDays: 30,
+          target: 1000,
+        },
+        hanna: {
+          cardBalances: [{ label: 'CREDIT CARD (...4444)', balance: -350 }],
+          weeks: [{ actual: 0, days: 1 }],
+          cycleStart: '2026-09-01',
+          cycleDays: 30,
+          target: 500,
+        },
+      },
+      joint: {
+        cycleStart: '2026-08-25',
+        cycleDays: 30,
+        weeks: [{ actual: 0, days: 1 }],
+        target: 5500,
+        cardBalances: [{ label: ' More Mastercard (...5555)', balance: -1200 }],
+      },
+      travel: { trips: [], unmatched: [] },
+    },
+  });
+  const liq = d.liquidCashBreakdown();
+  const kevin = liq.perOwner.find((p) => p.id === 'kevin');
+  const hanna = liq.perOwner.find((p) => p.id === 'hanna');
+  assert.equal(kevin.cc, 2300, 'Kevin CC debt is the two Chase cards, not Ally cash');
+  assert.equal(hanna.cc, 350);
+  assert.equal(liq.jointCc, 1200);
+  assert.equal(liq.totalCc, 3850);
+  await d.initReady;
+});
+
 await test('nav tab label reads "Planner" (renamed from "Budget")', () => {
   const html = readFileSync(join(here, '..', 'dashboard_v5.html'), 'utf8');
   assert.ok(html.includes('id="ntab-budget"    onclick="show(\'budget\',this)">Planner<'), 'the Budget tab\'s visible label should now read Planner');
@@ -338,8 +462,7 @@ await test('loadMonthPlanState reads events through the fake fetch API (display-
 });
 
 await test('a future day with a planned/live-suggested slot renders a plain, non-interactive chip', async () => {
-  // Two staleness bugs fixed here (2026-08-06), both of which had left this
-  // assertion failing silently:
+  // Three staleness / environment bugs this assertion has hit:
   //  1. The seeded event carried no `kind`, but isBudgetPlanEvent() has
   //     required kind 'dining'|'family' since 2026-08-04, so the chip was
   //     filtered out and never rendered.
@@ -348,9 +471,27 @@ await test('a future day with a planned/live-suggested slot renders a plain, non
   //     "future day" once the real clock passed it — same class of bug as
   //     get_dining_plan reading the real clock in test-telegram-recap.mjs.
   //     Derived from today instead, so it can't rot again.
-  const t = new Date(); t.setDate(t.getDate() + 1);
-  const tomorrow = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-  const d = loadDashboard(undefined, { [tomorrow]: [{ source: 'manual', kind: 'dining', name: 'Bestia', tier: 'high', cost: 120 }] });
+  //  3. Tomorrow is still outside the calendar if data.js's joint cycle
+  //     already ended. CI seeds examples (cycleStart 2026-08-01, 31 days →
+  //     ended Aug 31); a developer machine with a live current-cycle
+  //     data.js still passed. Override the joint window so today+tomorrow
+  //     are always inside it. loadDashboard shallow-merges, so the override
+  //     must keep travel/personal shape renderBudgetTab() reads.
+  const today = isoDaysAgo(0);
+  const tomorrow = isoDaysAgo(-1);
+  const d = loadDashboard({
+    budgetTracking: {
+      joint: {
+        label: 'Joint household',
+        cycleStart: today,
+        cycleDays: 30,
+        target: 5500,
+        weeks: [{ actual: 0, days: 1 }],
+      },
+      personal: {},
+      travel: { trips: [], unmatched: [] },
+    },
+  }, { [tomorrow]: [{ source: 'manual', kind: 'dining', name: 'Bestia', tier: 'high', cost: 120 }] });
   await d.initReady;
   const html = d.elements['pg-monthplan'].innerHTML;
   assert.ok(html.includes('Bestia'), 'the stored event should be displayed');

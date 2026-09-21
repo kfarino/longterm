@@ -251,9 +251,35 @@ export function cardBalancesForLabels(accounts, labels) {
     if (!wanted.has(label)) continue;
     const balance = Number(a.balance ?? a.currentBalance ?? a.displayBalance ?? a.amount);
     if (!Number.isFinite(balance)) continue;
-    out.push({ label, balance: Math.round(balance * 100) / 100 });
+    const row = { label, balance: Math.round(balance * 100) / 100 };
+    const dueDate = firstAccountIsoDate(a, ACCOUNT_DUE_DATE_KEYS);
+    if (dueDate) row.dueDate = dueDate;
+    out.push(row);
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+// monarchmoney's GetAccounts fragment has minimumPayment / plannedPayment but
+// no statement due date or period. Copy a due date only when the account
+// object actually carries one — do not invent a Chase due day.
+const ACCOUNT_DUE_DATE_KEYS = [
+  'statementDueDate', 'dueDate', 'nextPaymentDate', 'paymentDueDate',
+  'lastStatementDueDate', 'nextDueDate',
+];
+
+function firstAccountIsoDate(account, keys) {
+  for (const key of keys) {
+    const iso = asIsoDate(account?.[key]);
+    if (iso) return iso;
+  }
+  return null;
+}
+
+function asIsoDate(value) {
+  if (value == null || value === '') return null;
+  if (value instanceof Date && Number.isFinite(value.getTime())) return isoDate(value);
+  const match = String(value).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : null;
 }
 
 // Monarch/Plaid's own categorization is sometimes just wrong or too generic
@@ -587,8 +613,14 @@ export function applyManualCharges(personalState, manualCharges, personalCycleSt
     const ownerId = charge?.owner;
     const state = ownerId && personalState?.[ownerId];
     if (!state) continue;
-    applyChargeToMaps(state, charge, personalCycleStart);
+    applyChargeToMaps(state, charge, cycleStartForOwner(personalCycleStart, ownerId));
   }
+}
+
+function cycleStartForOwner(personalCycleStart, ownerId) {
+  if (personalCycleStart instanceof Date) return personalCycleStart;
+  if (personalCycleStart && typeof personalCycleStart === 'object') return personalCycleStart[ownerId];
+  return personalCycleStart;
 }
 
 function growWeeks(weeks, bucketIndex) {
@@ -847,12 +879,73 @@ function currentCycleStart(today) {
   return start;
 }
 
-// Kevin's personal Chase cards have no Barclays-style statement-period
-// convention to mirror — calendar-month-to-date is the only assumption that
-// doesn't arbitrarily exclude real recent spend (e.g. a 25th-cycle boundary
-// would cut off spend from the 24th even though it's clearly current).
+// Fallback when mapping.personalCycle has no startDay/closeDay. Checking/cash
+// never defines a personal window — see resolvePersonalCycle.
 function currentMonthStart(today) {
   return new Date(today.getFullYear(), today.getMonth(), 1);
+}
+
+const CREDIT_CARD_LABEL = /credit card|mastercard|visa|amex|american express|discover/i;
+const CHECKING_LIKE_LABEL = /spending account|checking|savings/i;
+
+export function isCheckingLikeLabel(label) {
+  return CHECKING_LIKE_LABEL.test(label || '');
+}
+
+export function isCreditCardLikeLabel(label) {
+  return CREDIT_CARD_LABEL.test(label || '') && !CHECKING_LIKE_LABEL.test(label || '');
+}
+
+// Which mapped account defines the personal statement window. Ally checking
+// never does. goals.json / mapping notes have no designated "main" Chase card,
+// so when two credit cards are listed we take the first in personalAccountLabels.
+export function personalCycleAnchorLabel(labels, cycleCfg) {
+  const list = labels || [];
+  if (cycleCfg?.accountLabel && list.includes(cycleCfg.accountLabel) && !isCheckingLikeLabel(cycleCfg.accountLabel)) {
+    return cycleCfg.accountLabel;
+  }
+  return list.find((label) => isCreditCardLikeLabel(label)) || null;
+}
+
+function cycleStartOnDay(today, day) {
+  const start = new Date(today.getFullYear(), today.getMonth(), day);
+  if (today.getDate() < day) start.setMonth(start.getMonth() - 1);
+  return start;
+}
+
+function nextMonthSameDay(start) {
+  const next = new Date(start);
+  next.setMonth(next.getMonth() + 1);
+  return next;
+}
+
+function personalStartDay(cycleCfg) {
+  const startDay = Number(cycleCfg?.startDay);
+  if (Number.isInteger(startDay) && startDay >= 1 && startDay <= 31) return startDay;
+  const closeDay = Number(cycleCfg?.closeDay);
+  if (Number.isInteger(closeDay) && closeDay >= 1 && closeDay <= 31) {
+    return closeDay >= 31 ? 1 : closeDay + 1;
+  }
+  return null;
+}
+
+// Personal cycle is independent of joint's 25th. mapping.personalCycle[owner]
+// may name the credit card and the statement-window start day (same convention
+// as currentCycleStart). No startDay → calendar month. Monarch get_accounts
+// does not expose a statement period, so this is the durable config.
+export function resolvePersonalCycle(today, ownerId, mapping) {
+  const labels = mapping?.personalAccountLabels?.[ownerId] || [];
+  const cycleCfg = mapping?.personalCycle?.[ownerId] || {};
+  const anchorLabel = personalCycleAnchorLabel(labels, cycleCfg);
+  const startDay = personalStartDay(cycleCfg);
+  const start = startDay ? cycleStartOnDay(today, startDay) : currentMonthStart(today);
+  const next = nextMonthSameDay(start);
+  return {
+    anchorLabel,
+    start,
+    cycleStart: isoDate(start),
+    cycleDays: cycleDaysBetween(isoDate(start), isoDate(next)),
+  };
 }
 
 function jointTargetFromGoals(goals, tracking) {
@@ -1054,11 +1147,11 @@ function matchFavorite(merchant, favorites) {
 // amount, so this is a separate pass, not part of the main spend-processing
 // loop. cycleStart (2026-08-05): the main spend-processing loop only counts
 // transactions within the current joint cycle (weekBucket's `b >= 0` guard),
-// but the fetched transaction window can start up to ~24 days earlier than
-// cycleStart (it's min(cycleStart, personalCycleStart), and personalCycleStart
-// is always the 1st of the month while cycleStart is the 25th) — without this
-// filter a refund from the tail end of the PRIOR cycle would leak into "this
-// cycle"'s refunds list. Any transaction dated before cycleStart is skipped.
+// but the fetched transaction window starts at the earliest of joint and each
+// personal cycle (personal may be a statement window or calendar month) —
+// without this filter a refund from the tail end of the PRIOR cycle would leak
+// into "this cycle"'s refunds list. Any transaction dated before cycleStart is
+// skipped.
 // Excluded reassignments (2026-08-09): one-offs marked reassignTo "exclude"
 // (e.g. a personal reimbursement transfer) are skipped here too.
 export function detectJointRefunds(transactions, jointLabels, travelCategoryNames, cycleStart) {
@@ -1545,8 +1638,15 @@ async function main() {
   if (rolled.archived) saveCycleHistory(args.cycleHistoryPath, rolled.history);
 
   const cycleStart = currentCycleStart(today); // joint cycle
-  const personalCycleStart = currentMonthStart(today); // personal trackers (calendar month)
-  const fetchStart = cycleStart < personalCycleStart ? cycleStart : personalCycleStart;
+  const personalLabelsByOwnerEarly = tracking.mapping?.personalAccountLabels || {};
+  const personalCycleByOwner = {};
+  for (const ownerId of Object.keys(personalLabelsByOwnerEarly)) {
+    personalCycleByOwner[ownerId] = resolvePersonalCycle(today, ownerId, tracking.mapping);
+  }
+  // Earliest of joint + each personal statement window. A longer personal
+  // window is the real cycle, not a ledger-backfill shortcut (AGENTS.md §2).
+  const personalStarts = Object.values(personalCycleByOwner).map((c) => c.start);
+  const fetchStart = [cycleStart, ...personalStarts].reduce((earliest, d) => (d < earliest ? d : earliest), cycleStart);
   const startDate = isoDate(fetchStart);
   const endDate = isoDate(today);
 
@@ -1662,7 +1762,8 @@ async function main() {
 
       if (personalOwnerId && personalState[personalOwnerId]) {
         const state = personalState[personalOwnerId];
-        let b = weekBucket(txnDate, personalCycleStart);
+        const ownerCycleStart = personalCycleByOwner[personalOwnerId]?.start || currentMonthStart(today);
+        let b = weekBucket(txnDate, ownerCycleStart);
         // One-off reassignments from the joint card can land a few days before
         // the personal calendar-month cycle (e.g. Jul 28–30 charges moved to
         // Hanna personal while personal cycle starts Aug 1). Still count them
@@ -1691,7 +1792,7 @@ async function main() {
     applyManualCharges(
       personalState,
       overrides.manualCharges,
-      personalCycleStart,
+      Object.fromEntries(Object.entries(personalCycleByOwner).map(([id, c]) => [id, c.start])),
       {
         buckets: jointBuckets,
         categoryTotals: jointCategoryTotals,
@@ -1756,10 +1857,11 @@ async function main() {
     }
 
     for (const [ownerId, state] of Object.entries(personalState)) {
-      tracking.personal[ownerId].weeks = bucketsToWeeks(state.buckets, personalCycleStart);
+      const cycle = personalCycleByOwner[ownerId] || resolvePersonalCycle(today, ownerId, tracking.mapping);
+      tracking.personal[ownerId].weeks = bucketsToWeeks(state.buckets, cycle.start);
       tracking.personal[ownerId].categories = categoryTotalsToArray(state.categoryTotals, state.categoryTransactions);
-      tracking.personal[ownerId].cycleStart = isoDate(personalCycleStart);
-      tracking.personal[ownerId].cycleDays = daysInMonth(today);
+      tracking.personal[ownerId].cycleStart = cycle.cycleStart;
+      tracking.personal[ownerId].cycleDays = cycle.cycleDays;
       tracking.personal[ownerId].source = 'monarch';
       tracking.personal[ownerId].cardBalances = cardBalancesForLabels(accounts, personalLabelsByOwner[ownerId]);
     }
