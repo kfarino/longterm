@@ -213,6 +213,9 @@ the reply path could see Google at all. Rules that follow from it:
 ### Telegram / Calendar
 - Hanna's calendar is readable via Kevin's OAuth (`GOOGLE_READ_CALENDAR_IDS`) —
   never tell her the bot lacks access to her schedule.
+- **Family** and **Family Planner** are the same household calendar: Georgina
+  reads both, labels both Family, and dedupes a copy that exists on both.
+  Month Plan writes still go to Family Planner only. Kevin Work stays out.
 - Kevin's **work** calendar is deliberately excluded.
 - Dining: `set_dinner_plan` only on explicit confirm; questions → `get_dining_plan`.
 - Direct `goals.json` edits by the bot are real and immediate — never invent a

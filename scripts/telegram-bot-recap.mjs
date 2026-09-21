@@ -18,6 +18,7 @@ import { loadCalendarReadContext, getUpcomingEvents } from './calendar-read.mjs'
 import { telegramEnvPath } from './longterm-paths.mjs';
 import { defaultOuraStoreDir } from './oura-store.mjs';
 import { runPull as runOuraPull } from './oura-pull.mjs';
+import { defaultMatchDataPath, filterQualifyingShows, topShowsByKind } from './spotify-shows-telegram.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoDataDir = path.join(here, '..', 'data');
@@ -41,6 +42,7 @@ function parseArgs(argv) {
     cycleHistoryPath: path.join(repoDataDir, 'cycle_history.json'),
     ouraStoreDir: defaultOuraStoreDir(),
     healthOverridesPath: defaultHealthOverridesPath(),
+    matchDataPath: defaultMatchDataPath(),
     dryRun: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -65,6 +67,7 @@ function parseArgs(argv) {
       else if (key === 'cycle-history-path') args.cycleHistoryPath = value;
       else if (key === 'oura-store-dir') args.ouraStoreDir = value;
       else if (key === 'health-overrides-path') args.healthOverridesPath = value;
+      else if (key === 'match-data-path') args.matchDataPath = value;
       else throw new Error(`Unknown argument: ${arg}`);
     }
   }
@@ -273,7 +276,17 @@ function diningSummary(monthPlanEvents, diningContext, now = null) {
 // deliberately excluded (2026-08-02) — Kevin: "it included longterm goals.
 // not wanted in the weekly recaps. just the week." Scoped to the recap only;
 // the interactive get_savings_goals tool and the dashboard are unaffected.
-function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now }) {
+function loadShowsForRecap(matchDataPath) {
+  try {
+    if (!matchDataPath || !fs.existsSync(matchDataPath)) return { music: [], comedy: [] };
+    const matchData = JSON.parse(fs.readFileSync(matchDataPath, 'utf8'));
+    return topShowsByKind(filterQualifyingShows(matchData));
+  } catch {
+    return { music: [], comedy: [] };
+  }
+}
+
+function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, shows, now }) {
   return {
     budgetStatus: financialContext.budgetStatus,
     // Forward-looking "what rate still hits the target". Always an object when
@@ -291,10 +304,11 @@ function gatherBundle({ todos, monthPlanEvents, diningContext, financialContext,
     calendarSummary,
     recentPlanChanges,
     openCapabilityRequests,
+    shows: shows || { music: [], comedy: [] },
   };
 }
 
-export const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
+export const RECAP_SYSTEM_PROMPT = `Compose a weekly recap message for a household Telegram group (Kevin & Hanna), using exactly four labeled sections in this order: "Budget:", "Todos:", "Planning:", "Shows:". Within each section, write naturally (not a bare data dump) but keep it skimmable — short lines, not paragraphs; a busy person reading on their phone should get the gist of each section in a few seconds.
 
 Budget: report the joint tracker using real dollar figures from budgetStatus.joint — amount logged so far, the target, and what's left (target minus logged). Do NOT report a projected cycle total; a projection of where spending lands if nothing changes is not what the household wants to know.
 
@@ -312,9 +326,9 @@ Todos: list every open to-do from todosByOwner, grouped by the owner it's under 
 
 Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick, a "looks already covered" note, or a traveling/away note is just mentioned in passing, not pushed for a reply.
 
-Do not include a Health section. Do not mention sleep, baselines, readiness, HRV, or vitals even if they appear somewhere in the JSON.
+Shows: list the top upcoming LA music and comedy from the shows field (already the strongest taste-matched picks; do not invent acts). Music first, then comedy. Each line is act, score, date, and venue; mention Live Nation only when promoter is "Live Nation". If a kind's array is empty, say so briefly for that kind rather than omitting it. Do not add a "just ask me about shows" invite — the list is the section.
 
-After the three sections, always add one short standing line inviting a follow-up about upcoming shows, worded naturally each time but along these lines: "Curious what's on at our favorite venues? Just ask — I can check the next couple weeks." Include this every time, not conditionally.
+Do not include a Health section. Do not mention sleep, baselines, readiness, HRV, or vitals even if they appear somewhere in the JSON.
 
 Then, only if there's something notable, add one or two short trailing lines for: an urgent open decision (decisions, only flag one with status "urgent" — don't list every open decision); decisions only ever contains decisions that are still open — a settled one is filtered out upstream, so never describe anything there as already resolved, a non-recurring event on either Google calendar this week (calendarSummary — name whose calendar and the date; skip if calendarSummary is null or nothing non-recurring is on either calendar), unprocessed messages since the last recap (unparsedMessages — one line, don't quote them all verbatim), a recent direct edit to the real financial plan (recentPlanChanges — if count is non-zero, mention briefly what changed using recentPlanChanges.recent as a hint), or an open bot capability request still running or failed (openCapabilityRequests — if count is non-zero, mention that a code update is in flight or needs a look, using openCapabilityRequests.recent as a hint). Skip any of these with nothing to report — don't force a line just to fill space.
 
@@ -330,7 +344,7 @@ async function callAnthropicRecap({ apiKey, bundle }) {
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
+      max_tokens: 900,
       // Explicitly disabled (2026-08-06): claude-sonnet-5 defaults extended
       // thinking on even when not requested, and this templated composition
       // task doesn't need it -- left enabled, thinking consumed the entire
@@ -434,7 +448,8 @@ export async function runOnce(opts) {
   const recentPlanChanges = loadRecentPlanChanges(args.goalsChangelogPath);
   const openCapabilityRequests = loadOpenCapabilityRequests(args.capabilityRequestsPath);
 
-  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, now });
+  const shows = loadShowsForRecap(args.matchDataPath);
+  const bundle = gatherBundle({ todos, monthPlanEvents, diningContext, financialContext, unparsedMessages, calendarSummary, recentPlanChanges, openCapabilityRequests, shows, now });
 
   const client = args.anthropicClient || callAnthropicRecap;
   const llmResponse = await client({ apiKey, bundle });

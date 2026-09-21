@@ -2,6 +2,12 @@
 // (personal/family only — typically exclude work calendars). Powers both the
 // bot's on-demand get_calendar_events tool (telegram-bot-poll.mjs) and the
 // weekly recap's calendar section (telegram-bot-recap.mjs).
+//
+// "Family" and "Family Planner" are the same household calendar surface
+// (2026-09-20): both are read, both labeled Family, a duplicate title+start
+// is listed once. Kevin Work stays out. Month Plan writes still target
+// Family Planner only (GOOGLE_CALENDAR_ID) — that calendar is always
+// included on the read list so bot-added events are visible too.
 import fs from 'node:fs';
 import { getAccessToken } from './calendar-sync.mjs';
 import { googleCalendarEnvPath } from './longterm-paths.mjs';
@@ -32,6 +38,28 @@ export function parseReadCalendarIds(envValue) {
   });
 }
 
+/** Google calendar summaries that are one household calendar, not two. */
+export function isHouseholdCalendarName(summaryOrLabel) {
+  const n = String(summaryOrLabel || '').trim().toLowerCase();
+  return n === 'family' || n === 'family planner';
+}
+
+export function householdCalendarLabel(summaryOrLabel) {
+  return isHouseholdCalendarName(summaryOrLabel) ? 'Family' : summaryOrLabel;
+}
+
+/** Union configured + extra calendars by id; Family / Family Planner share the Family label. */
+export function mergeReadCalendarIds(configured, extras = []) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of [...(configured || []), ...(extras || [])]) {
+    if (!entry?.id || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    out.push({ id: entry.id, label: householdCalendarLabel(entry.label || entry.summary || `Calendar ${out.length + 1}`) });
+  }
+  return out;
+}
+
 // Resolves what get_calendar_events/the recap need to actually make calls:
 // either a fully mocked calendarClient + pre-parsed calendarIds (test
 // injection, bypassing real env/OAuth entirely — mirrors the
@@ -47,7 +75,10 @@ export function loadCalendarReadContext(opts = {}) {
   if (!fs.existsSync(envPath)) return { calendarIds: [], calendarClient: null, configured: false };
   try {
     const values = readLocalEnv(envPath);
-    const calendarIds = parseReadCalendarIds(values.GOOGLE_READ_CALENDAR_IDS);
+    const calendarIds = mergeReadCalendarIds(
+      parseReadCalendarIds(values.GOOGLE_READ_CALENDAR_IDS),
+      values.GOOGLE_CALENDAR_ID ? [{ id: values.GOOGLE_CALENDAR_ID, label: 'Family' }] : [],
+    );
     if (!calendarIds.length) return { calendarIds: [], calendarClient: null, configured: false };
     return {
       calendarIds,
@@ -72,6 +103,14 @@ function defaultCalendarReadClient(accessToken) {
       url.searchParams.set('orderBy', 'startTime');
       const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!res.ok) throw new Error(`Calendar listEvents failed for ${calendarId}: ${res.status} ${await res.text()}`);
+      const json = await res.json();
+      return json.items || [];
+    },
+    async listCalendars() {
+      const res = await fetch(`${base}/users/me/calendarList`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!res.ok) throw new Error(`Calendar listCalendars failed: ${res.status} ${await res.text()}`);
       const json = await res.json();
       return json.items || [];
     },
@@ -149,17 +188,44 @@ function toStructuredItem(label, event) {
 // raw per-calendar results. A single calendar erroring (e.g. Hanna revokes
 // sharing, a bad calendar id) is skipped rather than failing the whole
 // summary — reported in `errors` for visibility, not silently swallowed.
+function householdEventKey(label, event, start) {
+  if (!isHouseholdCalendarName(label)) return null;
+  const title = event.summary || '(untitled)';
+  return `${title}|${start || ''}`;
+}
+
 export async function getUpcomingEvents({ calendarIds, days = 7, now = new Date(), calendarClient, clientId, clientSecret, refreshToken }) {
   const client = calendarClient || defaultCalendarReadClient(await getAccessToken({ clientId, clientSecret, refreshToken }));
+  let ids = mergeReadCalendarIds(calendarIds);
+  if (typeof client.listCalendars === 'function') {
+    try {
+      const listed = await client.listCalendars();
+      const household = (listed || [])
+        .filter((c) => c?.id && isHouseholdCalendarName(c.summary))
+        .map((c) => ({ id: c.id, label: 'Family' }));
+      ids = mergeReadCalendarIds(ids, household);
+    } catch {
+      // Discovery is additive — a listCalendars failure must not hide configured calendars.
+    }
+  }
   const timeMin = now.toISOString();
   const timeMax = new Date(now.getTime() + days * 86400000).toISOString();
 
   const items = [];
   const errors = [];
-  for (const { id, label } of calendarIds) {
+  const seenHousehold = new Set();
+  for (const { id, label } of ids) {
     try {
       const events = await client.listEvents(id, timeMin, timeMax);
-      for (const event of events) items.push({ label, event, start: (event.start && (event.start.dateTime || event.start.date)) || '' });
+      for (const event of events) {
+        const start = (event.start && (event.start.dateTime || event.start.date)) || '';
+        const key = householdEventKey(label, event, start);
+        if (key) {
+          if (seenHousehold.has(key)) continue;
+          seenHousehold.add(key);
+        }
+        items.push({ label, event, start });
+      }
     } catch (err) {
       errors.push({ label, error: err.message });
     }

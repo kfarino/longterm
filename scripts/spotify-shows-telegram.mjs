@@ -49,6 +49,16 @@ export function filterQualifyingShows(matchData) {
   return entries;
 }
 
+/** Strongest taste-matched picks per kind for the Sun/Thu recap. Claude guesses already dropped by filterQualifyingShows. */
+export function topShowsByKind(entries, { music = 3, comedy = 3 } = {}) {
+  const sort = (a, b) => (b.score - a.score) || String(a.date).localeCompare(String(b.date));
+  const list = Array.isArray(entries) ? entries : [];
+  return {
+    music: list.filter((e) => e.kind === 'music').sort(sort).slice(0, music),
+    comedy: list.filter((e) => e.kind === 'comedy').sort(sort).slice(0, comedy),
+  };
+}
+
 // Resolves an artist to their Spotify artist-*page* URL (GET /search?type=
 // artist), not a track — this needs no scope beyond what was already
 // granted, and never needs /artists/{id}/top-tracks (403'd, see below).

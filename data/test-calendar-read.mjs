@@ -7,7 +7,16 @@
 // calls. Run with:
 //   node Longterm/data/test-calendar-read.mjs
 import assert from 'node:assert/strict';
-import { getUpcomingEvents, parseReadCalendarIds, loadCalendarReadContext } from '../scripts/calendar-read.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  getUpcomingEvents,
+  parseReadCalendarIds,
+  loadCalendarReadContext,
+  householdCalendarLabel,
+  mergeReadCalendarIds,
+} from '../scripts/calendar-read.mjs';
 
 function test(name, fn) {
   fn();
@@ -117,6 +126,116 @@ await asyncTest('getUpcomingEvents: an event with no recurringEventId is left un
   const result = await getUpcomingEvents({ calendarIds, calendarClient: mockClient });
   assert.ok(result.summary.includes('[Hanna] Dinner with Sam — Wed, Aug 5, 7:00 PM'));
   assert.ok(!result.summary.includes('(recurring)'), 'a one-off event should not be tagged recurring');
+});
+
+test('householdCalendarLabel: Family and Family Planner are the same household calendar', () => {
+  assert.equal(householdCalendarLabel('Family'), 'Family');
+  assert.equal(householdCalendarLabel('Family Planner'), 'Family');
+  assert.equal(householdCalendarLabel('Kevin'), 'Kevin');
+  assert.equal(householdCalendarLabel('Kevin Work'), 'Kevin Work');
+});
+
+test('mergeReadCalendarIds: write-target Family Planner is read as Family, without duplicating an existing id', () => {
+  const merged = mergeReadCalendarIds(
+    [{ id: 'kevin@personal.com', label: 'Kevin' }],
+    [{ id: 'family-planner-id', label: 'Family Planner' }, { id: 'family-id', label: 'Family' }],
+  );
+  assert.deepEqual(merged, [
+    { id: 'kevin@personal.com', label: 'Kevin' },
+    { id: 'family-planner-id', label: 'Family' },
+    { id: 'family-id', label: 'Family' },
+  ]);
+  const again = mergeReadCalendarIds(
+    [{ id: 'family-planner-id', label: 'Family Planner' }],
+    [{ id: 'family-planner-id', label: 'Family Planner' }],
+  );
+  assert.deepEqual(again, [{ id: 'family-planner-id', label: 'Family' }]);
+});
+
+test('loadCalendarReadContext: the write-target calendar is always on the read list, labeled Family', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'longterm-cal-read-'));
+  const envPath = path.join(dir, 'google-calendar.env');
+  fs.writeFileSync(envPath, [
+    'GOOGLE_CLIENT_ID=test-client',
+    'GOOGLE_CLIENT_SECRET=test-secret',
+    'GOOGLE_REFRESH_TOKEN=test-refresh',
+    'GOOGLE_CALENDAR_ID=family-planner-id',
+    'GOOGLE_READ_CALENDAR_IDS=kevin@personal.com|Kevin,hanna@email.com|Hanna',
+  ].join('\n'));
+  const ctx = loadCalendarReadContext({ calendarEnvPath: envPath });
+  assert.equal(ctx.configured, true);
+  assert.deepEqual(ctx.calendarIds, [
+    { id: 'kevin@personal.com', label: 'Kevin' },
+    { id: 'hanna@email.com', label: 'Hanna' },
+    { id: 'family-planner-id', label: 'Family' },
+  ]);
+});
+
+await asyncTest('getUpcomingEvents: Family and Family Planner events share the Family label', async () => {
+  const calendarIds = [
+    { id: 'family-id', label: 'Family' },
+    { id: 'planner-id', label: 'Family Planner' },
+  ];
+  const mockClient = {
+    listEvents: async (calendarId) => {
+      if (calendarId === 'family-id') {
+        return [{ summary: 'School pickup', start: { dateTime: '2026-08-05T15:00:00-07:00' } }];
+      }
+      return [{ summary: 'Date night', start: { dateTime: '2026-08-07T19:00:00-07:00' } }];
+    },
+  };
+  const result = await getUpcomingEvents({ calendarIds, calendarClient: mockClient });
+  assert.equal(result.count, 2);
+  assert.ok(result.summary.includes('[Family] School pickup'));
+  assert.ok(result.summary.includes('[Family] Date night'));
+  assert.ok(!result.summary.includes('[Family Planner]'), 'Family Planner is not a separate calendar in replies');
+});
+
+await asyncTest('getUpcomingEvents: the same household event on both calendars is listed once', async () => {
+  const calendarIds = [
+    { id: 'family-id', label: 'Family' },
+    { id: 'planner-id', label: 'Family Planner' },
+  ];
+  const mockClient = {
+    listEvents: async () => [{ summary: 'Dinner with Sam', start: { dateTime: '2026-08-05T19:00:00-07:00' } }],
+  };
+  const result = await getUpcomingEvents({ calendarIds, calendarClient: mockClient });
+  assert.equal(result.count, 1);
+  assert.equal((result.summary.match(/Dinner with Sam/g) || []).length, 1);
+});
+
+await asyncTest('getUpcomingEvents: listCalendars discovers Family / Family Planner even when env omitted them', async () => {
+  const called = [];
+  const mockClient = {
+    listCalendars: async () => ([
+      { id: 'family-id', summary: 'Family' },
+      { id: 'planner-id', summary: 'Family Planner' },
+      { id: 'work-id', summary: 'Kevin Work' },
+    ]),
+    listEvents: async (calendarId) => {
+      called.push(calendarId);
+      if (calendarId === 'family-id') {
+        return [{ summary: 'Soccer', start: { dateTime: '2026-08-06T16:00:00-07:00' } }];
+      }
+      if (calendarId === 'planner-id') {
+        return [{ summary: 'PT', start: { dateTime: '2026-08-06T10:00:00-07:00' } }];
+      }
+      if (calendarId === 'work-id') {
+        return [{ summary: 'Standup', start: { dateTime: '2026-08-06T09:00:00-07:00' } }];
+      }
+      return [{ summary: 'Dentist', start: { dateTime: '2026-08-06T08:00:00-07:00' } }];
+    },
+  };
+  const result = await getUpcomingEvents({
+    calendarIds: [{ id: 'kevin@personal.com', label: 'Kevin' }],
+    calendarClient: mockClient,
+  });
+  assert.ok(called.includes('family-id') && called.includes('planner-id'));
+  assert.ok(!called.includes('work-id'), 'Kevin Work stays excluded');
+  assert.ok(result.summary.includes('[Family] Soccer'));
+  assert.ok(result.summary.includes('[Family] PT'));
+  assert.ok(result.summary.includes('[Kevin] Dentist'));
+  assert.ok(!result.summary.includes('Standup'));
 });
 
 console.log('All tests passed.');

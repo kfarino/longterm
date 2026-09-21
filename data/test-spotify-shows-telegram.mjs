@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { filterQualifyingShows, resolveArtistPageUrl, buildArtistLinks, formatShowDate, formatMessage, runOnce } from '../scripts/spotify-shows-telegram.mjs';
+import { filterQualifyingShows, topShowsByKind, resolveArtistPageUrl, buildArtistLinks, formatShowDate, formatMessage, runOnce } from '../scripts/spotify-shows-telegram.mjs';
 
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
@@ -82,6 +82,23 @@ test('an owner with no scores.kevin entry is excluded, not treated as qualifying
 test('empty or missing shows array degrades to an empty list, not a crash', () => {
   assert.deepEqual(filterQualifyingShows({ shows: [] }), []);
   assert.deepEqual(filterQualifyingShows({}), []);
+});
+
+test('topShowsByKind: strongest 3 music and 3 comedy, claude-guesses excluded', () => {
+  const shows = [
+    show({ act: 'Music A', kind: 'music', score: 99, date: '2026-09-22' }),
+    show({ act: 'Music B', kind: 'music', score: 80, date: '2026-09-23' }),
+    show({ act: 'Music C', kind: 'music', score: 70, date: '2026-09-24' }),
+    show({ act: 'Music D', kind: 'music', score: 60, date: '2026-09-25' }),
+    show({ act: 'Guess Band', kind: 'music', basis: 'claude', score: 100, date: '2026-09-21' }),
+    show({ act: 'Comic A', kind: 'comedy', basis: 'comedy', score: 95, date: '2026-09-26' }),
+    show({ act: 'Comic B', kind: 'comedy', basis: 'comedy', score: 88, date: '2026-09-27' }),
+    show({ act: 'Comic C', kind: 'comedy', basis: 'comedy', score: 70, date: '2026-09-28' }),
+    show({ act: 'Comic D', kind: 'comedy', basis: 'comedy', score: 40, date: '2026-09-29' }),
+  ];
+  const top = topShowsByKind(filterQualifyingShows({ shows }));
+  assert.deepEqual(top.music.map((e) => e.act), ['Music A', 'Music B', 'Music C']);
+  assert.deepEqual(top.comedy.map((e) => e.act), ['Comic A', 'Comic B', 'Comic C']);
 });
 
 // Keyed by the exact `artist:"<name>"` field-filter query resolveArtistPageUrl

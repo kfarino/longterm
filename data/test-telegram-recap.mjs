@@ -107,6 +107,7 @@ function baseOpts(paths, extra = {}) {
     // exists). Tests wanting configured-calendar behavior already override
     // via calendarReadClient/calendarReadCalendarIds.
     calendarEnvPath: path.join(path.dirname(paths.todosPath), 'no-such-google-calendar.env'),
+    matchDataPath: path.join(path.dirname(paths.todosPath), 'no-such-show-matches.json'),
     cycleHistoryPath: path.join(path.dirname(paths.todosPath), 'no-such-cycle-history.json'),
     // Defaults to a no-op so a test isn't accidentally making a real Oura API
     // call on a machine that happens to have real oura-*.env tokens (this one
@@ -792,12 +793,14 @@ await asyncTest('bundle excludes decisions marked resolved, so a settled item st
   );
 });
 
-await asyncTest('recap prompt is three sections, Budget includes travel + card total, and never a Health section', () => {
-  assert.match(RECAP_SYSTEM_PROMPT, /exactly three labeled sections in this order: "Budget:", "Todos:", "Planning:"/);
+await asyncTest('recap prompt is four sections including Shows, never Health, and no "just ask" shows invite', () => {
+  assert.match(RECAP_SYSTEM_PROMPT, /exactly four labeled sections in this order: "Budget:", "Todos:", "Planning:", "Shows:"/);
   assert.doesNotMatch(RECAP_SYSTEM_PROMPT, /"Health:"/);
+  assert.doesNotMatch(RECAP_SYSTEM_PROMPT, /Curious what's on at our favorite venues/);
   assert.match(RECAP_SYSTEM_PROMPT, /travelThisCycle/);
   assert.match(RECAP_SYSTEM_PROMPT, /cardBalances/);
   assert.match(RECAP_SYSTEM_PROMPT, /Do not include a Health section/);
+  assert.match(RECAP_SYSTEM_PROMPT, /Shows:/);
 });
 
 await asyncTest('bundle includes this-cycle travel charges and the joint card total, not older trip history', async () => {
@@ -842,6 +845,37 @@ await asyncTest('bundle includes this-cycle travel charges and the joint card to
   );
   assert.equal(capturedBundle.travelThisCycle.find((t) => t.merchant === 'Test Airport Parking').group, 'Christmas — Zagreb');
   assert.equal(capturedBundle.travelThisCycle.find((t) => t.merchant === 'Test Inn').group, 'unmatched');
+});
+
+await asyncTest('bundle includes top music and comedy from the shows cache, not Claude guesses', async () => {
+  const dir = path.join(tmpRoot, 'recap-shows');
+  const paths = writeFixture(dir);
+  const matchDataPath = path.join(dir, 'show-matches.json');
+  fs.writeFileSync(matchDataPath, JSON.stringify({
+    shows: [
+      { act: 'Test Band', kind: 'music', date: '2026-09-25', venue: 'Test Wiltern', scores: { kevin: { basis: 'like', score: 91 } } },
+      { act: 'Filler Band', kind: 'music', date: '2026-09-26', venue: 'Test Bowl', scores: { kevin: { basis: 'follow', score: 70 } } },
+      { act: 'Guess Band', kind: 'music', date: '2026-09-24', venue: 'Test Club', scores: { kevin: { basis: 'claude', score: 99 } } },
+      { act: 'Test Comic', kind: 'comedy', date: '2026-09-27', venue: 'Test Store', scores: { kevin: { basis: 'comedy', score: 88 } } },
+    ],
+  }));
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, { now: SUNDAY, matchDataPath, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }) }));
+
+  assert.deepEqual(capturedBundle.shows.music.map((s) => s.act), ['Test Band', 'Filler Band']);
+  assert.deepEqual(capturedBundle.shows.comedy.map((s) => s.act), ['Test Comic']);
+  assert.equal(capturedBundle.shows.music[0].venue, 'Test Wiltern');
+  assert.ok(!JSON.stringify(capturedBundle.shows).includes('Guess Band'));
+});
+
+await asyncTest('Thursday recap also gets the shows bundle; a missing cache is empty, not a crash', async () => {
+  const dir = path.join(tmpRoot, 'recap-shows-thu');
+  const paths = writeFixture(dir);
+  let capturedBundle = null;
+  const mockAnthropic = async ({ bundle }) => { capturedBundle = bundle; return { content: [{ type: 'text', text: 'ok' }] }; };
+  await runOnce(baseOpts(paths, { now: THURSDAY, anthropicClient: mockAnthropic, telegramClient: async () => ({ ok: true }) }));
+  assert.deepEqual(capturedBundle.shows, { music: [], comedy: [] });
 });
 
 console.log('All tests passed.');
