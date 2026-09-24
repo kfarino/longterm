@@ -48,7 +48,9 @@ Longterm/
                              `joint` (Barclays family budget, currently generated
                              from budget_ledger.csv — see below), `personal.<ownerId>`
                              (each adult's own cards, auto-pulled from Monarch; owner
-                             ids come from goals.json owners[]),
+                             ids come from goals.json owners[]). Kevin personal
+                             already includes standing tennis lessons (Ally Zelle);
+                             do not add a second Tennis phase expense.
                              and `travel` (per planned trip from goals.json's
                              travel array, any card, Monarch's "Travel & Vacation"
                              category — excluded from the other two even when it

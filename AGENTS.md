@@ -128,9 +128,11 @@ Ally checking (`Spending Account`) is Kevin's debit spend card, mapped in
 `personalAccountLabels`. Credit-card payments and leftover `Transfer`
 category rows (Venmo, Vanguard) are not personal spend — they already
 counted on the card or are not consumption. A standing tennis Zelle is
-relabelled `Tennis` first so it is not skipped as a Transfer. Match the
-instructor's name on the Ally row (Monarch often stores the recipient, not
-the word "Zelle"); an amount-only "Zelle" + $135 rule misses that payment.
+relabelled `Tennis` first so it is not skipped as a Transfer. Those lessons
+are already inside the Kevin personal monthly target — do not add a second
+Tennis expense line or treat them as unbudgeted. Match the instructor's
+name on the Ally row (Monarch often stores the recipient, not the word
+"Zelle"); an amount-only "Zelle" + $135 rule misses that payment.
 
 ### Joint cycle snapshots
 The daily budget pull must archive `budget_tracking.json`'s joint tracker into
