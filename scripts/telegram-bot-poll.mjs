@@ -14,7 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, TRIP_REASSIGN_TOOL_NAMES, BUDGET_ADJUST_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
+import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, TRIP_REASSIGN_TOOL_NAMES, BUDGET_ADJUST_TOOL_NAMES, ACCOUNT_MAPPING_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
 import { applyManualChargesToTracking, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
 import { spawnDetachedLauncher } from './claude-code-run.mjs';
@@ -286,6 +286,18 @@ function loadCapabilityRequests(requestsPath) {
     return { ...parsed, items: parsed.items || [] };
   } catch {
     return { items: [] };
+  }
+}
+
+// budget_tracking.json, read for remap_account's sake (the card->tracker
+// mapping lives in its `mapping` section). Null — not {} — when it is
+// missing or unparseable, so the tool refuses instead of writing a mapping
+// into a shape that was never read.
+function loadBudgetTrackingForEditing(budgetTrackingPath) {
+  try {
+    return JSON.parse(fs.readFileSync(budgetTrackingPath, 'utf8'));
+  } catch {
+    return null;
   }
 }
 
@@ -691,7 +703,7 @@ async function naturalizeBatch({ apiKey, items, rephraseClient }) {
   }
 }
 
-async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides, capabilityRequests, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient, authPausePath }) {
+async function dispatchMessage({ message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides, capabilityRequests, budgetTracking, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification, now, botUsername, apiKey, unparsedPath, goalsChangelogPath, anthropicClient, venuesToFollowPath, upcomingShowsCachePath, showsClient, authPausePath }) {
   const rawText = message.text || '';
   const text = stripMention(rawText, botUsername);
   const overridesState = transactionOverrides || { manualCharges: [] };
@@ -760,6 +772,11 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     let newReminders = reminders;
     let newOverrides = overridesState;
     let newRequests = requestsState;
+    // budget_tracking.json, for remap_account only — the card->tracker
+    // mapping lives there, not in transaction_overrides.json, because it is
+    // the routing table the pull reads rather than a correction applied on
+    // top of it. null when the file isn't readable; the tool refuses then.
+    let newBudgetTracking = budgetTracking;
     const launchedRequests = [];
     const rawReplies = [];
     let stillNeedsClarification = null;
@@ -850,6 +867,19 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
         newOverrides = result.overrides;
         rawReplies.push(result.reply);
         if (result.needsClarification) stillNeedsClarification = result.reply;
+      } else if (ACCOUNT_MAPPING_TOOL_NAMES.has(toolUse.name)) {
+        // Its own state object: budget_tracking.json's `mapping` section.
+        // Every other write tool here owns a file of its own, so this gets
+        // its own branch rather than being folded into the overrides shape it
+        // has nothing to do with.
+        if (!newBudgetTracking) {
+          rawReplies.push("Couldn't change that — budget_tracking.json isn't readable right now, so I won't guess which card feeds which budget.");
+          continue;
+        }
+        const result = impl(newBudgetTracking, toolUse.input);
+        newBudgetTracking = result.tracking;
+        rawReplies.push(result.reply);
+        if (result.needsClarification) stillNeedsClarification = result.reply;
       } else if (CAPABILITY_TOOL_NAMES.has(toolUse.name)) {
         const result = impl(newRequests, toolUse.input, owner);
         newRequests = result.requests;
@@ -881,7 +911,7 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
 
     if (!rawReplies.length) {
       // every tool_use in this turn was unrecognized
-      return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, reply: helpText(rawText), pendingClarification: null };
+      return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, budgetTracking: newBudgetTracking, reply: helpText(rawText), pendingClarification: null };
     }
 
     // A tool call itself hit an ambiguity it can't resolve (e.g.
@@ -890,14 +920,14 @@ async function dispatchMessage({ message, owner, todos, monthPlanEvents, routine
     // all, so the next message resolves it instead of dead-ending.
     if (stillNeedsClarification) {
       return {
-        todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests,
+        todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, budgetTracking: newBudgetTracking,
         reply: rawReplies.join('\n'),
         pendingClarification: { question: stillNeedsClarification, originalText: livePending ? livePending.originalText : rawText, askedAt: now.toISOString() },
         touchedCalendar,
       };
     }
 
-    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, launchedRequests, reply: rawReplies.join('\n'), pendingClarification: null, touchedCalendar };
+    return { todos: newTodos, monthPlanEvents: newMonthPlanEvents, routineOverrides: newRoutineOverrides, goals: newGoals, reminders: newReminders, transactionOverrides: newOverrides, capabilityRequests: newRequests, budgetTracking: newBudgetTracking, launchedRequests, reply: rawReplies.join('\n'), pendingClarification: null, touchedCalendar };
   } catch (err) {
     appendJsonl(unparsedPath, { at: new Date().toISOString(), text: rawText, reason: `llm_error:${err.message}` });
     return { todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides: overridesState, capabilityRequests: requestsState, reply: helpText(rawText), pendingClarification: livePending };
@@ -972,6 +1002,8 @@ Do NOT report travel or trip budgets unless the person explicitly asked about tr
 Cash, Venmo, babysitting cash, or any spend that will not come through a credit card / Monarch → add_manual_charge (tracker "joint" or an owner id). That is a real immediate budget line, not a decision note.
 A charge that ALREADY exists and belongs to a trip — "that parking was for the Boston trip", "this should count against Zagreb, not the monthly budget", "you put it on the wrong trip" → reassign_transaction. It moves the existing charge; add_manual_charge would create a second copy and double-count. Pass the exact date, and the amount when it was given. Never guess which trip: the tool asks if the name is ambiguous, and so should you if no trip was named at all.
 A tracker TOTAL that is wrong — "the joint budget total is off", "the card actually says $3,098", "that number does not match the statement", "we are $200 higher than what you show" → reconcile_tracker. It writes a reasoned correction on this cycle only. add_manual_charge is wrong for this (it would invent a merchant and a charge that never happened) and so is reassign_transaction (that moves a real charge onto a trip). If they say the number looks off but give no figure, ask what the real total is instead of calling anything.
+A card mapped to the WRONG or an OLD account — "Kevin's Chase card is mapped to the old card", "my new Amex should count on my personal budget", "that card was replaced", "charges from my Chase card aren't showing up in my budget" → remap_account. It fixes which card feeds which budget from the next pull on; it does not change any already-logged total, so it is not reconcile_tracker (a wrong total), not reassign_transaction (a charge on the wrong budget/trip), and not add_manual_charge. It also has nothing to do with net worth. Never guess which card: if they did not say which existing card is wrong, or named one that could be several, the tool asks — let it.
+If get_budget_status says a mapped card is no longer in Monarch, say that plainly: that card's charges are not being counted at all, the total is incomplete, and remap_account is the fix once they say which card replaced it.
 Babysitting is its own category — opt-in spend that enables date nights. Never label it Childcare. Childcare is the standing nanny/au pair cost on the long-term plan, not a current-cycle spend bucket for sitters.
 
 ## Changing the real financial plan
@@ -1121,6 +1153,8 @@ export async function runOnce(opts) {
   const overridesSnapshot = JSON.stringify(transactionOverrides);
   let capabilityRequests = loadCapabilityRequests(args.capabilityRequestsPath);
   const requestsSnapshot = JSON.stringify(capabilityRequests);
+  let budgetTracking = loadBudgetTrackingForEditing(args.budgetTrackingPath);
+  const budgetTrackingSnapshot = JSON.stringify(budgetTracking);
   const pendingLaunches = [];
   const now = args.now || new Date();
   const calendarReadContext = loadCalendarReadContext(args);
@@ -1159,7 +1193,7 @@ export async function runOnce(opts) {
 
     try {
       const result = await dispatchMessage({
-        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides, capabilityRequests, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient, authPausePath: args.authPausePath || CALENDAR_AUTH_PAUSE_PATH,
+        message, owner, todos, monthPlanEvents, routineOverrides, goals, reminders, transactionOverrides, capabilityRequests, budgetTracking, diningContext, financialContext, healthContext, calendarReadContext, recentConversation, pendingClarification: pendingClarifications[owner] || null, now, botUsername, apiKey, unparsedPath: args.unparsedPath, goalsChangelogPath: args.goalsChangelogPath, anthropicClient: args.anthropicClient, venuesToFollowPath: args.venuesToFollowPath, upcomingShowsCachePath: args.upcomingShowsCachePath, showsClient: args.showsClient, authPausePath: args.authPausePath || CALENDAR_AUTH_PAUSE_PATH,
       });
       if (result.touchedCalendar) touchedCalendar = true;
       todos = result.todos;
@@ -1173,6 +1207,9 @@ export async function runOnce(opts) {
       reminders = result.reminders;
       transactionOverrides = result.transactionOverrides || transactionOverrides;
       capabilityRequests = result.capabilityRequests || capabilityRequests;
+      // Same tolerant assignment as the two above: a dispatch path that never
+      // touched the mapping returns undefined, and must not blank it.
+      budgetTracking = result.budgetTracking || budgetTracking;
       if (result.launchedRequests?.length) pendingLaunches.push(...result.launchedRequests);
       // Same load-mutate-writeback pattern as everything else above — a
       // second message from the same sender later in this very same batch
@@ -1325,6 +1362,20 @@ export async function runOnce(opts) {
     writeJson(args.remindersPath, reminders);
   }
 
+  // Written BEFORE the overrides patch below, which re-reads this same file
+  // from disk — so a remap and a manual charge in one batch both survive.
+  // No live recompute follows: the mapping only decides what FUTURE pulls
+  // route, and this cycle's weeks[] were built from the old card. Rebuilding
+  // them here would need a Monarch call, and inventing them from the ledger
+  // would be a second math path for a tracker total (AGENTS.md §2) — so the
+  // reply says the totals move on the next pull instead of pretending.
+  const budgetTrackingChanged = budgetTracking && JSON.stringify(budgetTracking) !== budgetTrackingSnapshot;
+  if (budgetTrackingChanged && !args.dryRun) {
+    writeJson(args.budgetTrackingPath, budgetTracking);
+    const buildScript = path.join(path.dirname(args.budgetTrackingPath), 'build-data.mjs');
+    if (fs.existsSync(buildScript)) spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });
+  }
+
   const overridesChanged = JSON.stringify(transactionOverrides) !== overridesSnapshot;
   if (overridesChanged && !args.dryRun) {
     writeJson(args.transactionOverridesPath, transactionOverrides);
@@ -1372,7 +1423,7 @@ export async function runOnce(opts) {
     saveOffset(args.offsetPath, maxSafeUpdateId + 1);
   }
 
-  return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, remindersChanged, overridesChanged, requestsChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications, reminders, transactionOverrides, capabilityRequests };
+  return { todosChanged, monthPlanEventsChanged, routineOverridesChanged, goalsChanged, pendingClarificationsChanged, remindersChanged, overridesChanged, budgetTrackingChanged, requestsChanged, sentReplies, combinedReply, todos, monthPlanEvents, routineOverrides, goals, pendingClarifications, reminders, transactionOverrides, capabilityRequests };
 }
 
 function appendPollLog(logPath, message) {

@@ -29,6 +29,19 @@ import { parseReminderTime, formatReminderTime, effectiveTime } from './reminder
 // all four places (see resolve_decision).
 import { openDecisions, isResolvedDecision, matchDecisionsByTitle } from './decisions.mjs';
 import { queryLedger, ledgerCoverage, resolveSearchWindow } from './transactions-store.mjs';
+// Pure card/account -> tracker mapping helpers, shared with
+// budget-tracking-pull.mjs so "which card feeds which budget" (and the
+// label-shape heuristics behind the statement-cycle anchor) has exactly one
+// definition. See remap_account below.
+import {
+  trackerKeysFromMapping,
+  normalizeTrackerKey,
+  labelsForTracker,
+  knownAccountLabels,
+  resolveAccountLabel,
+  remapTrackerLabel,
+  looksLikeMonarchNumericId,
+} from './account-mapping.mjs';
 
 // Financial Q&A tools (get_budget_status/get_savings_goals/get_decisions,
 // added 2026-07-31) are read-only over a financialContext bundle (see
@@ -1008,6 +1021,211 @@ function round2Money(n) {
 // gets its own dispatch branch.
 export const BUDGET_ADJUST_TOOL_NAMES = new Set(['reconcile_tracker']);
 
+// --- remap_account (2026-10-01) ---
+//
+// Repoint a budget at the card that actually feeds it. Hanna: "Kevin's Chase
+// card is mapped to an old card in Monarch." Nothing here could touch that —
+// get_budget_status and search_transactions only read data that was already
+// routed, reconcile_tracker corrects a cycle's total, and add_manual_charge /
+// reassign_transaction create or move one charge. None of them change WHICH
+// card a tracker listens to.
+//
+// That config is budget_tracking.json's `mapping` section — the one
+// hand/bot-owned island in an otherwise regenerated file. The pull loads the
+// file, rebuilds joint/personal/travel on the same object, and writes it
+// back, so a mapping edit survives the morning rebuild (unlike a hand-edit to
+// weeks[] or categories[], which would not — AGENTS.md §1). No
+// transaction_overrides.json entry is involved: this is not a correction to a
+// number, it is the routing table the numbers are built from.
+//
+// What makes a stale mapping worth a tool: the failure is silent by
+// construction. A charge reaches a tracker only when its account label is in
+// the mapping, so a replaced/re-linked card drops out of the budget with no
+// error, no empty category and no zero — the tracker just reads low, forever.
+// Hence three rules here:
+//   - Verify, don't take on faith. The card has to exist in the catalog the
+//     daily pull records (`tracking.accountCatalog`), or the reply says
+//     plainly that it could not be verified. Writing a typo'd label would
+//     recreate the exact bug this fixes.
+//   - Never guess. Which card is being replaced, or which of several matches
+//     was meant, is asked — same contract as remove_event / resolve_decision.
+//   - Claim only what happened. The mapping changed; this cycle's logged
+//     totals were already built from the old card and are rebuilt on the next
+//     pull. Saying otherwise would be reporting an unverified write.
+
+// Monarch account types that are never a spend card, so they are not offered
+// as candidates when someone names a card that cannot be found.
+const NON_SPEND_ACCOUNT_TYPES = new Set(['brokerage', 'investment', 'loan', 'other_asset', 'real_estate', 'vehicle', 'other_liability']);
+const MAX_CANDIDATES = 8;
+
+function quoted(label) {
+  return `"${String(label).trim()}"`;
+}
+
+function trackerDisplayName(tracking, key) {
+  if (key === 'joint') return tracking?.joint?.label || 'the joint budget';
+  return tracking?.personal?.[key]?.label || `${key} personal`;
+}
+
+function remapCandidates(tracking, mapping) {
+  const rows = tracking?.accountCatalog?.accounts || [];
+  const spendish = rows.filter((a) => !NON_SPEND_ACCOUNT_TYPES.has(String(a?.type || '').toLowerCase()));
+  const allMapped = new Set();
+  for (const key of trackerKeysFromMapping(mapping)) {
+    for (const label of labelsForTracker(mapping, key)) allMapped.add(String(label).trim().toLowerCase());
+  }
+  const unmapped = spendish.filter((a) => !allMapped.has(String(a.label).trim().toLowerCase()));
+  const pool = unmapped.length ? unmapped : spendish;
+  return pool.slice(0, MAX_CANDIDATES).map((a) => a.label);
+}
+
+/** The pull's dangling-mapping warning, for a label that is no longer mapped. */
+function clearDanglingFlag(tracking, key, label) {
+  const tracker = key === 'joint' ? tracking?.joint : tracking?.personal?.[key];
+  if (!tracker || !Array.isArray(tracker.mappedCardsNotFound) || !label) return;
+  const rest = tracker.mappedCardsNotFound.filter((l) => String(l).trim().toLowerCase() !== String(label).trim().toLowerCase());
+  if (rest.length) tracker.mappedCardsNotFound = rest;
+  else delete tracker.mappedCardsNotFound;
+}
+
+export function remap_account(tracking, { tracker, card, replaces, action } = {}) {
+  const mapping = tracking?.mapping;
+  const keys = trackerKeysFromMapping(mapping);
+  if (!mapping || !keys.length) {
+    return { tracking, reply: "Couldn't change that — I can't read the card mapping right now, so I won't guess which card feeds which budget." };
+  }
+
+  if (!tracker || !String(tracker).trim()) {
+    return {
+      tracking,
+      reply: `Which budget should that card feed? (${keys.join(', ')})`,
+      needsClarification: true,
+    };
+  }
+  const key = normalizeTrackerKey(tracker, keys);
+  if (!key) {
+    return { tracking, reply: `Couldn't change that — I don't track a budget called ${quoted(tracker)}. I have: ${keys.join(', ')}.` };
+  }
+  const label = trackerDisplayName(tracking, key);
+
+  if (!card || !String(card).trim()) {
+    return { tracking, reply: `Which card should ${label} track? Give the name Monarch shows for it (e.g. "CREDIT CARD (...1234)").`, needsClarification: true };
+  }
+  if (looksLikeMonarchNumericId(card)) {
+    // The two id schemes, AGENTS.md §2. A numeric id written here matches no
+    // transaction, ever, and would look exactly like a successful remap.
+    return {
+      tracking,
+      reply: `That looks like a Monarch account id, not a card. The spend budgets match the display name Monarch shows on a transaction (e.g. "CREDIT CARD (...1234)") — numeric ids are only used for the net-worth accounts. Tell me the card's display name.`,
+    };
+  }
+
+  const { labels, catalogLabels, verified } = knownAccountLabels({ mapping, accountCatalog: tracking.accountCatalog });
+  const searchable = verified ? [...new Set([...catalogLabels, ...labels])] : labels;
+  const resolved = resolveAccountLabel(searchable, card);
+  if (resolved.ambiguous) {
+    return {
+      tracking,
+      reply: `More than one account matches ${quoted(card)}: ${resolved.ambiguous.join(', ')}. Say which one.`,
+      needsClarification: true,
+    };
+  }
+  let newLabel = resolved.label || null;
+  if (!newLabel) {
+    if (verified) {
+      const candidates = remapCandidates(tracking, mapping);
+      const asOf = tracking.accountCatalog?.asOf ? ` (account list as of ${tracking.accountCatalog.asOf})` : '';
+      const options = candidates.length ? ` Accounts I could point ${label} at: ${candidates.join(', ')}.` : '';
+      return {
+        tracking,
+        reply: `Couldn't find an account matching ${quoted(card)} in Monarch${asOf}.${options} Nothing changed — if the card is newly linked it will show up after the next daily pull.`,
+      };
+    }
+    // No catalog pulled on this machine yet: "I have never seen your account
+    // list" is a different answer from "that card does not exist", and only
+    // one of them is true. Take the label as given, and say so.
+    newLabel = String(card).trim();
+  }
+
+  const currentLabels = labelsForTracker(mapping, key);
+  let oldLabel = null;
+  if (action === 'add' && replaces && String(replaces).trim()) {
+    // Contradictory: "add" means the current cards stay. Picking one half
+    // silently either leaves a dead card mapped or drops a live one.
+    return {
+      tracking,
+      reply: `Should ${newLabel} replace ${quoted(replaces)} on ${label}, or be added alongside the cards already there? Those are different changes.`,
+      needsClarification: true,
+    };
+  }
+  if (action !== 'add') {
+    if (replaces && String(replaces).trim()) {
+      const old = resolveAccountLabel(currentLabels, replaces);
+      if (old.ambiguous) {
+        return {
+          tracking,
+          reply: `More than one of ${label}'s cards matches ${quoted(replaces)}: ${old.ambiguous.join(', ')}. Say which one.`,
+          needsClarification: true,
+        };
+      }
+      if (!old.label) {
+        return { tracking, reply: `Couldn't change that — ${label} has no card matching ${quoted(replaces)}. It currently tracks: ${currentLabels.join(', ')}.` };
+      }
+      oldLabel = old.label;
+    } else if (currentLabels.length === 1) {
+      oldLabel = currentLabels[0];
+    } else {
+      return {
+        tracking,
+        reply: `Which of ${label}'s cards should ${newLabel} replace? It tracks: ${currentLabels.join(', ')}. (Say it's an extra card instead and I'll add it alongside them.)`,
+        needsClarification: true,
+      };
+    }
+  }
+
+  const result = remapTrackerLabel(mapping, { tracker: key, newLabel, oldLabel });
+  if (result.error === 'already_mapped_elsewhere') {
+    return {
+      tracking,
+      reply: `${newLabel} already feeds ${trackerDisplayName(tracking, result.conflictTracker)} (${result.conflictTracker}). One card can only feed one budget — mapping it to both would count its charges twice. Nothing changed.`,
+    };
+  }
+  if (result.error === 'already_mapped_here') {
+    return { tracking, reply: `${newLabel} already feeds ${label} — nothing to change.` };
+  }
+  if (result.error === 'would_empty_tracker') {
+    return { tracking, reply: `Couldn't change that — ${label} would be left with no card at all, and a budget with nothing mapped stops being rebuilt entirely (it would keep showing its last numbers as if they were current).` };
+  }
+  if (result.error) {
+    return { tracking, reply: `Couldn't change that — ${label}'s card mapping didn't come out valid (${result.error}), so I left it alone.` };
+  }
+
+  tracking.mapping = result.mapping;
+  if (oldLabel) clearDanglingFlag(tracking, key, oldLabel);
+
+  const lines = [];
+  if (oldLabel) lines.push(`Remapped ✓ ${label} now tracks ${newLabel} instead of ${oldLabel}.`);
+  else lines.push(`Mapped ✓ ${label} now also tracks ${newLabel}.`);
+  if (result.anchorMoved) lines.push(`Its statement cycle now follows ${newLabel}.`);
+  if (result.anchorDropped) lines.push(`${newLabel} isn't a credit card, so the statement cycle falls back to ${label}'s first mapped card.`);
+  lines.push(oldLabel
+    ? `This cycle's logged spend was already built from ${oldLabel} — the next daily Monarch pull is what rebuilds the totals from ${newLabel}. I changed the routing, not the numbers.`
+    : `Its charges start counting on the next daily Monarch pull.`);
+  if (!verified) {
+    // Self-closing loop, not a shrug: the morning pull checks every mapped
+    // label against the real account list and flags/alerts a dangling one
+    // (applyAccountInventoryToTracking), so a label that turns out to be
+    // wrong gets reported tomorrow rather than sitting there forever.
+    lines.push(`I couldn't verify that card against Monarch (no account list has been pulled here yet), so it has to match exactly the name Monarch shows on a transaction. Tomorrow's pull checks it — if it doesn't match a real account I'll flag it, and you can tell me the exact name then.`);
+  }
+  return { tracking, reply: lines.join(' ') };
+}
+
+// Writes budget_tracking.json's `mapping` — its own state object, unlike
+// every other write tool here (todos / month plan / goals / overrides), so it
+// gets its own name set and its own dispatch branch in telegram-bot-poll.mjs.
+export const ACCOUNT_MAPPING_TOOL_NAMES = new Set(['remap_account']);
+
 function nextCapabilityId(requests) {
   const max = (requests.items || []).reduce((m, r) => {
     const n = parseInt(String(r.id).replace(/^c/, ''), 10);
@@ -1201,19 +1419,27 @@ function correctionSentence(tracker) {
  */
 export function trackerSyncWarning(tracker) {
   const issues = (tracker?.cardBalances || []).filter((r) => r?.syncStatus === 'needs_reconnect' || r?.syncStatus === 'disconnected' || r?.syncStatus === 'stale');
-  if (!issues.length) return '';
-  const bits = issues.map((r) => {
+  // A mapped card the daily pull could not find in Monarch at all (card
+  // replaced, re-linked, renumbered). Worse than a stale sync: those charges
+  // are not late, they are not being counted at all — and until this line
+  // existed, nothing said so, the total just read low (remap_account, 2026-10-01).
+  const dangling = (tracker?.mappedCardsNotFound || []).filter(Boolean);
+  if (!issues.length && !dangling.length) return '';
+  const bits = dangling.map((l) => `${String(l).trim()} is mapped to this budget but is no longer in Monarch, so its charges are not counted (ask me to remap it to the right card)`);
+  bits.push(...issues.map((r) => {
     const name = String(r.label || 'Card').trim();
     const when = r.lastUpdated ? ` (last synced ${r.lastUpdated})` : '';
     if (r.syncStatus === 'disconnected') return `${name} is disconnected in Monarch${when}`;
     if (r.syncStatus === 'stale') return `${name} has not synced since ${r.lastUpdated || 'an unknown date'}`;
     return `${name} needs a reconnect in Monarch${when}`;
-  });
+  }));
   const total = Number(tracker?.total);
   const zero = Number.isFinite(total) && total === 0;
   const staleNote = zero
     ? ' Logged spend may be incomplete — do not treat $0 as the real total.'
-    : ' Logged spend may be incomplete — new charges after the last sync are missing.';
+    : (issues.length
+      ? ' Logged spend may be incomplete — new charges after the last sync are missing.'
+      : ' Logged spend may be incomplete — that card\'s charges are missing from it.');
   return ` ${bits.join('; ')}.${staleNote}`;
 }
 
@@ -1693,8 +1919,22 @@ export const TOOL_DEFS = [
     },
   },
   {
+    name: 'remap_account',
+    description: 'Fix WHICH card or account feeds a budget — use this when someone says a card is mapped to the wrong or an old account, a card was replaced or re-linked in Monarch, charges from a card are not showing up in a budget, or a budget should track a different card ("Kevin\'s Chase card is mapped to the old card", "my new Amex should count on my personal budget"). Give the budget (tracker) and the card as Monarch displays it on a transaction (e.g. "CREDIT CARD (...1234)"); a last-4 or a distinctive part of the name is enough. Pass replaces when they said which card is wrong; pass action "add" only when the card is an EXTRA one alongside the current ones, not a replacement. This changes routing for future pulls — it does not change any already-logged total, so do NOT use it when a total is simply wrong (that is reconcile_tracker), when a charge belongs to a trip (reassign_transaction), or for cash spend (add_manual_charge). It also does not touch net worth: accounts.json\'s balance mapping uses numeric Monarch ids and is not this tool. Never guess a card — the tool asks when what was said matches more than one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        tracker: { type: 'string', description: '"joint" for the family budget, or an owner id (kevin, hanna) for that person\'s personal budget.' },
+        card: { type: 'string', description: 'The correct card/account as Monarch shows it on a transaction, or a distinctive part of it (a last-4 like "4821" works).' },
+        replaces: { type: 'string', description: 'The wrong/old card currently mapped to that budget, if they said which one. Omit if they did not — the tool asks rather than picking.' },
+        action: { type: 'string', enum: ['replace', 'add'], description: 'Defaults to "replace". Use "add" only when the card is an additional one for that budget and the existing cards stay — never together with replaces, which means the opposite.' },
+      },
+      required: ['tracker', 'card'],
+    },
+  },
+  {
     name: 'request_capability',
-    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not moving an existing charge onto a trip (that is reassign_transaction), not correcting a tracker total (that is reconcile_tracker), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
+    description: 'Call this when the user asked for something you genuinely cannot do with any existing tool — not a clarifying question, not a dollar figure for update_phase_expense, not cash spend (that is add_manual_charge), not moving an existing charge onto a trip (that is reassign_transaction), not correcting a tracker total (that is reconcile_tracker), not fixing which card feeds a budget (that is remap_account), not a narrative decision (that is log_decision). Files a request and starts an automatic Claude Code run to add the missing tool. Never apologize and stop. Never dump an unimplemented feature into log_decision.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1804,6 +2044,7 @@ export const TOOL_IMPL = {
   add_manual_charge: (overrides, args, owner) => add_manual_charge(overrides, { tracker: args.tracker, merchant: args.merchant, amount: args.amount, date: args.date, category: args.category, note: args.note }, owner),
   reassign_transaction: (overrides, args, owner, context) => reassign_transaction(overrides, { merchant: args.merchant, date: args.date, amount: args.amount, trip: args.trip, note: args.note }, owner, context),
   reconcile_tracker: (overrides, args, owner, context) => reconcile_tracker(overrides, { tracker: args.tracker, actualTotal: args.actualTotal, amount: args.amount, reason: args.reason, clear: args.clear }, owner, context),
+  remap_account: (tracking, args) => remap_account(tracking, { tracker: args.tracker, card: args.card, replaces: args.replaces, action: args.action }),
   request_capability: (requests, args, owner) => request_capability(requests, { ask: args.ask, whyCant: args.whyCant, proposedChange: args.proposedChange }, owner),
   add_reminder: (reminders, args, owner) => add_reminder(reminders, { text: args.text, date: args.date, time: args.time, owner }),
   list_reminders: (reminders) => list_reminders(reminders),

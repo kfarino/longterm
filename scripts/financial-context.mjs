@@ -112,6 +112,11 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       adjustments: tracker.adjustments || null,
       // Display only — reconnect/stale flags on mapped cards. Not pacing math.
       cardBalances: Array.isArray(tracker.cardBalances) ? tracker.cardBalances : [],
+      // Mapped card labels the pull found no Monarch account for (2026-10-01).
+      // Display only, and load-bearing: a card that dropped out of the mapping
+      // makes this total low with nothing else anywhere saying why, so it has
+      // to reach the reply (see trackerSyncWarning / remap_account).
+      mappedCardsNotFound: Array.isArray(tracker.mappedCardsNotFound) ? tracker.mappedCardsNotFound : [],
     };
   }
 
@@ -126,6 +131,9 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       // Signed Monarch balances for the mapped joint cards (negative = owed).
       // Display only — not folded into weeks/pacing (AGENTS.md §2).
       cardBalances: Array.isArray(joint.cardBalances) ? joint.cardBalances : [],
+      // Same reason as the personal trackers above: a dangling card mapping
+      // is why a total can be quietly incomplete.
+      mappedCardsNotFound: Array.isArray(joint.mappedCardsNotFound) ? joint.mappedCardsNotFound : [],
       // Name+amount only — habits compare this cycle's mix to closed-cycle
       // usual shares. Merchant line items stay in loadTransactionDetail /
       // budgetLineItems, not in the financialContext dump the bot LLM sees.

@@ -323,6 +323,7 @@ Then report travel that posted this same cycle from travelThisCycle (merchant, a
 Then report the joint card total from budgetStatus.joint.cardBalances. A negative balance is the amount owed — say it as owed, using the absolute value, and name the card. If several cards, one line each. If cardBalances is missing or empty, say the card total isn't available rather than inventing a number. The card total is allowed to disagree with the family-budget logged figure: travel on the card plus last-statement leftover is why.
 
 If any cardBalances entry (joint or personal) has syncStatus needs_reconnect, disconnected, or stale, say so in Budget. Do NOT treat the logged total as complete — new charges after lastUpdated are missing. Never describe a stale or disconnected $0 as "we haven't spent anything."
+If a tracker has a mappedCardsNotFound entry, name that card in Budget: it is mapped to the budget but no longer exists in Monarch, so none of its charges are being counted and the logged figure is incomplete. Add that it can be pointed at the right card by saying which card replaced it.
 
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 

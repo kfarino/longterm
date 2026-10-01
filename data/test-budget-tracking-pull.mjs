@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, resolvePersonalCycle, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides, shouldAlertForMonarchSync, monarchSyncFingerprint } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, resolvePersonalCycle, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, applyAccountInventoryToTracking, collectDisconnectedAccountLabels, buildMonarchSyncAlertText, loadTransactionOverrides, shouldAlertForMonarchSync, monarchSyncFingerprint } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -1424,6 +1424,112 @@ test('loadTransactionOverrides keeps budgetAdjustments - the poller writes back 
   assert.equal(loaded.budgetAdjustments.length, 1);
   assert.equal(loaded.budgetAdjustments[0].amount, -312.44);
   assert.deepEqual(loadTransactionOverrides(path.join(tmpRoot, 'no-such-overrides.json')).budgetAdjustments, []);
+});
+
+// --- applyAccountInventoryToTracking (2026-10-01) ---
+//
+// A mapped card label that matches no live Monarch account routes nothing,
+// forever, and says nothing: the pull only sends a charge to a tracker when
+// the charge's account label is in the mapping, and cardBalances only gets a
+// row for a label that matched. So the tracker just reads low. This records
+// what accounts Monarch actually has (so remap_account can verify a card
+// instead of taking it on faith) and flags any mapping that has gone
+// dangling, which is what turns the quietest failure here into a stated one.
+
+function inventoryTracking() {
+  return {
+    mapping: {
+      jointAccountLabels: ['Household Mastercard (...1111)'],
+      travelCategoryNames: ['Travel & Vacation'],
+      personalAccountLabels: {
+        kevin: ['CREDIT CARD (...2222)', 'Spending Account (...4444)'],
+        hanna: ['CREDIT CARD (...5555)'],
+      },
+      personalCycle: { kevin: { accountLabel: 'CREDIT CARD (...2222)', startDay: 25 } },
+    },
+    joint: { label: 'Joint household', weeks: [{ actual: 100, days: 7 }], categories: [] },
+    personal: {
+      kevin: { label: 'Kevin personal', weeks: [{ actual: 10, days: 7 }], categories: [] },
+      hanna: { label: 'Hanna personal', weeks: [], categories: [] },
+    },
+    travel: { trips: [], unmatched: [] },
+  };
+}
+
+const INVENTORY_ACCOUNTS = [
+  { displayName: 'Household Mastercard (...1111)', type: { name: 'credit' }, currentBalance: -200 },
+  { displayName: 'CREDIT CARD (...2222)', type: { name: 'credit' }, currentBalance: -50 },
+  { displayName: 'Spending Account (...4444)', type: { name: 'depository' }, currentBalance: 900 },
+  { displayName: 'CREDIT CARD (...5555)', type: { name: 'credit' }, currentBalance: -10 },
+  { displayName: 'Test Sapphire Card (...6666)', type: { name: 'credit' }, currentBalance: -75 },
+];
+
+test('applyAccountInventoryToTracking records the account catalog the bot verifies a remap against', () => {
+  const tracking = inventoryTracking();
+  applyAccountInventoryToTracking(tracking, INVENTORY_ACCOUNTS, { asOf: '2026-10-01' });
+  assert.equal(tracking.accountCatalog.asOf, '2026-10-01');
+  assert.equal(tracking.accountCatalog.accounts.length, 5);
+  assert.ok(tracking.accountCatalog.accounts.some((a) => a.label === 'Test Sapphire Card (...6666)'),
+    'an unmapped card has to be in the catalog — that is the card a remap points AT');
+  assert.doesNotMatch(JSON.stringify(tracking.accountCatalog), /-50|900/, 'labels and types only, no balances');
+});
+
+test('applyAccountInventoryToTracking flags a mapped card Monarch no longer has', () => {
+  const tracking = inventoryTracking();
+  tracking.mapping.personalAccountLabels.kevin = ['CREDIT CARD (...9999)', 'Spending Account (...4444)'];
+  applyAccountInventoryToTracking(tracking, INVENTORY_ACCOUNTS, { asOf: '2026-10-01' });
+  assert.deepEqual(tracking.personal.kevin.mappedCardsNotFound, ['CREDIT CARD (...9999)']);
+  assert.equal(tracking.joint.mappedCardsNotFound, undefined, 'the joint card is fine — do not flag it too');
+});
+
+test('applyAccountInventoryToTracking clears the flag once the mapping is fixed', () => {
+  const tracking = inventoryTracking();
+  tracking.personal.kevin.mappedCardsNotFound = ['CREDIT CARD (...9999)'];
+  tracking.joint.mappedCardsNotFound = ['Old Joint Card (...0000)'];
+  applyAccountInventoryToTracking(tracking, INVENTORY_ACCOUNTS, { asOf: '2026-10-01' });
+  assert.equal(tracking.personal.kevin.mappedCardsNotFound, undefined, 'a fixed mapping must not keep warning');
+  assert.equal(tracking.joint.mappedCardsNotFound, undefined);
+});
+
+test('applyAccountInventoryToTracking never touches the mapping itself', () => {
+  const tracking = inventoryTracking();
+  const before = JSON.stringify(tracking.mapping);
+  applyAccountInventoryToTracking(tracking, INVENTORY_ACCOUNTS, { asOf: '2026-10-01' });
+  assert.equal(JSON.stringify(tracking.mapping), before, 'the mapping is hand/bot-owned config, not pull output');
+});
+
+test('applyAccountInventoryToTracking treats an empty accounts response as a failed pull, not as every card gone', () => {
+  const tracking = inventoryTracking();
+  applyAccountInventoryToTracking(tracking, INVENTORY_ACCOUNTS, { asOf: '2026-10-01' });
+  applyAccountInventoryToTracking(tracking, [], { asOf: '2026-10-02' });
+  assert.equal(tracking.accountCatalog.asOf, '2026-10-01', 'keep the last catalog that was real');
+  assert.equal(tracking.personal.kevin.mappedCardsNotFound, undefined);
+  assert.equal(tracking.joint.mappedCardsNotFound, undefined);
+});
+
+test('a dangling mapping is paged like a broken card, with the remap as the fix', () => {
+  // Same alert path as needs_reconnect/stale (AGENTS.md §2): a broken
+  // integration alerts, it does not just log. A mapping pointing at an
+  // account that no longer exists is strictly worse than a stale sync — the
+  // card's charges are not late, they are never coming.
+  const tracking = inventoryTracking();
+  tracking.personal.kevin.mappedCardsNotFound = ['CREDIT CARD (...9999)'];
+  const issues = collectDisconnectedAccountLabels(tracking);
+  assert.deepEqual(issues, [{ label: 'CREDIT CARD (...9999)', syncStatus: 'not_in_monarch', lastUpdated: null }]);
+  assert.equal(shouldAlertForMonarchSync({}, issues, new Date('2026-10-01T16:40:00Z')), true);
+  const text = buildMonarchSyncAlertText(issues);
+  assert.match(text, /CREDIT CARD \(\.\.\.9999\)/);
+  assert.match(text, /no longer|not in Monarch/i);
+  assert.match(text, /remap/i, 'name the fix — there is a Telegram tool for exactly this');
+});
+
+test('card sync issues and dangling mappings are reported together, not one instead of the other', () => {
+  const tracking = inventoryTracking();
+  tracking.joint.cardBalances = [{ label: 'Household Mastercard (...1111)', balance: -200, syncStatus: 'needs_reconnect', lastUpdated: '2026-09-20' }];
+  tracking.personal.kevin.mappedCardsNotFound = ['CREDIT CARD (...9999)'];
+  const issues = collectDisconnectedAccountLabels(tracking);
+  assert.equal(issues.length, 2);
+  assert.deepEqual(issues.map((i) => i.syncStatus).sort(), ['needs_reconnect', 'not_in_monarch']);
 });
 
 console.log('All budget-tracking-pull tests passed.');

@@ -33,6 +33,18 @@ import {
   deliverCloseOuts,
   defaultCloseOutNotifyFn,
 } from './cycle-history.mjs';
+// Card/account → tracker mapping helpers. Pure (no fs), shared with the
+// Telegram bot's remap_account tool so "which card feeds which budget" has
+// one definition — including the label-shape heuristics below, which used to
+// live here and are re-exported for their existing callers/tests.
+import {
+  accountCatalogFromAccounts,
+  mappedLabelsMissingFromMonarch,
+  isCheckingLikeLabel,
+  isCreditCardLikeLabel,
+} from './account-mapping.mjs';
+
+export { isCheckingLikeLabel, isCreditCardLikeLabel };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -299,9 +311,67 @@ export function collectDisconnectedAccountLabels(tracking) {
       if (row?.syncStatus) rows.push({ label: row.label, syncStatus: row.syncStatus, lastUpdated: row.lastUpdated || null });
     }
   };
+  // A mapping pointing at an account Monarch no longer has is reported on the
+  // same channel as a card that stopped syncing, and is strictly worse: those
+  // charges are not late, they are never arriving. It is a separate field
+  // rather than a cardBalances row because there is no balance to carry, and
+  // a null-balance row would wander into the card-debt sums.
+  const addMissing = (list) => {
+    for (const label of list || []) {
+      if (label) rows.push({ label, syncStatus: 'not_in_monarch', lastUpdated: null });
+    }
+  };
   add(tracking?.joint?.cardBalances);
-  for (const tracker of Object.values(tracking?.personal || {})) add(tracker?.cardBalances);
+  addMissing(tracking?.joint?.mappedCardsNotFound);
+  for (const tracker of Object.values(tracking?.personal || {})) {
+    add(tracker?.cardBalances);
+    addMissing(tracker?.mappedCardsNotFound);
+  }
   return rows;
+}
+
+/**
+ * Record what accounts Monarch actually has, and flag any mapped label that
+ * matches none of them (2026-10-01).
+ *
+ * Both halves exist because of the same failure: the pull routes a charge to
+ * a tracker only when the charge's account label is in
+ * `mapping.jointAccountLabels` / `personalAccountLabels`, and
+ * cardBalancesForLabels only emits a row for a label that matched a live
+ * account. So a card that was replaced, re-linked, or renumbered in Monarch
+ * drops out of the budget silently — the tracker simply reads low, every day,
+ * with nothing anywhere saying why.
+ *
+ *   accountCatalog      — labels + types of every live account, so the bot's
+ *                         remap_account can resolve "the Chase card" against
+ *                         something real and refuse a card that isn't there,
+ *                         instead of writing a label on faith.
+ *   mappedCardsNotFound — per-tracker dangling labels, surfaced by
+ *                         get_budget_status / the dashboard and paged by
+ *                         maybeNotifyMonarchSync.
+ *
+ * Never touches `mapping` itself: that section is hand/bot-owned config, and
+ * guessing a correction to it is exactly what remap_account exists to ask
+ * about instead. An empty accounts list means the pull got nothing back (an
+ * API failure, not "every card is gone"), so it keeps the last real catalog
+ * and flags nothing.
+ */
+export function applyAccountInventoryToTracking(tracking, accounts, { asOf = null } = {}) {
+  if (!tracking) return tracking;
+  const labels = (accounts || []).map((a) => a?.displayName || a?.name || '').filter(Boolean);
+  const trackers = [['joint', tracking.joint], ...Object.entries(tracking.personal || {})];
+  if (!labels.length) return tracking;
+
+  tracking.accountCatalog = accountCatalogFromAccounts(accounts, { asOf });
+  const missing = mappedLabelsMissingFromMonarch(tracking.mapping, labels);
+  for (const [key, tracker] of trackers) {
+    if (!tracker) continue;
+    // Cleared, not left behind: a fixed mapping that keeps warning trains
+    // everyone to ignore the warning.
+    if (missing[key]?.length) tracker.mappedCardsNotFound = missing[key];
+    else delete tracker.mappedCardsNotFound;
+  }
+  return tracking;
 }
 
 export function monarchSyncFingerprint(issues) {
@@ -323,10 +393,12 @@ export function buildMonarchSyncAlertText(issues) {
   const lines = (issues || []).map((i) => {
     const name = String(i.label || 'Card').trim();
     const when = i.lastUpdated ? ` (last synced ${i.lastUpdated})` : '';
+    if (i.syncStatus === 'not_in_monarch') return `• ${name} is mapped to a budget but is no longer in Monarch — its charges are not being counted at all`;
     if (i.syncStatus === 'disconnected') return `• ${name} is disconnected in Monarch${when}`;
     if (i.syncStatus === 'stale') return `• ${name} has not synced since ${i.lastUpdated || 'an unknown date'}`;
     return `• ${name} needs a reconnect in Monarch${when}`;
   });
+  const dangling = (issues || []).some((i) => i.syncStatus === 'not_in_monarch');
   return [
     '⚠️ A Monarch spend account is not syncing.',
     'Logged budget totals are incomplete until it is reconnected — new charges after the last sync are missing. Do not treat the current number as the real cycle spend.',
@@ -334,6 +406,10 @@ export function buildMonarchSyncAlertText(issues) {
     ...lines,
     '',
     'Fix: reconnect the account in the Monarch app, then the next daily pull (or a manual pull) will pick it up.',
+    // A dangling mapping is not a reconnect job — the account is gone, so the
+    // fix is to point the budget at the card that replaced it. That is one
+    // Telegram message (remap_account), which is worth saying out loud.
+    ...(dangling ? ['If the card was replaced, tell me which card it is now ("remap Kevin personal to <card>") and I will repoint the budget.'] : []),
   ].join('\n');
 }
 
@@ -965,16 +1041,10 @@ function currentCycleStart(today) {
   return start;
 }
 
-const CREDIT_CARD_LABEL = /credit card|mastercard|visa|amex|american express|discover/i;
-const CHECKING_LIKE_LABEL = /spending account|checking|savings/i;
-
-export function isCheckingLikeLabel(label) {
-  return CHECKING_LIKE_LABEL.test(label || '');
-}
-
-export function isCreditCardLikeLabel(label) {
-  return CREDIT_CARD_LABEL.test(label || '') && !CHECKING_LIKE_LABEL.test(label || '');
-}
+// isCheckingLikeLabel / isCreditCardLikeLabel now live in
+// account-mapping.mjs (imported and re-exported at the top of this file) so
+// the bot's remap_account tool can reason about the same label shapes without
+// importing this fs-touching script. Behavior is unchanged.
 
 // Which mapped account defines the personal statement window. Ally checking
 // never does. goals.json / mapping notes have no designated "main" Chase card,
@@ -1676,8 +1746,12 @@ async function maybeNotifyCloseOut(args) {
 }
 
 async function maybeNotifyMonarchSync(args, tracking) {
+  // `disconnected` stays out on purpose (a card the household deactivated
+  // deliberately should not page every morning); `not_in_monarch` is in,
+  // because a mapping pointing at an account that no longer exists is a real
+  // breakage with a real fix, and nothing else would ever mention it.
   const issues = collectDisconnectedAccountLabels(tracking).filter(
-    (i) => i.syncStatus === 'needs_reconnect' || i.syncStatus === 'stale',
+    (i) => i.syncStatus === 'needs_reconnect' || i.syncStatus === 'stale' || i.syncStatus === 'not_in_monarch',
   );
   const statePath = args.monarchSyncAlertPath || monarchSyncAlertPath();
   if (!issues.length) {
@@ -1979,6 +2053,10 @@ async function main() {
       tracking.joint.cycleDays = 30;
       tracking.joint.cardBalances = cardBalancesForLabels(accounts, [...jointLabels], today);
     }
+    // What accounts Monarch actually has, plus any mapped label that matches
+    // none of them. Runs after the trackers above exist so the dangling flag
+    // lands on the tracker it belongs to.
+    applyAccountInventoryToTracking(tracking, accounts, { asOf: isoDate(today) });
     // Household corrections (reconcile_tracker) go on LAST, after the weeks
     // above were rebuilt from Monarch — that rebuild is exactly what would
     // otherwise erase a correction made yesterday, which is why the durable

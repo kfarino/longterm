@@ -629,12 +629,15 @@ function renderSpendTracker(label, tracker, drillId, plannedSpend) {
   const correctionLine = corrections.length
     ? `Includes a ${corrections.reduce((s, a) => s + Number(a.amount), 0) < 0 ? '−' : '+'}${fmt(Math.abs(corrections.reduce((s, a) => s + Number(a.amount), 0)))} correction: ${corrections.map((a) => a.reason).filter(Boolean).join('; ')}`
     : null;
-  const metaBits = [cycleRange ? `Cycle: ${cycleRange}` : null, balanceLine, correctionLine].filter(Boolean);
+  const mappingLine = formatMappingIssueLine(tracker.mappedCardsNotFound);
+  const metaBits = [cycleRange ? `Cycle: ${cycleRange}` : null, balanceLine, mappingLine, correctionLine].filter(Boolean);
   const metaHtml = metaBits.length
     ? `<div class="goal-note" style="margin-top:6px">${metaBits.join(' · ')}</div>`
     : '';
   if (!tracker.weeks || !tracker.weeks.length) {
-    const sync = formatAccountSyncLine(tracker.cardBalances);
+    // A dangling mapping counts here too: nothing logged because nothing is
+    // being routed is not the same as nothing spent.
+    const sync = formatAccountSyncLine(tracker.cardBalances) || mappingLine;
     const emptyMsg = sync
       ? `${sync}. Do not treat this as $0 spend.`
       : 'No weeks logged yet this cycle.';
@@ -836,6 +839,24 @@ function formatAccountSyncLine(cardBalances) {
     return `${name} needs a reconnect in Monarch${when}`;
   });
   return `${bits.join('; ')} — logged spend may be incomplete`;
+}
+
+/**
+ * A mapped card the daily pull found no Monarch account for — card replaced,
+ * re-linked, renumbered (budget-tracking-pull.mjs's
+ * applyAccountInventoryToTracking). Its charges reach no tracker at all, so
+ * this panel's total is simply low with nothing else saying why: cardBalances
+ * only carries a row for a label that MATCHED a live account. Stated here for
+ * the same reason a reconcile correction is (see renderSpendTracker) — a
+ * number that disagrees with reality has to carry the reason. The fix is the
+ * Telegram bot's remap_account.
+ */
+function formatMappingIssueLine(mappedCardsNotFound) {
+  const labels = (mappedCardsNotFound || []).filter(Boolean);
+  if (!labels.length) return null;
+  const names = labels.map((l) => String(l).trim()).join('; ');
+  const verb = labels.length === 1 ? 'is' : 'are';
+  return `${names} ${verb} mapped here but no longer in Monarch — those charges are not counted, so logged spend is incomplete`;
 }
 
 function formatCardBalanceLine(cardBalances) {

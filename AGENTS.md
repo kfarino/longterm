@@ -76,7 +76,10 @@ attribution. Every one has happened (or was one mistake away).
 - `budget_tracking.json` mapping → **display-name labels** from `get_transactions` (e.g. `"CREDIT CARD (...3939)"`)
 
 Do not mix them. Adding Hanna's cards means new mapping entries in the right
-file — usually no code change.
+file — usually no code change. The Telegram tool for the
+`budget_tracking.json` side is `remap_account` (see below); it refuses a bare
+numeric id outright, because one written there matches no transaction ever
+and still looks like a successful remap.
 
 ### Current-cycle view vs accumulating ledger
 - `budget_tracking.json` is **fully rebuilt** each pull for the **current**
@@ -256,6 +259,37 @@ the reply path could see Google at all. Rules that follow from it:
   **stated** wherever the total is shown (`get_budget_status`, the dashboard
   spend panel) — a number that deliberately disagrees with Monarch and says
   nothing about why reads as a bug in the pull.
+- A card mapped to the **wrong or an old account** — a card replaced or
+  re-linked in Monarch, charges from a card not showing up in a budget →
+  `remap_account`. It edits `budget_tracking.json`'s `mapping` section (the
+  one hand/bot-owned island there: the pull mutates the loaded object and
+  writes it back, so a mapping edit survives the morning rebuild) — **not**
+  `transaction_overrides.json`, because this is the routing table the numbers
+  are built from, not a correction on top of them. It is not
+  `reconcile_tracker` (a wrong total), not `reassign_transaction` (a real
+  charge on the wrong budget). Pure helpers: `scripts/account-mapping.mjs`,
+  which also owns `isCheckingLikeLabel`/`isCreditCardLikeLabel` now.
+  Load-bearing: it verifies the card against `accountCatalog` (written by the
+  pull) and refuses an unknown one — a label matching no Monarch account
+  routes **nothing, silently**, which is the bug it exists to fix, not to
+  recreate; with no catalog yet it says it could not verify rather than
+  implying it did; it asks rather than guessing which card is being replaced;
+  it refuses a card already mapped to another tracker (two trackers on one
+  label double-counts); the `personalCycle` anchor moves with the card it
+  named, or the personal cycle window silently shifts; and the reply says the
+  logged totals move on the **next pull** — the mapping only changes future
+  routing, and this cycle's `weeks[]` were already built from the old card.
+  Do not "fix" that by recomputing the cycle from the ledger: that is a
+  second math path for a tracker total.
+- A mapped label the pull finds no live Monarch account for is flagged as
+  `tracker.mappedCardsNotFound` by `applyAccountInventoryToTracking` and must
+  stay stated everywhere a total is: `get_budget_status`
+  (`trackerSyncWarning`), the dashboard spend panel, the Sun/Thu recap, and
+  the daily Monarch sync alert (`not_in_monarch` pages like
+  `needs_reconnect`; `disconnected` still does not). It is cleared when the
+  mapping is fixed — a warning that outlives its cause trains everyone to
+  ignore warnings. An empty `get_accounts` response means a failed pull, not
+  that every card is gone, so nothing is flagged then.
 - A decision that has been **settled** (an expected refund that posted, a
   question that got answered) → `resolve_decision`, not a second `log_decision`
   entry saying the first is done. It sets `status: "resolved"` and every "open
@@ -264,7 +298,8 @@ the reply path could see Google at all. Rules that follow from it:
   helper, never per-consumer: a decision that goes quiet in one place and keeps
   talking in another is the bug this replaced. Resolved entries stay in
   `goals.json` as history; do not delete them.
-- An ask no existing tool can fulfill → `request_capability`. That files
+- An ask no existing tool can fulfill → `request_capability` (not a wrong
+  card mapping — that is `remap_account` now). That files
   `data/bot-capability-requests.json` and detaches `scripts/claude-code-run.mjs`
   (`claude -p`). A launch failure must not kill the poll. Never invent a
   human-review gate for this either.

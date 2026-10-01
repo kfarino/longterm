@@ -82,6 +82,7 @@ const exportNames = [
   'toggleExpPanel', 'initReady', 'showRowHTML',
   'groupShowsByAct', 'showsFindingsHTML',
   'formatCardBalanceLine', 'cardDebtOwed', 'liquidCashBreakdown',
+  'formatMappingIssueLine',
 ];
 
 export function loadDashboard(dataOverride, monthPlanEventsSeed, routineOverridesSeed) {

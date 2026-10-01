@@ -372,6 +372,44 @@ await test('renderSpendTracker: empty weeks on a disconnected card does not read
   assert.doesNotMatch(html, /No weeks logged yet this cycle/);
 });
 
+// A mapped card the pull found no Monarch account for (remap_account,
+// 2026-10-01). Nothing on screen would otherwise say why the total is low —
+// cardBalances only gets a row for a label that MATCHED a live account, so a
+// dangling mapping is invisible in the one panel it most affects. Same rule
+// as a reconcile correction: a total that disagrees with reality states why.
+await test('renderSpendTracker: names a mapped card that is no longer in Monarch', () => {
+  const d = loadDashboard();
+  const html = d.renderSpendTracker('Kevin personal', {
+    weeks: [{ actual: 104, days: 7 }],
+    cycleStart: '2026-09-16',
+    cycleDays: 30,
+    target: 1000,
+    cardBalances: [{ label: 'Spending Account (...3333)', balance: 2911 }],
+    mappedCardsNotFound: ['CREDIT CARD (...1111)'],
+  }, 'drill-dangling');
+  assert.match(html, /CREDIT CARD \(\.\.\.1111\)/);
+  assert.match(html, /no longer in Monarch/i);
+  assert.match(html, /incomplete/i);
+
+  const plain = d.renderSpendTracker('Kevin personal', {
+    weeks: [{ actual: 104, days: 7 }], cycleStart: '2026-09-16', cycleDays: 30, target: 1000,
+  }, 'drill-plain-mapping');
+  assert.doesNotMatch(plain, /no longer in Monarch/i, 'silent when every mapped card is real');
+});
+
+await test('renderSpendTracker: nothing logged on a dangling mapping does not read as $0 spend', () => {
+  const d = loadDashboard();
+  const html = d.renderSpendTracker('Kevin personal', {
+    weeks: [],
+    cycleStart: '2026-09-16',
+    cycleDays: 30,
+    target: 1000,
+    mappedCardsNotFound: ['CREDIT CARD (...1111)'],
+  }, 'drill-dangling-empty');
+  assert.match(html, /Do not treat this as \$0 spend/);
+  assert.doesNotMatch(html, /No weeks logged yet this cycle/);
+});
+
 await test('renderSpendTracker: mixed cards+checking meta uses statement cycle + debt-only owe line', () => {
   const d = loadDashboard();
   const html = d.renderSpendTracker('Kevin personal', {

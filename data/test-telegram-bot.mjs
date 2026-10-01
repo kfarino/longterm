@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT, BOT_SYSTEM_PROMPT, isGenericUpdateRequest } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, reconcile_tracker, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, reconcile_tracker, remap_account, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
 import { loadBudgetStatus } from '../scripts/financial-context.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3411,6 +3411,330 @@ await asyncTest('reconcile_tracker via the bot persists the correction and moves
   const total = tracking.joint.weeks.reduce((s, w) => s + w.actual, 0);
   assert.equal(Math.round(total * 100) / 100, 3098, 'the live view moves now, not tomorrow morning');
   assert.equal(tracking.joint.adjustments[0].reason, 'Matched to the card statement');
+});
+
+// --- remap_account (2026-10-01) ---
+//
+// "Kevin's Chase card is mapped to an old card in Monarch — fix it." Nothing
+// could: get_budget_status/search_transactions only read already-routed data,
+// reconcile_tracker corrects a cycle total, add_manual_charge/
+// reassign_transaction create or move single charges. None of them touch
+// WHICH card feeds a tracker, which is `budget_tracking.json`'s `mapping`
+// section — the one hand/bot-owned island in an otherwise regenerated file
+// (the pull mutates joint/personal/travel and writes the same object back, so
+// a mapping edit survives the morning rebuild).
+//
+// The failure it fixes is silent by construction: the pull routes a charge to
+// a tracker only when the charge's account label is in the mapping, so a
+// stale label means those charges count nowhere and the tracker just reads
+// low. Fixture card labels here are invented (AGENTS.md §3).
+
+const remapTracking = () => ({
+  mapping: {
+    jointAccountLabels: ['Household Mastercard (...1111)'],
+    travelCategoryNames: ['Travel & Vacation'],
+    personalAccountLabels: {
+      kevin: ['CREDIT CARD (...2222)', 'CREDIT CARD (...3333)', 'Spending Account (...4444)'],
+      hanna: ['CREDIT CARD (...5555)'],
+    },
+    personalCycle: {
+      kevin: { accountLabel: 'CREDIT CARD (...2222)', startDay: 25 },
+      hanna: { startDay: 25 },
+    },
+  },
+  accountCatalog: {
+    asOf: '2026-10-01',
+    accounts: [
+      { label: 'Household Mastercard (...1111)', type: 'credit' },
+      { label: 'CREDIT CARD (...2222)', type: 'credit' },
+      { label: 'CREDIT CARD (...3333)', type: 'credit' },
+      { label: 'Spending Account (...4444)', type: 'depository' },
+      { label: 'CREDIT CARD (...5555)', type: 'credit' },
+      { label: 'Test Sapphire Card (...6666)', type: 'credit' },
+      { label: 'Test Brokerage (...7777)', type: 'brokerage' },
+    ],
+  },
+  joint: { label: 'Joint household', weeks: [], categories: [] },
+  personal: {
+    kevin: { label: 'Kevin personal', weeks: [], categories: [] },
+    hanna: { label: 'Hanna personal', weeks: [], categories: [] },
+  },
+  travel: { trips: [], unmatched: [] },
+});
+
+test('remap_account repoints a personal tracker at the right card', () => {
+  const result = remap_account(remapTracking(), {
+    tracker: 'kevin personal', card: 'Test Sapphire Card (...6666)', replaces: '2222',
+  }, 'hanna');
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.kevin, [
+    'Test Sapphire Card (...6666)', 'CREDIT CARD (...3333)', 'Spending Account (...4444)',
+  ]);
+  assert.match(result.reply, /Remapped ✓/);
+  assert.match(result.reply, /Test Sapphire Card \(\.\.\.6666\)/);
+  assert.match(result.reply, /CREDIT CARD \(\.\.\.2222\)/, 'name the card it replaced, not just the new one');
+  assert.doesNotMatch(result.reply, /review/i, 'there is no approval step');
+});
+
+test('remap_account says the logged total does not move until the next pull', () => {
+  // The mapping decides what FUTURE pulls route. This cycle's weeks were
+  // already built from the old card, and nothing here recomputes them — a
+  // reply implying the numbers just changed would be claiming an unverified
+  // write (AGENTS.md §2).
+  const result = remap_account(remapTracking(), { tracker: 'kevin', card: '6666', replaces: '2222' }, 'kevin');
+  assert.match(result.reply, /next (daily )?Monarch pull|next pull/i);
+  assert.doesNotMatch(result.reply, /recalculated|updated the total|total is now/i);
+});
+
+test('remap_account moves the statement-cycle anchor with the card', () => {
+  const result = remap_account(remapTracking(), { tracker: 'kevin', card: '6666', replaces: '2222' }, 'kevin');
+  assert.equal(result.tracking.mapping.personalCycle.kevin.accountLabel, 'Test Sapphire Card (...6666)');
+  assert.equal(result.tracking.mapping.personalCycle.kevin.startDay, 25);
+  assert.match(result.reply, /statement/i, 'a changed cycle anchor is stated, never silent');
+});
+
+test('remap_account asks which card it replaces when the tracker has several', () => {
+  const tracking = remapTracking();
+  const result = remap_account(tracking, { tracker: 'kevin', card: '6666' }, 'hanna');
+  assert.equal(result.needsClarification, true);
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.kevin, tracking.mapping.personalAccountLabels.kevin, 'nothing written while asking');
+  assert.match(result.reply, /CREDIT CARD \(\.\.\.2222\)/);
+  assert.match(result.reply, /CREDIT CARD \(\.\.\.3333\)/);
+});
+
+test('remap_account replaces without asking when the tracker has exactly one card', () => {
+  const result = remap_account(remapTracking(), { tracker: 'hanna', card: 'Test Sapphire Card (...6666)' }, 'hanna');
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.hanna, ['Test Sapphire Card (...6666)']);
+  assert.match(result.reply, /Remapped ✓/);
+});
+
+test('remap_account can add a second card instead of replacing one', () => {
+  const result = remap_account(remapTracking(), { tracker: 'hanna', card: '6666', action: 'add' }, 'hanna');
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.hanna, [
+    'CREDIT CARD (...5555)', 'Test Sapphire Card (...6666)',
+  ]);
+  assert.match(result.reply, /Mapped ✓/);
+});
+
+test('remap_account asks when told both to add a card and which card it replaces', () => {
+  // Contradictory: "add" means the existing cards stay. Silently ignoring one
+  // half would either leave a dead card mapped or drop a live one.
+  const tracking = remapTracking();
+  const result = remap_account(tracking, { tracker: 'kevin', card: '6666', replaces: '2222', action: 'add' }, 'kevin');
+  assert.equal(result.needsClarification, true);
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.kevin, tracking.mapping.personalAccountLabels.kevin);
+});
+
+test('remap_account refuses a card Monarch does not have, and names real candidates', () => {
+  // Verify before claiming: a label that matches no Monarch account routes
+  // nothing, forever, and nothing downstream would say so until the next
+  // morning's dangling-mapping check.
+  const tracking = remapTracking();
+  const result = remap_account(tracking, { tracker: 'kevin', card: 'Imaginary Bank (...9999)', replaces: '2222' }, 'kevin');
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.kevin, tracking.mapping.personalAccountLabels.kevin);
+  assert.match(result.reply, /Test Sapphire Card \(\.\.\.6666\)/, 'list what Monarch actually has');
+});
+
+test('remap_account asks which card when what was said matches several', () => {
+  const result = remap_account(remapTracking(), { tracker: 'kevin', card: 'credit card', replaces: '2222' }, 'kevin');
+  assert.equal(result.needsClarification, true);
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+});
+
+test('remap_account refuses a card that already feeds another budget', () => {
+  // One card, one tracker: the same label in two trackers double-counts every
+  // charge on it, and the pull's label-to-owner index silently picks one.
+  const result = remap_account(remapTracking(), { tracker: 'kevin', card: 'CREDIT CARD (...5555)', replaces: '2222' }, 'kevin');
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+  assert.match(result.reply, /hanna/i);
+  assert.match(result.reply, /twice|double/i);
+});
+
+test('remap_account reports a card that already feeds this budget instead of rewriting it', () => {
+  const result = remap_account(remapTracking(), { tracker: 'kevin', card: 'CREDIT CARD (...3333)', replaces: '2222' }, 'kevin');
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+  assert.match(result.reply, /already/i);
+});
+
+test('remap_account refuses a numeric Monarch account id — that is the net-worth scheme', () => {
+  // AGENTS.md §2: get_accounts returns numeric ids (accounts.json), while the
+  // spend trackers match the get_transactions display label. A numeric id
+  // written here would match no transaction ever.
+  const result = remap_account(remapTracking(), { tracker: 'kevin', card: '900000000000000002', replaces: '2222' }, 'kevin');
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+  assert.match(result.reply, /display name|name Monarch shows/i);
+});
+
+test('remap_account names the budgets it has when the tracker is unknown', () => {
+  const result = remap_account(remapTracking(), { tracker: 'barclays', card: '6666' }, 'kevin');
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+  assert.match(result.reply, /joint/);
+  assert.match(result.reply, /kevin/);
+});
+
+test('remap_account asks which budget when none was named', () => {
+  const result = remap_account(remapTracking(), { card: '6666' }, 'kevin');
+  assert.equal(result.needsClarification, true);
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+});
+
+test('remap_account refuses rather than guessing when the mapping is unreadable', () => {
+  const result = remap_account({ joint: {}, personal: {} }, { tracker: 'kevin', card: '6666' }, 'kevin');
+  assert.doesNotMatch(result.reply, /Remapped ✓/);
+  assert.match(result.reply, /can't read|cannot read/i);
+});
+
+test('remap_account swaps the joint card too', () => {
+  const result = remap_account(remapTracking(), { tracker: 'joint', card: '6666', replaces: '1111' }, 'hanna');
+  assert.deepEqual(result.tracking.mapping.jointAccountLabels, ['Test Sapphire Card (...6666)']);
+});
+
+test('remap_account says it could not verify the card when no catalog has been pulled yet', () => {
+  // No accountCatalog = the pull has never run here. "I have never seen your
+  // account list" and "that card does not exist" are different answers, and
+  // writing a label on faith without saying so is how a typo becomes a
+  // tracker that silently reads $0.
+  const tracking = remapTracking();
+  delete tracking.accountCatalog;
+  const result = remap_account(tracking, { tracker: 'kevin', card: 'Test Sapphire Card (...6666)', replaces: '2222' }, 'kevin');
+  assert.deepEqual(result.tracking.mapping.personalAccountLabels.kevin[0], 'Test Sapphire Card (...6666)');
+  assert.match(result.reply, /couldn't verify|could not verify/i);
+  assert.match(result.reply, /exactly/i, 'say what has to be true for this to work');
+  assert.match(result.reply, /tomorrow|next (daily )?pull/i, "the morning pull's dangling-mapping check is what closes this loop");
+});
+
+test('remap_account clears a dangling-mapping flag it just fixed', () => {
+  // The flag means "this mapped label matches no Monarch account". Having
+  // just repointed the tracker at a real one, leaving the warning up would
+  // keep telling the household their budget is broken after they fixed it.
+  const tracking = remapTracking();
+  tracking.personal.kevin.mappedCardsNotFound = ['CREDIT CARD (...2222)'];
+  const result = remap_account(tracking, { tracker: 'kevin', card: '6666', replaces: '2222' }, 'kevin');
+  assert.equal(result.tracking.personal.kevin.mappedCardsNotFound, undefined);
+});
+
+test('remap_account keeps a dangling flag for a different card it did not touch', () => {
+  const tracking = remapTracking();
+  tracking.personal.kevin.mappedCardsNotFound = ['CREDIT CARD (...2222)', 'Spending Account (...4444)'];
+  const result = remap_account(tracking, { tracker: 'kevin', card: '6666', replaces: '2222' }, 'kevin');
+  assert.deepEqual(result.tracking.personal.kevin.mappedCardsNotFound, ['Spending Account (...4444)']);
+});
+
+test('get_budget_status states a mapped card that is no longer in Monarch', () => {
+  const ctx = budgetCtx({ total: 1200, mappedCardsNotFound: ['CREDIT CARD (...2222)'] });
+  const { reply } = get_budget_status(ctx, {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /CREDIT CARD \(\.\.\.2222\)/);
+  assert.match(reply, /no longer in Monarch/i);
+  assert.match(reply, /incomplete/i);
+  assert.doesNotMatch(reply, /on track/, 'never call an incomplete total on track');
+});
+
+test('loadBudgetStatus carries a dangling mapping flag through to the bot reply', () => {
+  // The real path: budget_tracking.json -> loadBudgetStatus -> the reply. A
+  // pass-through dropped here would silently restore the old behavior of a
+  // low total with nothing saying why.
+  const dir = path.join(tmpRoot, 'load-budget-status-dangling-mapping');
+  fs.mkdirSync(dir, { recursive: true });
+  const btPath = path.join(dir, 'budget_tracking.json');
+  const goalsPath = path.join(dir, 'goals.json');
+  fs.writeFileSync(btPath, JSON.stringify({
+    joint: {
+      label: 'Joint household',
+      targetExpenseKey: 'Family budget',
+      cycleStart: '2026-08-25',
+      cycleDays: 30,
+      weeks: [{ weekOf: 'Aug 25-31', actual: 400, days: 7 }],
+      categories: [],
+      mappedCardsNotFound: ['Household Mastercard (...1111)'],
+    },
+    personal: {
+      kevin: {
+        label: 'Kevin personal',
+        targetExpenseKey: 'Kevin personal',
+        cycleStart: '2026-08-25',
+        cycleDays: 30,
+        weeks: [{ weekOf: 'Aug 25-31', actual: 100, days: 7 }],
+        categories: [],
+        mappedCardsNotFound: ['CREDIT CARD (...2222)'],
+      },
+    },
+    travel: { trips: [], unmatched: [] },
+  }, null, 2));
+  fs.writeFileSync(goalsPath, JSON.stringify({
+    owners: [{ id: 'kevin', displayName: 'Kevin' }],
+    phases: [{ id: 1, expenses: { 'Family budget': 5500, 'Kevin personal': 1000 } }],
+  }, null, 2));
+
+  const status = loadBudgetStatus(btPath, goalsPath);
+  assert.deepEqual(status.joint.mappedCardsNotFound, ['Household Mastercard (...1111)']);
+  assert.deepEqual(status.personal.kevin.mappedCardsNotFound, ['CREDIT CARD (...2222)']);
+  const { reply } = get_budget_status({ budgetStatus: status }, {}, new Date('2026-09-05T12:00:00'));
+  assert.match(reply, /Household Mastercard \(\.\.\.1111\)/);
+  assert.match(reply, /CREDIT CARD \(\.\.\.2222\)/);
+});
+
+test('TOOL_DEFS declares remap_account and keeps it apart from the other money tools', () => {
+  const remap = TOOL_DEFS.find((t) => t.name === 'remap_account');
+  assert.ok(remap, 'the bot cannot call a tool that is not declared');
+  assert.deepEqual(remap.input_schema.required, ['tracker', 'card']);
+  assert.match(remap.description, /reconcile_tracker/, 'a wrong total is a different tool');
+  assert.match(remap.description, /net worth|accounts\.json/i, 'net-worth mapping is not this tool');
+  const capability = TOOL_DEFS.find((t) => t.name === 'request_capability');
+  assert.match(capability.description, /remap_account/, 'stop filing a capability request for something that exists now');
+});
+
+test('BOT_SYSTEM_PROMPT routes a wrong card mapping to remap_account', () => {
+  assert.match(BOT_SYSTEM_PROMPT, /remap_account/);
+  assert.match(BOT_SYSTEM_PROMPT, /wrong card|old card/i);
+});
+
+await asyncTest('remap_account via the bot persists the mapping the morning pull will read', async () => {
+  const dir = path.join(tmpRoot, 'remap-account-kevin');
+  const paths = writeFixture(dir, {
+    updates: { ok: true, result: [msg(1, { fromId: 111, text: 'kevins chase card is mapped to the old card — point it at Test Sapphire Card (...6666)' })] },
+    budgetTracking: {
+      mapping: {
+        jointAccountLabels: ['Household Mastercard (...1111)'],
+        travelCategoryNames: ['Travel & Vacation'],
+        personalAccountLabels: { kevin: ['CREDIT CARD (...2222)', 'Spending Account (...4444)'] },
+        personalCycle: { kevin: { accountLabel: 'CREDIT CARD (...2222)', startDay: 25 } },
+      },
+      accountCatalog: {
+        asOf: '2026-10-01',
+        accounts: [
+          { label: 'Household Mastercard (...1111)', type: 'credit' },
+          { label: 'Spending Account (...4444)', type: 'depository' },
+          { label: 'Test Sapphire Card (...6666)', type: 'credit' },
+        ],
+      },
+      joint: { label: 'Joint household', targetExpenseKey: 'Family budget', cycleStart: '2026-08-25', cycleDays: 30, weeks: [{ actual: 100, days: 7 }], categories: [] },
+      personal: {
+        kevin: {
+          label: 'Kevin personal',
+          targetExpenseKey: 'Kevin personal',
+          cycleStart: '2026-08-25',
+          cycleDays: 30,
+          weeks: [{ actual: 50, days: 7 }],
+          categories: [],
+          mappedCardsNotFound: ['CREDIT CARD (...2222)'],
+        },
+      },
+      travel: { trips: [], unmatched: [] },
+    },
+  });
+  const mockAnthropic = async () => ({
+    content: [
+      { type: 'tool_use', name: 'remap_account', input: { tracker: 'kevin', card: 'Test Sapphire Card (...6666)', replaces: 'CREDIT CARD (...2222)' } },
+    ],
+  });
+  const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic, dryRun: false }));
+  assert.match(result.sentReplies[0], /Remapped ✓/);
+
+  const tracking = JSON.parse(fs.readFileSync(paths.budgetTrackingPath, 'utf8'));
+  assert.deepEqual(tracking.mapping.personalAccountLabels.kevin, ['Test Sapphire Card (...6666)', 'Spending Account (...4444)']);
+  assert.equal(tracking.mapping.personalCycle.kevin.accountLabel, 'Test Sapphire Card (...6666)');
+  assert.equal(tracking.personal.kevin.mappedCardsNotFound, undefined, 'the warning the household just acted on is cleared');
+  assert.deepEqual(tracking.personal.kevin.weeks, [{ actual: 50, days: 7 }], 'a remap does not touch logged spend');
 });
 
 console.log('All tests passed.');

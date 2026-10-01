@@ -800,6 +800,10 @@ await asyncTest('recap prompt is four sections including Shows, never Health, an
   assert.match(RECAP_SYSTEM_PROMPT, /travelThisCycle/);
   assert.match(RECAP_SYSTEM_PROMPT, /cardBalances/);
   assert.match(RECAP_SYSTEM_PROMPT, /syncStatus/);
+  // A mapped card that is no longer in Monarch (remap_account, 2026-10-01):
+  // its charges reach no tracker at all, so the recap's Budget figure is
+  // incomplete for the same reason a stale sync makes it incomplete.
+  assert.match(RECAP_SYSTEM_PROMPT, /mappedCardsNotFound/);
   assert.match(RECAP_SYSTEM_PROMPT, /Do not include a Health section/);
   assert.match(RECAP_SYSTEM_PROMPT, /Shows:/);
 });
