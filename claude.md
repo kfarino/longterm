@@ -56,8 +56,8 @@ Longterm/
                              category — excluded from the other two even when it
                              lands on the same card). Each of joint/personal.*
                              has its own `source` ("monarch" or "manual") and
-                             `cycleStart`/`cycleDays` — they're on independent
-                             clocks until Barclays is linked and mapped (see below).
+                             `cycleStart`/`cycleDays` — joint and personal share
+                             the 25th-to-24th cycle (Barclays statement clock).
     cycle_history.json     — closed joint-cycle snapshots (newest first, cap 6).
                              Generated on 25th rollover / backfill. Gitignored.
                              Categories are name+amount only — no merchants.

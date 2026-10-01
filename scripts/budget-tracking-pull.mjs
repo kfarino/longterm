@@ -871,18 +871,13 @@ function accountLabel(transaction) {
   return transaction.account?.displayName || transaction.account?.name || '';
 }
 
-// Most recent 25th-of-month on or before `today` — the Barclays statement-period
-// convention. This is specific to that card; do not reuse it for other cards.
+// Most recent 25th-of-month on or before `today` — the household statement
+// cycle (joint Barclays, and the personal default unless mapping.personalCycle
+// sets a different startDay).
 function currentCycleStart(today) {
   const start = new Date(today.getFullYear(), today.getMonth(), 25);
   if (today.getDate() < 25) start.setMonth(start.getMonth() - 1);
   return start;
-}
-
-// Fallback when mapping.personalCycle has no startDay/closeDay. Checking/cash
-// never defines a personal window — see resolvePersonalCycle.
-function currentMonthStart(today) {
-  return new Date(today.getFullYear(), today.getMonth(), 1);
 }
 
 const CREDIT_CARD_LABEL = /credit card|mastercard|visa|amex|american express|discover/i;
@@ -929,16 +924,16 @@ function personalStartDay(cycleCfg) {
   return null;
 }
 
-// Personal cycle is independent of joint's 25th. mapping.personalCycle[owner]
-// may name the credit card and the statement-window start day (same convention
-// as currentCycleStart). No startDay → calendar month. Monarch get_accounts
-// does not expose a statement period, so this is the durable config.
+// Personal cycle matches joint's 25th unless mapping.personalCycle[owner]
+// names a different statement-window start day (same convention as
+// currentCycleStart). Monarch get_accounts does not expose a statement
+// period, so this is the durable config.
 export function resolvePersonalCycle(today, ownerId, mapping) {
   const labels = mapping?.personalAccountLabels?.[ownerId] || [];
   const cycleCfg = mapping?.personalCycle?.[ownerId] || {};
   const anchorLabel = personalCycleAnchorLabel(labels, cycleCfg);
-  const startDay = personalStartDay(cycleCfg);
-  const start = startDay ? cycleStartOnDay(today, startDay) : currentMonthStart(today);
+  const startDay = personalStartDay(cycleCfg) || 25;
+  const start = cycleStartOnDay(today, startDay);
   const next = nextMonthSameDay(start);
   return {
     anchorLabel,
@@ -1148,7 +1143,8 @@ function matchFavorite(merchant, favorites) {
 // loop. cycleStart (2026-08-05): the main spend-processing loop only counts
 // transactions within the current joint cycle (weekBucket's `b >= 0` guard),
 // but the fetched transaction window starts at the earliest of joint and each
-// personal cycle (personal may be a statement window or calendar month) —
+// personal cycle (personal matches joint's 25th unless mapping.personalCycle
+// sets a different startDay) —
 // without this filter a refund from the tail end of the PRIOR cycle would leak
 // into "this cycle"'s refunds list. Any transaction dated before cycleStart is
 // skipped.
@@ -1762,7 +1758,7 @@ async function main() {
 
       if (personalOwnerId && personalState[personalOwnerId]) {
         const state = personalState[personalOwnerId];
-        const ownerCycleStart = personalCycleByOwner[personalOwnerId]?.start || currentMonthStart(today);
+        const ownerCycleStart = personalCycleByOwner[personalOwnerId]?.start || currentCycleStart(today);
         let b = weekBucket(txnDate, ownerCycleStart);
         // One-off reassignments from the joint card can land a few days before
         // the personal calendar-month cycle (e.g. Jul 28–30 charges moved to

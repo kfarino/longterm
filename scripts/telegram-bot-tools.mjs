@@ -1615,7 +1615,7 @@ export const TOOL_DEFS = [
         period: {
           type: 'string',
           enum: ['current', 'last_month', 'last_3_months', 'all'],
-          description: 'Which window to search. "current" (the default) is the live cycle. "last_month" is the previous closed cycle — the joint budget runs 25th-to-24th, so for joint/travel that means the prior 25th-to-24th cycle, and for a personal tracker the prior calendar month. "last_3_months" is this cycle plus the two before it. "all" is everything stored. Pass a period whenever the question is about a past month rather than right now.',
+          description: 'Which window to search. "current" (the default) is the live cycle. "last_month" is the previous closed 25th-to-24th cycle (joint, personal, and travel share that clock). "last_3_months" is this cycle plus the two before it. "all" is everything stored. Pass a period whenever the question is about a past month rather than right now.',
         },
         since: { type: 'string', description: 'Start of an explicit date range, YYYY-MM-DD, inclusive. Overrides period. Use this when someone names actual dates.' },
         until: { type: 'string', description: 'End of an explicit date range, YYYY-MM-DD, inclusive. Defaults to today when only since is given.' },

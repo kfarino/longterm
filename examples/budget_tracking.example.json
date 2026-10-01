@@ -66,7 +66,7 @@
     "unmatched": []
   },
   "mapping": {
-    "notes": "get_transactions uses account display-name labels (not numeric ids). Fill after Monarch link. personalAccountLabels maps owner id → label array. personalCycle optionally maps owner id → { accountLabel, startDay } — startDay is the first day of that owner's personal statement window (same convention as joint's 25th). Checking/cash labels never define the window. Monarch get_accounts does not expose statement due dates; dueDate is stored on cardBalances only when the account object carries one.",
+    "notes": "get_transactions uses account display-name labels (not numeric ids). Fill after Monarch link. personalAccountLabels maps owner id → label array. personalCycle optionally maps owner id → { accountLabel, startDay } — startDay is the first day of that owner's personal statement window. Default (no startDay) is the 25th, same as joint. Checking/cash labels never define the window. Monarch get_accounts does not expose statement due dates; dueDate is stored on cardBalances only when the account object carries one.",
     "jointAccountLabels": [],
     "personalAccountLabels": {
       "teddy": []

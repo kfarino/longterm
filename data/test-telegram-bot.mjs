@@ -2671,7 +2671,7 @@ await asyncTest('search_transactions: explicit since/until searches exactly that
   assert.ok(!reply.includes('2026-08-19'), 'Aug 19 is outside the requested range');
 });
 
-await asyncTest('search_transactions: a personal "last month" uses the calendar month, not the joint cycle', async () => {
+await asyncTest('search_transactions: a personal "last month" uses the same 25th cycle as joint', async () => {
   const dir = path.join(tmpRoot, 'search-personal-month');
   const paths = writeFixture(dir, {
     updates: { ok: true, result: [msg(1, { fromId: 222, text: '@TestBot what did I spend on coffee last month?' })] },
@@ -2683,7 +2683,7 @@ await asyncTest('search_transactions: a personal "last month" uses the calendar 
   const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient, now: NOW_SEPT }));
   const reply = result.sentReplies[0];
   assert.ok(reply.includes('Fixture Coffee'), 'the personal row from August should be found');
-  assert.match(reply, /Aug 1/, 'personal runs on calendar months, so the window starts Aug 1');
+  assert.match(reply, /Jul 25/, 'personal last-month is the prior 25th-to-24th cycle');
   assert.ok(reply.includes('personal:kevin'), 'the reply should say whose tracker it was on');
 });
 

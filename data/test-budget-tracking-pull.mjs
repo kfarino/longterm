@@ -574,13 +574,13 @@ test('resolvePersonalCycle uses mapping startDay on the first credit card, never
     personalAccountLabels: { kevin: ['Spending Account (...3333)'] },
   });
   assert.equal(allyOnly.anchorLabel, null);
-  assert.equal(allyOnly.cycleStart, '2026-09-01');
-  assert.equal(allyOnly.cycleDays, 30);
+  assert.equal(allyOnly.cycleStart, '2026-08-25', 'no startDay → same 25th as joint, even with no credit card');
+  assert.equal(allyOnly.cycleDays, 31);
 
   const hanna = resolvePersonalCycle(new Date(2026, 8, 20), 'hanna', mapping);
   assert.equal(hanna.anchorLabel, 'CREDIT CARD (...4444)');
-  assert.equal(hanna.cycleStart, '2026-09-01', 'Hanna has no personalCycle startDay — calendar month');
-  assert.equal(hanna.cycleDays, 30);
+  assert.equal(hanna.cycleStart, '2026-08-25', 'Hanna has no personalCycle startDay — same 25th as joint');
+  assert.equal(hanna.cycleDays, 31);
 });
 
 test('resolvePersonalCycle picks the first credit-card label when two cards share no designated main', () => {
@@ -591,7 +591,7 @@ test('resolvePersonalCycle picks the first credit-card label when two cards shar
   };
   const resolved = resolvePersonalCycle(new Date(2026, 8, 20), 'kevin', mapping);
   assert.equal(resolved.anchorLabel, 'CREDIT CARD (...2222)', 'first listed credit card, not Ally');
-  assert.equal(resolved.cycleStart, '2026-09-01', 'no startDay → calendar month, not a guessed Chase close day');
+  assert.equal(resolved.cycleStart, '2026-08-25', 'no startDay → joint 25th, not a guessed Chase close day');
 });
 
 test('resolvePersonalCycle accepts closeDay as startDay + 1', () => {

@@ -2,7 +2,7 @@
 // bot's search_transactions.
 //
 // budget_tracking.json is a *view*: fully rebuilt on every pull for the current
-// joint cycle / personal month / live trips. On the 25th it stops describing
+// joint/personal cycle (25th-to-24th) / live trips. On the 25th it stops describing
 // last month entirely, and cycle_history.json deliberately keeps name+amount
 // category totals only (no merchants), so "what did we spend at X last month"
 // had no data to answer from at all once a cycle rolled over.
@@ -209,10 +209,9 @@ function jointCycleStartFor(today) {
 
 /**
  * Turn what someone asked for ("last month", or explicit dates) into a real
- * window, honoring the fact that joint and personal run on different clocks:
- * joint on 25th-to-24th statement cycles, personal on calendar months. The
- * returned `label` names the actual dates so a reply can state which window it
- * searched rather than leaving the convention implicit.
+ * window. Joint and personal both run 25th-to-24th, same household clock.
+ * The returned `label` names the actual dates so a reply can state which
+ * window it searched rather than leaving the convention implicit.
  *
  * `isCurrent` means "the live window" — the caller should keep reading
  * budget_tracking.json for that one, since it carries manual cash charges the
@@ -241,14 +240,6 @@ export function resolveSearchWindow({
   }
 
   if (period === 'last_month') {
-    if (tracker === 'personal') {
-      const firstOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const lastOfPrevMonth = new Date(firstOfThisMonth.getTime() - 86400000);
-      const firstOfPrevMonth = new Date(lastOfPrevMonth.getFullYear(), lastOfPrevMonth.getMonth(), 1);
-      const startDate = isoDateLocal(firstOfPrevMonth);
-      const endDate = isoDateLocal(lastOfPrevMonth);
-      return { startDate, endDate, isCurrent: false, label: windowLabel(startDate, endDate) };
-    }
     const startDate = previousJointCycleStarts(cycleStart, 1)[0];
     const endDate = shiftDays(cycleStart, -1);
     return { startDate, endDate, isCurrent: false, label: windowLabel(startDate, endDate) };

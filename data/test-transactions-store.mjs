@@ -206,13 +206,10 @@ test('last_month with no tracker named follows the joint cycle convention', () =
   assert.equal(w.endDate, '2026-08-24');
 });
 
-test('last_month on a personal tracker is the prior calendar month, which is its own clock', () => {
-  // Joint runs 25th-to-24th, personal runs calendar months. Answering a
-  // personal question over the joint window would quietly report the wrong
-  // three weeks.
+test('last_month on a personal tracker is the same prior 25th-to-24th cycle as joint', () => {
   const w = resolveSearchWindow({ period: 'last_month', tracker: 'personal', jointCycleStart: '2026-08-25', today: TODAY });
-  assert.equal(w.startDate, '2026-08-01');
-  assert.equal(w.endDate, '2026-08-31');
+  assert.equal(w.startDate, '2026-07-25');
+  assert.equal(w.endDate, '2026-08-24');
 });
 
 test('the window carries a human label naming the real dates it searched', () => {
