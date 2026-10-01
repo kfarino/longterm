@@ -21,6 +21,7 @@ import { scoreShowsLikeness } from './spotify-likeness.mjs';
 import { parseShowsFromText, dedupeShows, takeTopShows } from './show-parse.mjs';
 import { readActRatings, setActRating } from './spotify-act-ratings.mjs';
 import { ticketmasterEnvPath } from './longterm-paths.mjs';
+import { add_todo, mark_todo_done } from './telegram-bot-tools.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..');
@@ -32,6 +33,7 @@ const defaultVenuesToFollowPath = path.join(repoRoot, 'data', 'venues_to_follow.
 const defaultUpcomingShowsCachePath = path.join(repoRoot, 'data', 'upcoming_shows_cache.json');
 const defaultSpotifyTasteDir = path.join(repoRoot, 'data', 'spotify');
 const defaultGoalsPath = path.join(repoRoot, 'data', 'goals.json');
+const defaultTodosPath = path.join(repoRoot, 'data', 'todos.json');
 const PORT = Number(process.env.PORT) || 4200;
 const EMPTY_ROUTINE_OVERRIDES = { family_dinner: null, date_night: null, weekend_social: null };
 
@@ -184,6 +186,20 @@ export function readVenuesToFollow(venuesPath) {
 // data.js rebuild. Reading this live means a star rating is visible on the
 // very next page reload. Same missing-file/corrupt-file degrade-quietly
 // shape as readVenuesToFollow above.
+export function readTodos(todosPath) {
+  if (!fs.existsSync(todosPath)) return { items: [], weeklyGoals: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(todosPath, 'utf8'));
+    return {
+      ...parsed,
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      weeklyGoals: Array.isArray(parsed.weeklyGoals) ? parsed.weeklyGoals : [],
+    };
+  } catch {
+    return { items: [], weeklyGoals: [] };
+  }
+}
+
 export function readFavoritePlaces(favoritePlacesPath) {
   if (!fs.existsSync(favoritePlacesPath)) return { places: [], recentDiningActivity: [] };
   try {
@@ -291,6 +307,8 @@ export function createServer(
   favoritePlacesPath = defaultFavoritePlacesPath,
   venuesToFollowPath = defaultVenuesToFollowPath,
   upcomingShowsCachePath = defaultUpcomingShowsCachePath,
+  todosPath = defaultTodosPath,
+  goalsPath = defaultGoalsPath,
 ) {
   return http.createServer(async (req, res) => {
     const urlPath = req.url.split('?')[0];
@@ -366,8 +384,67 @@ export function createServer(
       return;
     }
 
-    // The one write route in this server — see ratePlace/rateVenue above for
-    // why it patches two files for a restaurant rating but one for a venue.
+    // Live to-do list (2026-10-01): Planner can add and mark done, same
+    // todos.json Georgina reads/writes. GET is live so a Telegram add shows
+    // without waiting for data.js; POST uses add_todo / mark_todo_done so
+    // both writers share one shape.
+    if (urlPath === '/api/todos' && req.method === 'GET') {
+      sendJson(res, 200, readTodos(todosPath));
+      return;
+    }
+
+    if (urlPath === '/api/todos' && req.method === 'POST') {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        res.writeHead(400); res.end('Invalid JSON body'); return;
+      }
+      const title = typeof body.title === 'string' ? body.title : '';
+      const owner = typeof body.owner === 'string' ? body.owner.trim() : '';
+      const knownOwners = ownerIdsFromGoals(goalsPath);
+      if (!title.trim()) {
+        sendJson(res, 400, { ok: false, error: 'Missing title' });
+        return;
+      }
+      if (!knownOwners.includes(owner)) {
+        sendJson(res, 400, { ok: false, error: `Unknown owner "${owner}". I have: ${knownOwners.join(', ')}` });
+        return;
+      }
+      const todos = readTodos(todosPath);
+      const result = add_todo(todos, { title, owner });
+      if (/^Couldn't/.test(result.reply)) {
+        sendJson(res, 400, { ok: false, error: result.reply });
+        return;
+      }
+      writeJsonAtomic(todosPath, result.todos);
+      sendJson(res, 200, { ok: true, reply: result.reply, todos: result.todos });
+      return;
+    }
+
+    if (urlPath === '/api/todos/done' && req.method === 'POST') {
+      let body;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        res.writeHead(400); res.end('Invalid JSON body'); return;
+      }
+      const todos = readTodos(todosPath);
+      const result = mark_todo_done(todos, {
+        title: body.title,
+        owner: body.owner,
+        dateAdded: body.dateAdded,
+      });
+      if (/^Couldn't/.test(result.reply)) {
+        sendJson(res, 404, { ok: false, error: result.reply });
+        return;
+      }
+      writeJsonAtomic(todosPath, result.todos);
+      sendJson(res, 200, { ok: true, reply: result.reply, todos: result.todos });
+      return;
+    }
+
+    // Restaurant/venue star ratings — a restaurant patches two files, a venue one.
     if (urlPath === '/api/rate-place' && req.method === 'POST') {
       let body;
       try {

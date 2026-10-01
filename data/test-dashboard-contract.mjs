@@ -519,6 +519,28 @@ await test('renderTodosSection: fallback message when the combined list is empty
   const html = d.renderTodosSection();
   assert.ok(html.includes('Nothing on the list right now'), 'should show a fallback when both items and weeklyGoals are empty');
   assert.ok(!html.includes('No weekly goals set'), 'should not show a separate empty weekly-goals fallback');
+  assert.ok(html.includes('todo-add') && html.includes('Add'), 'empty list still has a way to create a to-do');
+});
+
+await test('renderTodosSection: each open item can be marked done, and there is an add form', () => {
+  const d = loadDashboard({
+    owners: [
+      { id: 'kevin', displayName: 'Kevin' },
+      { id: 'hanna', displayName: 'Hanna' },
+    ],
+    todos: {
+      items: [
+        { title: 'Fix the AC wall mount', owner: 'kevin', dateAdded: isoDaysAgo(5), deadline: null, done: false },
+      ],
+      weeklyGoals: [],
+    },
+  });
+  const html = d.renderTodosSection();
+  assert.ok(/todo-done/.test(html) && html.includes('Done'), 'open items get a Done control');
+  assert.ok(html.includes('Fix the AC wall mount'));
+  assert.ok(html.includes('todo-add'), 'there is an add form');
+  assert.ok(html.includes('name="title"') || html.includes('id="todo-title"'), 'add form takes a title');
+  assert.ok(/kevin|hanna/i.test(html), 'add form can pick an owner');
 });
 
 // --- Month Plan storage (read-only fetch — the dashboard displays Month Plan

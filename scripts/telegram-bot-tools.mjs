@@ -99,6 +99,43 @@ export function mark_done(todos, { index }) {
   return { todos, reply: `Marked done ✓: ${item.title}` };
 }
 
+// Dashboard (and any other non-Telegram writer) cannot safely use mark_done's
+// 1-indexed-among-open-items address: a Telegram add in between render and
+// click would mark the wrong row. Match the open item by title + owner +
+// dateAdded instead. Ambiguous matches ask rather than guessing.
+export function mark_todo_done(todos, { title, owner, dateAdded }) {
+  if (!title || !String(title).trim()) {
+    return { todos, reply: "Couldn't mark that done — missing a title." };
+  }
+  const needleTitle = String(title).trim();
+  const needleOwner = owner != null ? String(owner).trim() : '';
+  const needleAdded = dateAdded != null ? String(dateAdded).trim() : '';
+  const open = listOpenItems(todos);
+  const matches = open.filter((t) => {
+    if (t.title !== needleTitle) return false;
+    if (needleOwner && t.owner !== needleOwner) return false;
+    if (needleAdded && t.dateAdded !== needleAdded) return false;
+    return true;
+  });
+  if (!matches.length) {
+    return { todos, reply: `Couldn't mark that done — no open item matching "${needleTitle}".` };
+  }
+  if (matches.length > 1) {
+    const sameItem = matches.every((t) =>
+      t.title === matches[0].title && t.owner === matches[0].owner && t.dateAdded === matches[0].dateAdded
+    );
+    if (!sameItem) {
+      return {
+        todos,
+        reply: `Couldn't mark that done — more than one open item matches "${needleTitle}".`,
+        needsClarification: true,
+      };
+    }
+  }
+  matches[0].done = true;
+  return { todos, reply: `Marked done ✓: ${matches[0].title}` };
+}
+
 // Actually removes the item, unlike mark_done — for "never mind, that's not
 // happening" rather than "that's finished." Same 1-indexed-among-open-items
 // addressing as mark_done, since that's the list a person is looking at

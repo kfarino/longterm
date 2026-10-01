@@ -39,6 +39,20 @@ function startFullServer() {
   });
 }
 
+function startTodosServer(todosPath) {
+  const goalsPath = path.join(path.dirname(todosPath), 'goals-owners.json');
+  writeJsonAtomic(goalsPath, {
+    owners: [
+      { id: 'kevin', displayName: 'Kevin' },
+      { id: 'hanna', displayName: 'Hanna' },
+    ],
+  });
+  return new Promise((resolve) => {
+    const server = createServer(eventsPath, routineOverridesPath, favoriteRawPath, favoritePlacesPath, venuesToFollowPath, upcomingShowsCachePath, todosPath, goalsPath);
+    server.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
 console.log('test-dashboard-server.mjs');
 
 await test('GET returns {events:{}} when the file does not exist yet', async () => {
@@ -319,6 +333,97 @@ await test('readShowTasteMatches serves show-matches-latest.json instead of live
   });
   assert.equal(result.shows[0].scores.kevin.score, 73, 'must use the rematch file, not a live rescore');
   assert.equal(result.shows[0].scores.kevin.liveNationBoost, 4);
+});
+
+await test('GET /api/todos returns the empty default shape when the file does not exist yet', async () => {
+  const todosPath = path.join(tmpDir, 'todos-missing.json');
+  const server = await startTodosServer(todosPath);
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/todos`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body, { items: [], weeklyGoals: [] });
+  } finally {
+    server.close();
+  }
+});
+
+await test('POST /api/todos adds an item the same way Georgina does, then GET sees it', async () => {
+  const todosPath = path.join(tmpDir, 'todos-add.json');
+  writeJsonAtomic(todosPath, { items: [], weeklyGoals: [] });
+  const server = await startTodosServer(todosPath);
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Buy a car seat', owner: 'hanna' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.todos.items.length, 1);
+    assert.equal(body.todos.items[0].title, 'Buy a car seat');
+    assert.equal(body.todos.items[0].owner, 'hanna');
+    assert.equal(body.todos.items[0].done, false);
+    const onDisk = JSON.parse(fs.readFileSync(todosPath, 'utf8'));
+    assert.equal(onDisk.items[0].title, 'Buy a car seat');
+  } finally {
+    server.close();
+  }
+});
+
+await test('POST /api/todos/done marks the matching open item done', async () => {
+  const todosPath = path.join(tmpDir, 'todos-done.json');
+  writeJsonAtomic(todosPath, {
+    items: [
+      { title: 'Buy a car seat', owner: 'hanna', dateAdded: '2026-09-20', deadline: null, done: false },
+      { title: 'Still open', owner: 'kevin', dateAdded: '2026-09-21', deadline: null, done: false },
+    ],
+    weeklyGoals: [],
+  });
+  const server = await startTodosServer(todosPath);
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/todos/done`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Buy a car seat', owner: 'hanna', dateAdded: '2026-09-20' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.todos.items[0].done, true);
+    assert.equal(body.todos.items[1].done, false);
+  } finally {
+    server.close();
+  }
+});
+
+await test('POST /api/todos returns 400 for a missing title or unknown owner', async () => {
+  const todosPath = path.join(tmpDir, 'todos-bad.json');
+  writeJsonAtomic(todosPath, { items: [], weeklyGoals: [] });
+  const server = await startTodosServer(todosPath);
+  const port = server.address().port;
+  try {
+    const empty = await fetch(`http://127.0.0.1:${port}/api/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: '   ', owner: 'hanna' }),
+    });
+    assert.equal(empty.status, 400);
+    const unknown = await fetch(`http://127.0.0.1:${port}/api/todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Buy milk', owner: 'nobody' }),
+    });
+    assert.equal(unknown.status, 400);
+    const onDisk = JSON.parse(fs.readFileSync(todosPath, 'utf8'));
+    assert.equal(onDisk.items.length, 0);
+  } finally {
+    server.close();
+  }
 });
 
 await test('liveNationPullConfigured is false when the env file is missing or the key is blank', () => {

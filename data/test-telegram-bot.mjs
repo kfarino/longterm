@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runOnce, REPHRASE_SYSTEM_PROMPT, BOT_SYSTEM_PROMPT, isGenericUpdateRequest } from '../scripts/telegram-bot-poll.mjs';
-import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, reconcile_tracker, remap_account, request_capability, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
+import { get_dining_plan, get_health_status, get_budget_status, add_manual_charge, reassign_transaction, reconcile_tracker, remap_account, request_capability, mark_todo_done, TOOL_DEFS } from '../scripts/telegram-bot-tools.mjs';
 import { loadBudgetStatus } from '../scripts/financial-context.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -321,6 +321,48 @@ await asyncTest('the failure reply echoes back what was heard, so the sender kno
   const mockClient = async () => { throw new Error('simulated API failure'); };
   const result = await runOnce(baseOpts(paths, { anthropicClient: mockClient }));
   assert.ok(result.sentReplies[0].includes('blah blah gibberish'), 'the reply should echo the stripped message text');
+});
+
+test('mark_todo_done: marks the matching open item by title/owner/dateAdded, not list index', () => {
+  const todos = {
+    items: [
+      { title: 'Buy diapers', owner: 'kevin', dateAdded: '2026-09-01', done: false },
+      { title: 'Fix the AC', owner: 'hanna', dateAdded: '2026-09-10', done: false },
+    ],
+    weeklyGoals: [],
+  };
+  const result = mark_todo_done(todos, { title: 'Fix the AC', owner: 'hanna', dateAdded: '2026-09-10' });
+  assert.equal(result.todos.items[1].done, true);
+  assert.equal(result.todos.items[0].done, false);
+  assert.match(result.reply, /Marked done/);
+});
+
+test('mark_todo_done: two indistinguishable copies marks the first rather than asking', () => {
+  const todos = {
+    items: [
+      { title: 'Buy diapers', owner: 'kevin', dateAdded: '2026-10-01', done: false },
+      { title: 'Buy diapers', owner: 'kevin', dateAdded: '2026-10-01', done: false },
+    ],
+    weeklyGoals: [],
+  };
+  const result = mark_todo_done(todos, { title: 'Buy diapers', owner: 'kevin', dateAdded: '2026-10-01' });
+  assert.equal(result.todos.items[0].done, true);
+  assert.equal(result.todos.items[1].done, false);
+  assert.match(result.reply, /Marked done/);
+});
+
+test('mark_todo_done: refuses when the item is already done or missing', () => {
+  const todos = {
+    items: [
+      { title: 'Buy diapers', owner: 'kevin', dateAdded: '2026-09-01', done: true },
+    ],
+    weeklyGoals: [],
+  };
+  const missing = mark_todo_done(todos, { title: 'No such item', owner: 'kevin', dateAdded: '2026-09-01' });
+  assert.equal(missing.todos.items[0].done, true);
+  assert.match(missing.reply, /Couldn't/);
+  const already = mark_todo_done(todos, { title: 'Buy diapers', owner: 'kevin', dateAdded: '2026-09-01' });
+  assert.match(already.reply, /Couldn't/);
 });
 
 await asyncTest('mark_done with an out-of-range index replies with an error and current list, todos unchanged', async () => {

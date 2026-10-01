@@ -130,6 +130,12 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
   background:var(--navy);color:#fff;margin-left:8px;
 }
 .todo-owner{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 6px;border-radius:2px;margin-right:8px;color:#fff;vertical-align:middle;background:var(--blue)}
+.todo-add{display:flex;gap:8px;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--rule2);flex-wrap:wrap}
+.todo-add input[type=text]{flex:1;min-width:160px;font-size:13px;padding:6px 8px;border:1px solid var(--rule);border-radius:3px;color:var(--navy)}
+.todo-add select{font-size:13px;padding:6px 8px;border:1px solid var(--rule);border-radius:3px;color:var(--navy);background:#fff}
+.todo-add button{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:6px 10px;border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:3px;cursor:pointer}
+.todo-done-btn{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border:1px solid var(--navy);background:#fff;color:var(--navy);border-radius:3px;cursor:pointer;flex-shrink:0}
+.todo-done-btn:hover{background:var(--navy);color:#fff}
 .todo-owner-alt{background:var(--p5)}
 .todo-done .tl,.todo-done .tv{text-decoration:line-through;opacity:.55}
 .subnav{display:flex;gap:4px;border-bottom:1px solid var(--rule);margin-bottom:20px}
@@ -1292,33 +1298,34 @@ function updateP6() {
 // future Telegram bot needs a plain file to read/write, not browser
 // localStorage. "Added N days ago" is the primary signal (drives an eventual
 // weekly-recap nudge for stale items) — deadline is secondary/optional.
-function renderTodosSection() {
-  const todos = D.todos || { items: [], weeklyGoals: [] };
+function renderTodosSection(todos = D.todos) {
+  const list = todos || { items: [], weeklyGoals: [] };
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const daysAgo = (dateStr) => Math.floor((today - new Date(dateStr)) / 86400000);
   const ownerPill = (owner) => {
-    const idx = ownerIds().indexOf(owner);
     return `<span class="todo-owner ${ownerColorClass(owner)}">${ownerDisplayName(owner)}</span>`;
   };
 
   // Done items stay in data/todos.json for history; dashboard only shows open ones.
-  const itemsHTML = todos.items.filter((t) => !t.done).map((t) => {
+  const itemsHTML = (list.items || []).filter((t) => !t.done).map((t) => {
     const age = daysAgo(t.dateAdded);
     const ageLabel = age <= 0 ? 'Added today' : age === 1 ? 'Added 1 day ago' : `Added ${age} days ago`;
     const deadlineLabel = t.deadline ? ` · Due ${t.deadline}` : '';
     return `<div class="tr">
-      <span class="tl">${ownerPill(t.owner)}${t.title}</span>
-      <span class="tv muted">${ageLabel}${deadlineLabel}</span>
+      <span class="tl">${ownerPill(t.owner)}${escapeHtml(t.title)}</span>
+      <span class="tv muted">${ageLabel}${deadlineLabel}
+        <button type="button" class="todo-done-btn" data-title="${escapeHtml(t.title)}" data-owner="${escapeHtml(t.owner)}" data-added="${escapeHtml(t.dateAdded || '')}" onclick="onTodoDone(this)">Done</button>
+      </span>
     </div>`;
   }).join('');
 
   // Weekly goals (rare — family-only, usually empty) share the same list panel
   // rather than a separate monthly/weekly split.
-  const goalsHTML = todos.weeklyGoals.map((g) => {
+  const goalsHTML = (list.weeklyGoals || []).map((g) => {
     const pct = g.target ? Math.min(100, Math.round(g.count / g.target * 100)) : 0;
     return `<div class="goal">
       <div class="goal-head">
-        <span class="goal-name">${ownerPill(g.owner)}${g.title}</span>
+        <span class="goal-name">${ownerPill(g.owner)}${escapeHtml(g.title)}</span>
         <span class="goal-num">${g.count} / ${g.target} ${g.unit} this week</span>
       </div>
       <div class="goal-bar"><div class="goal-fill" style="width:${pct}%;background:var(--navy)"></div></div>
@@ -1328,19 +1335,94 @@ function renderTodosSection() {
   const body = (itemsHTML + goalsHTML)
     || `<div class="callout">Nothing on the list right now.</div>`;
 
+  const ownerOptions = ownersList().map((o) =>
+    `<option value="${escapeHtml(o.id)}">${escapeHtml(o.displayName)}</option>`
+  ).join('');
+
   return `
+    <div id="todos-wrap">
     <div class="slabel">To-Dos</div>
     <div class="panel">
       ${body}
+      <form class="todo-add" id="todo-add-form" onsubmit="return submitNewTodo(event)">
+        <input type="text" id="todo-title" name="title" placeholder="Add a to-do" autocomplete="off" required>
+        <select id="todo-owner" name="owner">${ownerOptions}</select>
+        <button type="submit">Add</button>
+      </form>
+    </div>
     </div>`;
+}
+
+async function loadTodos() {
+  try {
+    const res = await fetch('/api/todos');
+    if (!res.ok) return D.todos || { items: [], weeklyGoals: [] };
+    return await res.json();
+  } catch (err) {
+    return D.todos || { items: [], weeklyGoals: [] };
+  }
+}
+
+async function refreshTodosPanel() {
+  const todos = await loadTodos();
+  D.todos = todos;
+  const wrap = $('todos-wrap');
+  if (!wrap) return;
+  wrap.outerHTML = renderTodosSection(todos);
+}
+
+async function submitNewTodo(ev) {
+  ev.preventDefault();
+  const titleEl = $('todo-title');
+  const ownerEl = $('todo-owner');
+  const title = titleEl ? titleEl.value : '';
+  const owner = ownerEl ? ownerEl.value : '';
+  try {
+    const res = await fetch('/api/todos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, owner }),
+    });
+    if (!res.ok) return false;
+    const body = await res.json();
+    if (body.todos) D.todos = body.todos;
+    else await refreshTodosPanel();
+    const wrap = $('todos-wrap');
+    if (wrap) wrap.outerHTML = renderTodosSection(D.todos);
+  } catch (err) {
+    return false;
+  }
+  return false;
+}
+
+async function onTodoDone(btn) {
+  const title = btn.getAttribute('data-title');
+  const owner = btn.getAttribute('data-owner');
+  const dateAdded = btn.getAttribute('data-added');
+  try {
+    const res = await fetch('/api/todos/done', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, owner, dateAdded }),
+    });
+    if (!res.ok) return;
+    const body = await res.json();
+    if (body.todos) D.todos = body.todos;
+    const wrap = $('todos-wrap');
+    if (wrap) wrap.outerHTML = renderTodosSection(D.todos);
+  } catch (err) {
+    return;
+  }
 }
 
 async function renderBudgetTab() {
   const bt = D.budgetTracking;
+  const liveTodos = await loadTodos();
+  D.todos = liveTodos;
   const jointPersonalHtml = await renderSpendTrackers();
   $('pg-budget').innerHTML = `
     <div class="content">
-      ${renderTodosSection()}
+      ${renderTodosSection(liveTodos)}
       <div class="slabel">Spend tracking</div>
       ${jointPersonalHtml}
       <div id="pg-monthplan"></div>
