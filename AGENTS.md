@@ -326,6 +326,7 @@ the reply path could see Google at all. Rules that follow from it:
 npm run seed          # examples → data/ (never overwrites existing)
 npm run build         # data.js + goal-plan md
 npm run dev           # dashboard-server on 127.0.0.1
+# Desktop pin (Family Planner.lnk): powershell -File scripts/install-desk-shortcut.ps1
 npm test              # every data/test-*.mjs suite (also what CI runs)
 npm test -- calendar  # just the suites whose filename matches "calendar"
 node scripts/budget-tracking-pull.mjs
