@@ -110,6 +110,8 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       // Monarch has to carry the reason it was corrected (reconcile_tracker,
       // 2026-09-20). Display only — the money is already inside the weeks.
       adjustments: tracker.adjustments || null,
+      // Display only — reconnect/stale flags on mapped cards. Not pacing math.
+      cardBalances: Array.isArray(tracker.cardBalances) ? tracker.cardBalances : [],
     };
   }
 

@@ -322,6 +322,8 @@ Then report travel that posted this same cycle from travelThisCycle (merchant, a
 
 Then report the joint card total from budgetStatus.joint.cardBalances. A negative balance is the amount owed — say it as owed, using the absolute value, and name the card. If several cards, one line each. If cardBalances is missing or empty, say the card total isn't available rather than inventing a number. The card total is allowed to disagree with the family-budget logged figure: travel on the card plus last-statement leftover is why.
 
+If any cardBalances entry (joint or personal) has syncStatus needs_reconnect, disconnected, or stale, say so in Budget. Do NOT treat the logged total as complete — new charges after lastUpdated are missing. Never describe a stale or disconnected $0 as "we haven't spent anything."
+
 Todos: list every open to-do from todosByOwner, grouped by the owner it's under (e.g. "Kevin: ..." then "Hanna: ..."), noting how long ago an item was added only if it's been sitting a while (more than a week or two) — skip an owner's line entirely if they have nothing open, rather than saying "none."
 
 Planning: one line per routine occasion (family dinner / date night / weekend social) from the dining field, same as always — a live suggestion should prompt for a quick confirming reply (only a confirmed pick gets pushed to the shared Google Calendar); an already-confirmed pick, a "looks already covered" note, or a traveling/away note is just mentioned in passing, not pushed for a reply.

@@ -799,6 +799,7 @@ await asyncTest('recap prompt is four sections including Shows, never Health, an
   assert.doesNotMatch(RECAP_SYSTEM_PROMPT, /Curious what's on at our favorite venues/);
   assert.match(RECAP_SYSTEM_PROMPT, /travelThisCycle/);
   assert.match(RECAP_SYSTEM_PROMPT, /cardBalances/);
+  assert.match(RECAP_SYSTEM_PROMPT, /syncStatus/);
   assert.match(RECAP_SYSTEM_PROMPT, /Do not include a Health section/);
   assert.match(RECAP_SYSTEM_PROMPT, /Shows:/);
 });

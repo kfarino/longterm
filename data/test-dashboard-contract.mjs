@@ -340,6 +340,38 @@ await test('formatCardBalanceLine: shared due date rides on the owe line; checki
   );
 });
 
+await test('formatCardBalanceLine: a reconnect-needed card is named, not treated as complete', () => {
+  const d = loadDashboard();
+  assert.match(
+    d.formatCardBalanceLine([{
+      label: ' More Mastercard (...9054)',
+      balance: -2000,
+      syncStatus: 'needs_reconnect',
+      lastUpdated: '2026-09-26',
+    }]),
+    /reconnect in Monarch/,
+  );
+});
+
+await test('renderSpendTracker: empty weeks on a disconnected card does not read as $0 spend', () => {
+  const d = loadDashboard();
+  const html = d.renderSpendTracker('Joint (Barclays)', {
+    weeks: [],
+    cycleStart: '2026-09-25',
+    cycleDays: 30,
+    target: 4500,
+    cardBalances: [{
+      label: ' More Mastercard (...9054)',
+      balance: -2000,
+      syncStatus: 'needs_reconnect',
+      lastUpdated: '2026-09-26',
+    }],
+  }, 'drill-joint');
+  assert.match(html, /reconnect in Monarch/);
+  assert.match(html, /incomplete/i);
+  assert.doesNotMatch(html, /No weeks logged yet this cycle/);
+});
+
 await test('renderSpendTracker: mixed cards+checking meta uses statement cycle + debt-only owe line', () => {
   const d = loadDashboard();
   const html = d.renderSpendTracker('Kevin personal', {

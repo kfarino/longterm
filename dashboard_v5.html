@@ -634,10 +634,14 @@ function renderSpendTracker(label, tracker, drillId, plannedSpend) {
     ? `<div class="goal-note" style="margin-top:6px">${metaBits.join(' · ')}</div>`
     : '';
   if (!tracker.weeks || !tracker.weeks.length) {
+    const sync = formatAccountSyncLine(tracker.cardBalances);
+    const emptyMsg = sync
+      ? `${sync}. Do not treat this as $0 spend.`
+      : 'No weeks logged yet this cycle.';
     return `<div class="panel">
       <div class="ptitle">${label} <span style="font-size:12px;font-weight:400;color:var(--sub)">Target: ${fmt(tracker.target)}/mo</span></div>
       ${metaHtml}
-      <div class="callout">No weeks logged yet this cycle.</div>
+      <div class="callout">${emptyMsg}</div>
     </div>`;
   }
   const { total, projected, variance } = computeTrackerPacing(tracker);
@@ -817,16 +821,39 @@ function formatCycleRange(cycleStartISO, cycleDays) {
 }
 
 /** Credit-card balances from Monarch are typically negative (amount owed). Positive checking is ignored. */
+function syncIssueRows(cardBalances) {
+  return (cardBalances || []).filter((r) => r && (r.syncStatus === 'needs_reconnect' || r.syncStatus === 'disconnected' || r.syncStatus === 'stale'));
+}
+
+function formatAccountSyncLine(cardBalances) {
+  const issues = syncIssueRows(cardBalances);
+  if (!issues.length) return null;
+  const bits = issues.map((r) => {
+    const name = String(r.label || 'Card').trim();
+    const when = r.lastUpdated ? `, last synced ${r.lastUpdated}` : '';
+    if (r.syncStatus === 'disconnected') return `${name} is disconnected in Monarch${when}`;
+    if (r.syncStatus === 'stale') return `${name} has not synced since ${r.lastUpdated || 'an unknown date'}`;
+    return `${name} needs a reconnect in Monarch${when}`;
+  });
+  return `${bits.join('; ')} — logged spend may be incomplete`;
+}
+
 function formatCardBalanceLine(cardBalances) {
   const rows = debtCardRows(cardBalances);
-  if (!rows.length) return null;
-  const totalOwed = cardDebtOwed(rows);
-  const due = formatDueDateClause(rows);
-  if (rows.length === 1) {
-    return due ? `Card balance: ${fmt(totalOwed)} owed (${due})` : `Card balance: ${fmt(totalOwed)} owed`;
+  const sync = formatAccountSyncLine(cardBalances);
+  let owe = null;
+  if (rows.length) {
+    const totalOwed = cardDebtOwed(rows);
+    const due = formatDueDateClause(rows);
+    if (rows.length === 1) {
+      owe = due ? `Card balance: ${fmt(totalOwed)} owed (${due})` : `Card balance: ${fmt(totalOwed)} owed`;
+    } else {
+      const countBit = due ? `${rows.length} cards, ${due}` : `${rows.length} cards`;
+      owe = `Card balances: ${fmt(totalOwed)} owed total (${countBit})`;
+    }
   }
-  const countBit = due ? `${rows.length} cards, ${due}` : `${rows.length} cards`;
-  return `Card balances: ${fmt(totalOwed)} owed total (${countBit})`;
+  if (owe && sync) return `${owe} · ${sync}`;
+  return owe || sync;
 }
 
 // Decides what happens on every remaining day of the current cycle. Fixed

@@ -428,7 +428,7 @@ test('refreshFavoritePlaces degrades to null visitStats on every place when favo
 // pull's transaction-processing directly via a small re-export the
 // implementation step below adds: detectJointRefunds(transactions, jointLabels, travelCategoryNames).
 
-import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, resolvePersonalCycle, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from '../scripts/budget-tracking-pull.mjs';
+import { detectJointRefunds, travelNetSpend, trackerReassignment, cardBalancesForLabels, resolvePersonalCycle, categoryName, spendAmount, applyManualCharges, applyManualChargesToTracking, isBalanceMovement, resolveTravelTrip, mergeLedgerIntoTripBuckets, applyTravelCredits, tripReroute, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides, shouldAlertForMonarchSync, monarchSyncFingerprint } from '../scripts/budget-tracking-pull.mjs';
 
 // All the existing fixture transactions below fall in July 2026, so this
 // keeps them in-range while still being strict enough to exercise the new
@@ -547,6 +547,60 @@ test('cardBalancesForLabels copies a Monarch due date when the account object ha
   assert.equal(rows.find((r) => r.label === 'CREDIT CARD (...2222)').dueDate, '2026-10-12');
   assert.equal(rows.find((r) => r.label === 'Spending Account (...3333)').dueDate, '2026-10-01');
   assert.equal(rows.find((r) => r.label === 'Spending Account (...3333)').balance, 2911);
+});
+
+test('cardBalancesForLabels flags a Monarch reconnect / disconnected account so spend is not treated as complete', () => {
+  const accounts = [
+    {
+      displayName: ' More Mastercard (...9054)',
+      balance: -2000,
+      credential: { updateRequired: true },
+      updatedAt: '2026-09-26T20:44:41.415542+00:00',
+    },
+    {
+      displayName: 'CREDIT CARD (...8387)',
+      balance: 0,
+      syncDisabled: true,
+      deactivatedAt: '2026-09-01',
+      displayLastUpdatedAt: '2026-09-03T00:23:42.054118+00:00',
+    },
+    { displayName: 'CREDIT CARD (...3939)', balance: -100 },
+  ];
+  const joint = cardBalancesForLabels(accounts, [' More Mastercard (...9054)']);
+  assert.equal(joint[0].syncStatus, 'needs_reconnect');
+  assert.equal(joint[0].lastUpdated, '2026-09-26');
+  const hanna = cardBalancesForLabels(accounts, ['CREDIT CARD (...8387)']);
+  assert.equal(hanna[0].syncStatus, 'disconnected');
+  assert.equal(hanna[0].lastUpdated, '2026-09-03');
+  assert.equal(hanna[0].deactivatedAt, '2026-09-01');
+  const kevin = cardBalancesForLabels(accounts, ['CREDIT CARD (...3939)']);
+  assert.equal(kevin[0].syncStatus, undefined, 'a healthy account must not look disconnected');
+});
+
+test('cardBalancesForLabels flags a mapped card whose last sync is two or more days old, even mid-cycle', () => {
+  const today = new Date(2026, 9, 1); // Oct 1
+  const stale = cardBalancesForLabels([
+    { displayName: ' More Mastercard (...9054)', balance: -2100, updatedAt: '2026-09-29T12:00:00Z' },
+  ], [' More Mastercard (...9054)'], today);
+  assert.equal(stale[0].syncStatus, 'stale', 'Sep 29 vs Oct 1 is two days — spend after that is missing');
+  assert.equal(stale[0].lastUpdated, '2026-09-29');
+
+  const yesterday = cardBalancesForLabels([
+    { displayName: ' More Mastercard (...9054)', balance: -2100, updatedAt: '2026-09-30T12:00:00Z' },
+  ], [' More Mastercard (...9054)'], today);
+  assert.equal(yesterday[0].syncStatus, undefined, 'yesterday is still a live sync');
+});
+
+test('shouldAlertForMonarchSync speaks up on the first stall, then at most daily, and again if a different card breaks', () => {
+  const issues = [{ label: ' More Mastercard (...9054)', syncStatus: 'stale', lastUpdated: '2026-09-29' }];
+  const now = new Date('2026-10-01T16:30:00Z');
+  assert.equal(shouldAlertForMonarchSync({}, issues, now), true);
+  const afterFirst = { lastAlertAt: now.toISOString(), fingerprint: monarchSyncFingerprint(issues) };
+  assert.equal(shouldAlertForMonarchSync(afterFirst, issues, new Date('2026-10-01T18:00:00Z')), false, 'same stall later the same day stays quiet');
+  assert.equal(shouldAlertForMonarchSync(afterFirst, issues, new Date('2026-10-02T16:40:00Z')), true, 'still broken the next day → remind');
+  const other = [{ label: 'CREDIT CARD (...8387)', syncStatus: 'disconnected' }];
+  assert.equal(shouldAlertForMonarchSync(afterFirst, other, new Date('2026-10-01T18:00:00Z')), true, 'a newly broken card alerts immediately');
+  assert.equal(shouldAlertForMonarchSync(afterFirst, [], now), false);
 });
 
 test('resolvePersonalCycle uses mapping startDay on the first credit card, never Ally checking', () => {

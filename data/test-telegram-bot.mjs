@@ -1476,6 +1476,61 @@ test('get_budget_status: a finished cycle floors at 0 days rather than going neg
   assert.match(reply, /0 days to go/);
 });
 
+test('get_budget_status: a disconnected Monarch account is not reported as real $0 spend', () => {
+  const { reply } = get_budget_status(budgetCtx({
+    total: 0,
+    cardBalances: [{
+      label: ' More Mastercard (...9054)',
+      balance: -2000,
+      syncStatus: 'needs_reconnect',
+      lastUpdated: '2026-09-26',
+    }],
+  }), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /needs a reconnect in Monarch/);
+  assert.match(reply, /do not treat \$0 as the real total/i);
+  assert.doesNotMatch(reply, /on track/);
+  assert.doesNotMatch(reply, /hold to about/);
+});
+
+test('get_budget_status: a disabled card still warns even when some spend is logged', () => {
+  const ctx = budgetCtx({ total: 800 });
+  ctx.budgetStatus.personal = {
+    hanna: {
+      label: 'Hanna personal',
+      displayName: 'Hanna',
+      total: 0,
+      target: 3000,
+      cycleStart: '2026-07-25',
+      cycleDays: 30,
+      cardBalances: [{
+        label: 'CREDIT CARD (...8387)',
+        balance: 0,
+        syncStatus: 'disconnected',
+        lastUpdated: '2026-09-03',
+      }],
+    },
+  };
+  const { reply } = get_budget_status(ctx, {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /disconnected in Monarch/);
+  assert.match(reply, /Hanna personal/);
+});
+
+test('get_budget_status: a mid-cycle disconnect still warns when spend is already logged', () => {
+  const { reply } = get_budget_status(budgetCtx({
+    total: 3297,
+    cardBalances: [{
+      label: ' More Mastercard (...9054)',
+      balance: -2100,
+      syncStatus: 'stale',
+      lastUpdated: '2026-09-28',
+    }],
+  }), {}, new Date('2026-08-12T12:00:00'));
+  assert.match(reply, /has not synced since 2026-09-28/);
+  assert.match(reply, /incomplete/i);
+  assert.doesNotMatch(reply, /on track/);
+  assert.doesNotMatch(reply, /hold to about/);
+});
+
 await asyncTest('get_savings_goals: reports each goal\'s current/target/percentage', async () => {
   const dir = path.join(tmpRoot, 'financial-savings-goals');
   const paths = writeFixture(dir, {
@@ -3303,6 +3358,11 @@ test('BOT_SYSTEM_PROMPT routes a wrong tracker total to reconcile_tracker, not a
   assert.match(BOT_SYSTEM_PROMPT, /reconcile_tracker/);
   const rule = BOT_SYSTEM_PROMPT.split('\n').find((l) => l.includes('reconcile_tracker') && l.includes('add_manual_charge'));
   assert.ok(rule, 'the prompt has to say which of the two money-writing tools this is, or it will invent a charge');
+});
+
+test('BOT_SYSTEM_PROMPT: a disconnected Monarch account is not reported as $0 spend', () => {
+  assert.match(BOT_SYSTEM_PROMPT, /reconnect|disconnected/i);
+  assert.match(BOT_SYSTEM_PROMPT, /do not treat/i);
 });
 
 test('TOOL_DEFS declares reconcile_tracker and steers the other money tools away from it', () => {

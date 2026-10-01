@@ -1154,12 +1154,13 @@ export function get_budget_status(financialContext, input = {}, now = new Date()
   const paceLine = (label, t) => {
     if (!t) return `${label}: no data yet.`;
     const left = t.target - t.total;
-    const g = budgetGuidance(t, now);
+    const syncIssue = trackerSyncWarning(t);
+    const g = syncIssue ? null : budgetGuidance(t, now);
     const leftLabel = left >= 0
       ? `${fmtMoney(left)} left`
       : `${fmtMoney(Math.abs(left))} over budget`;
     const daysLabel = g ? ` with ${g.daysRemaining} day${g.daysRemaining === 1 ? '' : 's'} to go` : '';
-    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${guidanceSentence(g, financialContext.budgetHabits)}${correctionSentence(t)}`;
+    return `${label}: ${fmtMoney(t.total)} logged of ${fmtMoney(t.target)} — ${leftLabel}${daysLabel}.${syncIssue ? '' : guidanceSentence(g, financialContext.budgetHabits)}${correctionSentence(t)}${syncIssue}`;
   };
   const personalLines = Object.values(personal || {})
     .map((p) => paceLine(p.label || p.displayName || 'Personal', p))
@@ -1191,6 +1192,29 @@ function correctionSentence(tracker) {
   const total = Math.round(list.reduce((sum, a) => sum + Number(a.amount), 0) * 100) / 100;
   const reasons = list.map((a) => a.reason).filter(Boolean).join('; ');
   return ` Includes a ${total < 0 ? '−' : '+'}${fmtMoney(Math.abs(total))} correction${reasons ? ` (${reasons})` : ''}.`;
+}
+
+/**
+ * A mapped Monarch card that is disconnected, needs reconnect, or has gone
+ * stale mid-cycle: the logged total is incomplete. Always say so — including
+ * when some spend already posted — or "$X logged / on track" reads as truth.
+ */
+export function trackerSyncWarning(tracker) {
+  const issues = (tracker?.cardBalances || []).filter((r) => r?.syncStatus === 'needs_reconnect' || r?.syncStatus === 'disconnected' || r?.syncStatus === 'stale');
+  if (!issues.length) return '';
+  const bits = issues.map((r) => {
+    const name = String(r.label || 'Card').trim();
+    const when = r.lastUpdated ? ` (last synced ${r.lastUpdated})` : '';
+    if (r.syncStatus === 'disconnected') return `${name} is disconnected in Monarch${when}`;
+    if (r.syncStatus === 'stale') return `${name} has not synced since ${r.lastUpdated || 'an unknown date'}`;
+    return `${name} needs a reconnect in Monarch${when}`;
+  });
+  const total = Number(tracker?.total);
+  const zero = Number.isFinite(total) && total === 0;
+  const staleNote = zero
+    ? ' Logged spend may be incomplete — do not treat $0 as the real total.'
+    : ' Logged spend may be incomplete — new charges after the last sync are missing.';
+  return ` ${bits.join('; ')}.${staleNote}`;
 }
 
 /**
@@ -1578,7 +1602,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_budget_status',
-    description: "Report this cycle's monthly spend: joint and each person's personal budget — logged so far, how much is left, how many days are left, and (past halfway) the rate that still hits target. Under a week left the reply uses leftover-days, not a weekly rate. It may include a prior-cycle habit heads-up even before halfway. This is the default answer to any budget/spending question. It does NOT include travel unless you ask for it.",
+    description: "Report this cycle's monthly spend: joint and each person's personal budget — logged so far, how much is left, how many days are left, and (past halfway) the rate that still hits target. Under a week left the reply uses leftover-days, not a weekly rate. It may include a prior-cycle habit heads-up even before halfway. If a mapped Monarch account is disconnected, needs reconnect, or has not synced, the reply says so and does not treat the logged total as complete. This is the default answer to any budget/spending question. It does NOT include travel unless you ask for it.",
     input_schema: {
       type: 'object',
       properties: {

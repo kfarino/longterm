@@ -83,3 +83,8 @@ export function spotifyOwnerEnvPath(ownerId) {
 export function ticketmasterEnvPath() {
   return path.join(longtermHome(), 'ticketmaster.env');
 }
+
+/** Last Telegram alert for a stalled/disconnected mapped Monarch spend card. */
+export function monarchSyncAlertPath() {
+  return path.join(longtermHome(), 'monarch-sync-alert.json');
+}

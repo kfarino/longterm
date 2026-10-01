@@ -134,6 +134,14 @@ Tennis expense line or treat them as unbudgeted. Match the instructor's
 name on the Ally row (Monarch often stores the recipient, not the word
 "Zelle"); an amount-only "Zelle" + $135 rule misses that payment.
 
+A mapped Monarch spend card that is disconnected, needs reconnect, or has
+not updated in two days is incomplete spend — including mid-cycle, not only
+at rollover. The pull flags it on `cardBalances.syncStatus`, Georgina and
+the recap must not treat the logged total as complete, and Telegram alerts
+(first time, then at most daily). A failed alert must not fail the money
+pull. A card the household deactivated on purpose still warns in budget
+status so $0 is not reported as real, but it does not page every morning.
+
 ### Joint cycle snapshots
 The daily budget pull must archive `budget_tracking.json`'s joint tracker into
 `cycle_history.json` **before** rebuilding the live cycle. Missing that step on

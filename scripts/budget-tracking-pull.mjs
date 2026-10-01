@@ -15,7 +15,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { monarchEnvPath, monarchMcpExePath, resolveMonarchMcpLaunch } from './longterm-paths.mjs';
+import { monarchEnvPath, monarchMcpExePath, resolveMonarchMcpLaunch, monarchSyncAlertPath } from './longterm-paths.mjs';
 import {
   DEFAULT_LEDGER_PATH,
   transactionId,
@@ -242,7 +242,7 @@ async function fetchAccounts(client) {
 }
 
 /** Match mapped spend-card labels to live Monarch balances (credit cards are typically negative = amount owed). */
-export function cardBalancesForLabels(accounts, labels) {
+export function cardBalancesForLabels(accounts, labels, today = new Date()) {
   const wanted = new Set(labels || []);
   if (!wanted.size) return [];
   const out = [];
@@ -254,9 +254,94 @@ export function cardBalancesForLabels(accounts, labels) {
     const row = { label, balance: Math.round(balance * 100) / 100 };
     const dueDate = firstAccountIsoDate(a, ACCOUNT_DUE_DATE_KEYS);
     if (dueDate) row.dueDate = dueDate;
+    const issue = accountSyncIssue(a, today);
+    if (issue) {
+      row.syncStatus = issue.status;
+      if (issue.lastUpdated) row.lastUpdated = issue.lastUpdated;
+      if (issue.deactivatedAt) row.deactivatedAt = issue.deactivatedAt;
+    }
     out.push(row);
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** A mapped card whose last Monarch update is this many calendar days old is treated as stalled. */
+export const STALE_SYNC_DAYS = 2;
+
+/**
+ * Monarch's own flags, plus a last-updated stall, for "this mapped card is
+ * not feeding new charges." A mid-cycle disconnect looks like spend that
+ * simply stops — catch it any day, not only at rollover. Healthy → null
+ * so cardBalances stay {label, balance} only.
+ */
+export function accountSyncIssue(account, today = new Date()) {
+  if (!account) return null;
+  const lastUpdated = asIsoDate(account.displayLastUpdatedAt || account.updatedAt);
+  const deactivatedAt = asIsoDate(account.deactivatedAt);
+  if (account.syncDisabled === true || deactivatedAt) {
+    return { status: 'disconnected', lastUpdated, deactivatedAt };
+  }
+  const credential = account.credential || {};
+  if (credential.updateRequired === true || credential.disconnected === true || account.credentialUpdateRequired === true) {
+    return { status: 'needs_reconnect', lastUpdated };
+  }
+  if (lastUpdated) {
+    const days = calendarDaysBetween(lastUpdated, isoDate(today));
+    if (days >= STALE_SYNC_DAYS) return { status: 'stale', lastUpdated };
+  }
+  return null;
+}
+
+export function collectDisconnectedAccountLabels(tracking) {
+  const rows = [];
+  const add = (list) => {
+    for (const row of list || []) {
+      if (row?.syncStatus) rows.push({ label: row.label, syncStatus: row.syncStatus, lastUpdated: row.lastUpdated || null });
+    }
+  };
+  add(tracking?.joint?.cardBalances);
+  for (const tracker of Object.values(tracking?.personal || {})) add(tracker?.cardBalances);
+  return rows;
+}
+
+export function monarchSyncFingerprint(issues) {
+  return (issues || []).map((i) => `${i.label}|${i.syncStatus}`).sort().join('\n');
+}
+
+const MONARCH_ALERT_REPEAT_MS = 24 * 60 * 60 * 1000;
+
+export function shouldAlertForMonarchSync(state, issues, now = new Date()) {
+  if (!issues?.length) return false;
+  const fingerprint = monarchSyncFingerprint(issues);
+  if (!state?.lastAlertAt || state.fingerprint !== fingerprint) return true;
+  const lastAlert = Date.parse(state.lastAlertAt);
+  if (Number.isNaN(lastAlert)) return true;
+  return now.getTime() - lastAlert >= MONARCH_ALERT_REPEAT_MS;
+}
+
+export function buildMonarchSyncAlertText(issues) {
+  const lines = (issues || []).map((i) => {
+    const name = String(i.label || 'Card').trim();
+    const when = i.lastUpdated ? ` (last synced ${i.lastUpdated})` : '';
+    if (i.syncStatus === 'disconnected') return `• ${name} is disconnected in Monarch${when}`;
+    if (i.syncStatus === 'stale') return `• ${name} has not synced since ${i.lastUpdated || 'an unknown date'}`;
+    return `• ${name} needs a reconnect in Monarch${when}`;
+  });
+  return [
+    '⚠️ A Monarch spend account is not syncing.',
+    'Logged budget totals are incomplete until it is reconnected — new charges after the last sync are missing. Do not treat the current number as the real cycle spend.',
+    '',
+    ...lines,
+    '',
+    'Fix: reconnect the account in the Monarch app, then the next daily pull (or a manual pull) will pick it up.',
+  ].join('\n');
+}
+
+function calendarDaysBetween(fromIso, toIso) {
+  const a = new Date(`${fromIso}T12:00:00`);
+  const b = new Date(`${toIso}T12:00:00`);
+  if (!Number.isFinite(a.getTime()) || !Number.isFinite(b.getTime())) return 0;
+  return Math.round((b - a) / 86400000);
 }
 
 // monarchmoney's GetAccounts fragment has minimumPayment / plannedPayment but
@@ -1590,6 +1675,30 @@ async function maybeNotifyCloseOut(args) {
   }
 }
 
+async function maybeNotifyMonarchSync(args, tracking) {
+  const issues = collectDisconnectedAccountLabels(tracking).filter(
+    (i) => i.syncStatus === 'needs_reconnect' || i.syncStatus === 'stale',
+  );
+  const statePath = args.monarchSyncAlertPath || monarchSyncAlertPath();
+  if (!issues.length) {
+    try { if (fs.existsSync(statePath)) fs.unlinkSync(statePath); } catch { /* ignore */ }
+    return;
+  }
+  let state = {};
+  try { state = JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { state = {}; }
+  if (!shouldAlertForMonarchSync(state, issues)) return;
+  try {
+    const notifyFn = args.monarchSyncNotifyFn || args.closeOutNotifyFn || defaultCloseOutNotifyFn;
+    await notifyFn(buildMonarchSyncAlertText(issues));
+    writeJson(statePath, {
+      lastAlertAt: new Date().toISOString(),
+      fingerprint: monarchSyncFingerprint(issues),
+    });
+  } catch (err) {
+    console.error('monarch sync alert failed (budget pull still ok):', sanitize(err.message || err));
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
@@ -1859,7 +1968,7 @@ async function main() {
       tracking.personal[ownerId].cycleStart = cycle.cycleStart;
       tracking.personal[ownerId].cycleDays = cycle.cycleDays;
       tracking.personal[ownerId].source = 'monarch';
-      tracking.personal[ownerId].cardBalances = cardBalancesForLabels(accounts, personalLabelsByOwner[ownerId]);
+      tracking.personal[ownerId].cardBalances = cardBalancesForLabels(accounts, personalLabelsByOwner[ownerId], today);
     }
     if (jointLabels.size > 0) {
       tracking.joint.weeks = bucketsToWeeks(jointBuckets, cycleStart);
@@ -1868,7 +1977,7 @@ async function main() {
       tracking.joint.source = 'monarch';
       tracking.joint.cycleStart = isoDate(cycleStart);
       tracking.joint.cycleDays = 30;
-      tracking.joint.cardBalances = cardBalancesForLabels(accounts, [...jointLabels]);
+      tracking.joint.cardBalances = cardBalancesForLabels(accounts, [...jointLabels], today);
     }
     // Household corrections (reconcile_tracker) go on LAST, after the weeks
     // above were rebuilt from Monarch — that rebuild is exactly what would
@@ -1904,6 +2013,7 @@ async function main() {
     writeJson(args.outputPath, tracking);
 
     await maybeNotifyCloseOut(args);
+    await maybeNotifyMonarchSync(args, tracking);
 
     const buildScript = path.join(path.dirname(args.outputPath), 'build-data.mjs');
     const result = spawnSync(process.execPath, [buildScript], { stdio: 'inherit' });
@@ -1916,6 +2026,7 @@ async function main() {
       travelUnmatchedCount: unmatched.length,
       ledgerRowsUpserted: ledgerRowCount,
       jointUpdated: jointLabels.size > 0,
+      disconnectedAccounts: collectDisconnectedAccountLabels(tracking),
       outputPath: args.outputPath,
     }));
   } catch (error) {
