@@ -267,18 +267,30 @@ export function accountCatalogFromAccounts(accounts, { asOf = null } = {}) {
 }
 
 /**
+/** Cards the household retired on purpose — do not page Georgina about them. */
+export function isRetiredAccountLabel(mapping, label) {
+  const needle = String(label || '').trim().toLowerCase();
+  if (!needle) return false;
+  return (mapping?.retiredAccountLabels || []).some((l) => String(l).trim().toLowerCase() === needle);
+}
+
+/**
  * Mapped labels that match no live Monarch account, keyed by tracker.
  *
  * An empty/absent accounts list means the pull got nothing back — an API
  * failure, not "every card is gone". Flagging all of them then would cry wolf
- * on the whole mapping, so it reports nothing.
+ * on the whole mapping, so it reports nothing. Retired labels are skipped
+ * (replaced on purpose — paging about them is the bug).
  */
 export function mappedLabelsMissingFromMonarch(mapping, accountLabels) {
   const live = new Set((accountLabels || []).map((l) => String(l).trim().toLowerCase()).filter(Boolean));
   if (!live.size) return {};
   const out = {};
   for (const key of trackerKeysFromMapping(mapping)) {
-    const missing = labelsForTracker(mapping, key).filter((l) => !live.has(String(l).trim().toLowerCase()));
+    const missing = labelsForTracker(mapping, key).filter((l) => {
+      if (isRetiredAccountLabel(mapping, l)) return false;
+      return !live.has(String(l).trim().toLowerCase());
+    });
     if (missing.length) out[key] = missing;
   }
   return out;

@@ -40,6 +40,7 @@ import {
 import {
   accountCatalogFromAccounts,
   mappedLabelsMissingFromMonarch,
+  isRetiredAccountLabel,
   isCheckingLikeLabel,
   isCreditCardLikeLabel,
 } from './account-mapping.mjs';
@@ -308,6 +309,7 @@ export function collectDisconnectedAccountLabels(tracking) {
   const rows = [];
   const add = (list) => {
     for (const row of list || []) {
+      if (isRetiredAccountLabel(tracking?.mapping, row?.label)) continue;
       if (row?.syncStatus) rows.push({ label: row.label, syncStatus: row.syncStatus, lastUpdated: row.lastUpdated || null });
     }
   };
@@ -318,7 +320,8 @@ export function collectDisconnectedAccountLabels(tracking) {
   // a null-balance row would wander into the card-debt sums.
   const addMissing = (list) => {
     for (const label of list || []) {
-      if (label) rows.push({ label, syncStatus: 'not_in_monarch', lastUpdated: null });
+      if (!label || isRetiredAccountLabel(tracking?.mapping, label)) continue;
+      rows.push({ label, syncStatus: 'not_in_monarch', lastUpdated: null });
     }
   };
   add(tracking?.joint?.cardBalances);

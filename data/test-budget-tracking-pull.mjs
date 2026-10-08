@@ -1532,4 +1532,24 @@ test('card sync issues and dangling mappings are reported together, not one inst
   assert.deepEqual(issues.map((i) => i.syncStatus).sort(), ['needs_reconnect', 'not_in_monarch']);
 });
 
+test('a retired card is never paged, even if leftover flags still name it', () => {
+  // Replaced cards stay in the ledger as history. Georgina must not keep
+  // asking anyone to reconnect them (Kevin, 2026-10-08).
+  const tracking = inventoryTracking();
+  tracking.mapping.retiredAccountLabels = ['CREDIT CARD (...9999)'];
+  tracking.mapping.personalAccountLabels.kevin = ['CREDIT CARD (...9999)', 'Spending Account (...4444)'];
+  tracking.personal.kevin.mappedCardsNotFound = ['CREDIT CARD (...9999)'];
+  tracking.personal.kevin.cardBalances = [{
+    label: 'CREDIT CARD (...9999)',
+    balance: 0,
+    syncStatus: 'disconnected',
+    lastUpdated: '2026-09-30',
+  }];
+  applyAccountInventoryToTracking(tracking, INVENTORY_ACCOUNTS, { asOf: '2026-10-08' });
+  assert.equal(tracking.personal.kevin.mappedCardsNotFound, undefined);
+  const issues = collectDisconnectedAccountLabels(tracking);
+  assert.equal(issues.length, 0);
+  assert.equal(shouldAlertForMonarchSync({}, issues, new Date('2026-10-08T16:30:00Z')), false);
+});
+
 console.log('All budget-tracking-pull tests passed.');

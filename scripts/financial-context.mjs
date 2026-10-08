@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import { loadBudgetHabits } from './cycle-history.mjs';
 import { openDecisions } from './decisions.mjs';
+import { isRetiredAccountLabel } from './account-mapping.mjs';
 
 // Mirrors dashboard_v5.html's computeTrackerPacing(): weights by
 // days-in-bucket, not entry count, so a trailing partial week doesn't skew
@@ -111,16 +112,17 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       // 2026-09-20). Display only — the money is already inside the weeks.
       adjustments: tracker.adjustments || null,
       // Display only — reconnect/stale flags on mapped cards. Not pacing math.
-      cardBalances: Array.isArray(tracker.cardBalances) ? tracker.cardBalances : [],
+      cardBalances: dropRetiredCardRows(bt.mapping, tracker.cardBalances),
       // Mapped card labels the pull found no Monarch account for (2026-10-01).
       // Display only, and load-bearing: a card that dropped out of the mapping
       // makes this total low with nothing else anywhere saying why, so it has
       // to reach the reply (see trackerSyncWarning / remap_account).
-      mappedCardsNotFound: Array.isArray(tracker.mappedCardsNotFound) ? tracker.mappedCardsNotFound : [],
+      mappedCardsNotFound: dropRetiredLabels(bt.mapping, tracker.mappedCardsNotFound),
     };
   }
 
   return {
+    retiredAccountLabels: Array.isArray(bt.mapping?.retiredAccountLabels) ? bt.mapping.retiredAccountLabels : [],
     joint: {
       ...computeTrackerPacing(joint),
       target: joint.target,
@@ -130,10 +132,10 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
       adjustments: joint.adjustments || null,
       // Signed Monarch balances for the mapped joint cards (negative = owed).
       // Display only — not folded into weeks/pacing (AGENTS.md §2).
-      cardBalances: Array.isArray(joint.cardBalances) ? joint.cardBalances : [],
+      cardBalances: dropRetiredCardRows(bt.mapping, joint.cardBalances),
       // Same reason as the personal trackers above: a dangling card mapping
       // is why a total can be quietly incomplete.
-      mappedCardsNotFound: Array.isArray(joint.mappedCardsNotFound) ? joint.mappedCardsNotFound : [],
+      mappedCardsNotFound: dropRetiredLabels(bt.mapping, joint.mappedCardsNotFound),
       // Name+amount only — habits compare this cycle's mix to closed-cycle
       // usual shares. Merchant line items stay in loadTransactionDetail /
       // budgetLineItems, not in the financialContext dump the bot LLM sees.
@@ -142,6 +144,14 @@ export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
     personal,
     travel: bt.travel.trips.map((t) => ({ label: t.label, actual: t.actual, budgetedAmount: t.budgetedAmount })),
   };
+}
+
+function dropRetiredLabels(mapping, labels) {
+  return (labels || []).filter((l) => l && !isRetiredAccountLabel(mapping, l));
+}
+
+function dropRetiredCardRows(mapping, rows) {
+  return (rows || []).filter((r) => r && !isRetiredAccountLabel(mapping, r.label));
 }
 
 function sumOwnerAmounts(bucket) {

@@ -3671,6 +3671,19 @@ test('get_budget_status states a mapped card that is no longer in Monarch', () =
   assert.doesNotMatch(reply, /on track/, 'never call an incomplete total on track');
 });
 
+test('get_budget_status stays silent about a retired card even if leftover flags name it', () => {
+  const ctx = budgetCtx({
+    total: 1200,
+    mappedCardsNotFound: ['CREDIT CARD (...2222)'],
+    cardBalances: [{ label: 'CREDIT CARD (...2222)', syncStatus: 'disconnected' }],
+  });
+  ctx.budgetStatus.retiredAccountLabels = ['CREDIT CARD (...2222)'];
+  const { reply } = get_budget_status(ctx, {}, new Date('2026-08-12T12:00:00'));
+  assert.doesNotMatch(reply, /2222/);
+  assert.doesNotMatch(reply, /no longer in Monarch/i);
+  assert.doesNotMatch(reply, /disconnected/i);
+});
+
 test('loadBudgetStatus carries a dangling mapping flag through to the bot reply', () => {
   // The real path: budget_tracking.json -> loadBudgetStatus -> the reply. A
   // pass-through dropped here would silently restore the old behavior of a
@@ -3713,6 +3726,48 @@ test('loadBudgetStatus carries a dangling mapping flag through to the bot reply'
   const { reply } = get_budget_status({ budgetStatus: status }, {}, new Date('2026-09-05T12:00:00'));
   assert.match(reply, /Household Mastercard \(\.\.\.1111\)/);
   assert.match(reply, /CREDIT CARD \(\.\.\.2222\)/);
+});
+
+test('loadBudgetStatus drops a retired card so Georgina never sees it', () => {
+  const dir = path.join(tmpRoot, 'load-budget-status-retired-card');
+  fs.mkdirSync(dir, { recursive: true });
+  const btPath = path.join(dir, 'budget_tracking.json');
+  const goalsPath = path.join(dir, 'goals.json');
+  fs.writeFileSync(btPath, JSON.stringify({
+    mapping: { retiredAccountLabels: ['CREDIT CARD (...2222)'] },
+    joint: {
+      label: 'Joint household',
+      targetExpenseKey: 'Family budget',
+      cycleStart: '2026-08-25',
+      cycleDays: 30,
+      weeks: [{ weekOf: 'Aug 25-31', actual: 400, days: 7 }],
+      categories: [],
+    },
+    personal: {
+      kevin: {
+        label: 'Kevin personal',
+        targetExpenseKey: 'Kevin personal',
+        cycleStart: '2026-08-25',
+        cycleDays: 30,
+        weeks: [{ weekOf: 'Aug 25-31', actual: 100, days: 7 }],
+        categories: [],
+        mappedCardsNotFound: ['CREDIT CARD (...2222)'],
+        cardBalances: [{ label: 'CREDIT CARD (...2222)', syncStatus: 'disconnected' }],
+      },
+    },
+    travel: { trips: [], unmatched: [] },
+  }, null, 2));
+  fs.writeFileSync(goalsPath, JSON.stringify({
+    owners: [{ id: 'kevin', displayName: 'Kevin' }],
+    phases: [{ id: 1, expenses: { 'Family budget': 5500, 'Kevin personal': 1000 } }],
+  }, null, 2));
+
+  const status = loadBudgetStatus(btPath, goalsPath);
+  assert.deepEqual(status.retiredAccountLabels, ['CREDIT CARD (...2222)']);
+  assert.deepEqual(status.personal.kevin.mappedCardsNotFound, []);
+  assert.deepEqual(status.personal.kevin.cardBalances, []);
+  const { reply } = get_budget_status({ budgetStatus: status }, {}, new Date('2026-09-05T12:00:00'));
+  assert.doesNotMatch(reply, /2222/);
 });
 
 test('TOOL_DEFS declares remap_account and keeps it apart from the other money tools', () => {

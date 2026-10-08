@@ -74,6 +74,7 @@
     "personalCycle": {
       "teddy": { "accountLabel": "CREDIT CARD (...1111)", "startDay": 16 }
     },
-    "travelCategoryNames": ["Travel & Vacation"]
+    "travelCategoryNames": ["Travel & Vacation"],
+    "retiredAccountLabels": []
   }
 }

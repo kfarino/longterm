@@ -1405,11 +1405,11 @@ export const REMINDER_TOOL_NAMES = new Set(['add_reminder', 'list_reminders', 'c
  * (loadBudgetStatus), the same math the dashboard's trackers use.
  */
 export function get_budget_status(financialContext, input = {}, now = new Date()) {
-  const { joint, personal, travel } = financialContext.budgetStatus;
+  const { joint, personal, travel, retiredAccountLabels } = financialContext.budgetStatus;
   const paceLine = (label, t) => {
     if (!t) return `${label}: no data yet.`;
     const left = t.target - t.total;
-    const syncIssue = trackerSyncWarning(t);
+    const syncIssue = trackerSyncWarning(t, retiredAccountLabels);
     const g = syncIssue ? null : budgetGuidance(t, now);
     const leftLabel = left >= 0
       ? `${fmtMoney(left)} left`
@@ -1454,13 +1454,18 @@ function correctionSentence(tracker) {
  * stale mid-cycle: the logged total is incomplete. Always say so — including
  * when some spend already posted — or "$X logged / on track" reads as truth.
  */
-export function trackerSyncWarning(tracker) {
-  const issues = (tracker?.cardBalances || []).filter((r) => r?.syncStatus === 'needs_reconnect' || r?.syncStatus === 'disconnected' || r?.syncStatus === 'stale');
+export function trackerSyncWarning(tracker, retiredLabels = []) {
+  const retired = new Set((retiredLabels || []).map((l) => String(l).trim().toLowerCase()).filter(Boolean));
+  const isRetired = (label) => retired.has(String(label || '').trim().toLowerCase());
+  const issues = (tracker?.cardBalances || []).filter((r) => {
+    if (isRetired(r?.label)) return false;
+    return r?.syncStatus === 'needs_reconnect' || r?.syncStatus === 'disconnected' || r?.syncStatus === 'stale';
+  });
   // A mapped card the daily pull could not find in Monarch at all (card
   // replaced, re-linked, renumbered). Worse than a stale sync: those charges
   // are not late, they are not being counted at all — and until this line
   // existed, nothing said so, the total just read low (remap_account, 2026-10-01).
-  const dangling = (tracker?.mappedCardsNotFound || []).filter(Boolean);
+  const dangling = (tracker?.mappedCardsNotFound || []).filter((l) => l && !isRetired(l));
   if (!issues.length && !dangling.length) return '';
   const bits = dangling.map((l) => `${String(l).trim()} is mapped to this budget but is no longer in Monarch, so its charges are not counted (ask me to remap it to the right card)`);
   bits.push(...issues.map((r) => {

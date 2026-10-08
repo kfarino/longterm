@@ -27,6 +27,7 @@ import {
   remapTrackerLabel,
   accountCatalogFromAccounts,
   mappedLabelsMissingFromMonarch,
+  isRetiredAccountLabel,
 } from '../scripts/account-mapping.mjs';
 
 function test(name, fn) {
@@ -347,6 +348,15 @@ test('mappedLabelsMissingFromMonarch stays silent when Monarch returned no accou
   // Flagging every mapping on a bad pull would cry wolf on all of them.
   assert.deepEqual(mappedLabelsMissingFromMonarch(seedMapping(), []), {});
   assert.deepEqual(mappedLabelsMissingFromMonarch(seedMapping(), null), {});
+});
+
+test('a retired card is not flagged as missing even if it is still in the mapping', () => {
+  const mapping = seedMapping();
+  mapping.personalAccountLabels.kevin.push('CREDIT CARD (...9999)');
+  mapping.retiredAccountLabels = ['CREDIT CARD (...9999)'];
+  assert.equal(isRetiredAccountLabel(mapping, 'CREDIT CARD (...9999)'), true);
+  const live = seedCatalog().accounts.map((a) => a.label);
+  assert.deepEqual(mappedLabelsMissingFromMonarch(mapping, live), {});
 });
 
 console.log('All account-mapping tests passed.');

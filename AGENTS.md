@@ -289,7 +289,10 @@ the reply path could see Google at all. Rules that follow from it:
   `needs_reconnect`; `disconnected` still does not). It is cleared when the
   mapping is fixed — a warning that outlives its cause trains everyone to
   ignore warnings. An empty `get_accounts` response means a failed pull, not
-  that every card is gone, so nothing is flagged then.
+  that every card is gone, so nothing is flagged then. A card the household
+  retired on purpose (`mapping.retiredAccountLabels`) is the opposite: skip
+  it in inventory, alerts, budget status, and the recap. Replaced cards stay
+  in the ledger as history; paging about them is the bug, not the silence.
 - A decision that has been **settled** (an expected refund that posted, a
   question that got answered) → `resolve_decision`, not a second `log_decision`
   entry saying the first is done. It sets `status: "resolved"` and every "open

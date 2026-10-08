@@ -804,6 +804,7 @@ await asyncTest('recap prompt is four sections including Shows, never Health, an
   // its charges reach no tracker at all, so the recap's Budget figure is
   // incomplete for the same reason a stale sync makes it incomplete.
   assert.match(RECAP_SYSTEM_PROMPT, /mappedCardsNotFound/);
+  assert.match(RECAP_SYSTEM_PROMPT, /retiredAccountLabels/);
   assert.match(RECAP_SYSTEM_PROMPT, /Do not include a Health section/);
   assert.match(RECAP_SYSTEM_PROMPT, /Shows:/);
 });
