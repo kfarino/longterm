@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { isResolvedDecision, openDecisions, matchDecisionsByTitle, RESOLVED_STATUSES } from '../scripts/decisions.mjs';
+import { isResolvedDecision, isQuietDecision, openDecisions, actionableDecisions, matchDecisionsByTitle, RESOLVED_STATUSES } from '../scripts/decisions.mjs';
 import { loadDecisions } from '../scripts/financial-context.mjs';
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'decisions-test-'));
@@ -46,6 +46,22 @@ test('isResolvedDecision: resolved and closed both count, any casing; open statu
   assert.equal(isResolvedDecision({ title: 'No status' }), false);
   assert.equal(isResolvedDecision(null), false);
   assert.ok(RESOLVED_STATUSES.has('resolved') && RESOLVED_STATUSES.has('closed'));
+});
+
+test('isQuietDecision: good is off Georgina\'s list, even though it is not resolved', () => {
+  assert.equal(isQuietDecision({ status: 'good' }), true);
+  assert.equal(isQuietDecision({ status: 'resolved' }), true);
+  assert.equal(isQuietDecision({ status: 'active' }), false);
+  assert.equal(isQuietDecision({ status: 'watch' }), false);
+  assert.equal(isQuietDecision({ title: 'No status' }), false);
+});
+
+test('actionableDecisions: drops good and resolved, keeps items that still need attention', () => {
+  const list = sampleDecisions();
+  list.push({ status: 'good', title: 'Test cleared review', body: 'Cleared.', action: 'No further action' });
+  list[1] = { ...list[1], status: 'resolved', resolvedOn: '2026-08-30' };
+  assert.deepEqual(actionableDecisions(list).map((d) => d.title), ['Test urgent decision', 'Test watch decision']);
+  assert.ok(openDecisions(list).some((d) => d.status === 'good'), 'the dashboard can still show a green-light item');
 });
 
 test('openDecisions: drops resolved entries, preserves order of the rest', () => {
@@ -88,6 +104,15 @@ function writeGoals(name, decisions) {
   fs.writeFileSync(goalsPath, JSON.stringify({ decisions }, null, 2));
   return goalsPath;
 }
+
+test('loadDecisions: a good (cleared) decision never reaches the bot or the recap', () => {
+  const list = sampleDecisions();
+  list.push({ status: 'good', title: 'Test employment review — cleared', body: 'Cleared.', action: 'No further action' });
+  const goalsPath = writeGoals('load-good', list);
+  const loaded = loadDecisions(goalsPath);
+  assert.equal(loaded.length, 3);
+  assert.ok(!loaded.some((d) => /employment review/i.test(d.title)), 'a green-light item must not surface as something to talk about');
+});
 
 test('loadDecisions: a resolved decision never reaches the bot or the recap', () => {
   const list = sampleDecisions();

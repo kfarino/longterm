@@ -27,7 +27,7 @@ import { parseReminderTime, formatReminderTime, effectiveTime } from './reminder
 // Pure title-matching / open-vs-resolved helpers, shared with the recap, the
 // dashboard build and the goal-plan build so 'closed' means the same thing in
 // all four places (see resolve_decision).
-import { openDecisions, isResolvedDecision, matchDecisionsByTitle } from './decisions.mjs';
+import { actionableDecisions, isResolvedDecision, matchDecisionsByTitle } from './decisions.mjs';
 import { queryLedger, ledgerCoverage, resolveSearchWindow } from './transactions-store.mjs';
 // Pure card/account -> tracker mapping helpers, shared with
 // budget-tracking-pull.mjs so "which card feeds which budget" (and the
@@ -630,7 +630,7 @@ export function resolve_decision(goals, { title, note }) {
   const openMatches = matches.filter(({ decision }) => !isResolvedDecision(decision));
 
   if (!matches.length) {
-    const openTitles = openDecisions(all).map((d) => d.title).join(', ');
+    const openTitles = actionableDecisions(all).map((d) => d.title).join(', ');
     return {
       goals,
       reply: openTitles
@@ -1846,7 +1846,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'resolve_decision',
-    description: 'Close out an open decision in the real long-term plan once it has actually been settled — a question that got answered, an expected refund that posted, a choice that was made. Use this whenever someone says an item is done, settled, resolved, no longer pending, or that it keeps coming up even though it already happened. The decision stays in the plan as history, marked resolved, and stops appearing in the weekly recap and in get_decisions. This is a real immediate change — there is no review step. Do NOT log_decision a duplicate "this is done" entry instead.',
+    description: 'Close out an open decision in the real long-term plan once it has actually been settled — a question that got answered, an expected refund that posted, a choice that was made. Use this whenever someone says an item is done, settled, resolved, no longer pending, off the list, "we did that", "remove it from the list", or that it keeps coming up even though it already happened. The decision stays in the plan as history, marked resolved, and stops appearing in the weekly recap and in get_decisions. This is a real immediate change — there is no review step. Do NOT call get_decisions instead, and do NOT log_decision a duplicate "this is done" entry.',
     input_schema: {
       type: 'object',
       properties: {
@@ -1893,7 +1893,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_decisions',
-    description: 'List open decisions/action items (urgent ones first) with what needs to happen next.',
+    description: 'List decisions that still need attention (urgent, active, watch — urgent first) with what needs to happen next. Do not use this to re-state a cleared or green-light item; those are off the list. If someone says an item is done or should come off the list, call resolve_decision instead.',
     input_schema: { type: 'object', properties: {} },
   },
   {

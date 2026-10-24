@@ -24,9 +24,19 @@
 // being pedantic about which word it stored.
 export const RESOLVED_STATUSES = new Set(['resolved', 'closed']);
 
+// `good` is a green light, not a question. The dashboard can still show it;
+// Georgina and the recap must not keep citing it (Kevin, 2026-10-24 — a
+// cleared employment review kept coming up because "good" was treated as open).
+export const QUIET_STATUSES = new Set(['resolved', 'closed', 'good']);
+
 export function isResolvedDecision(decision) {
   if (!decision) return false;
   return RESOLVED_STATUSES.has(String(decision.status || '').toLowerCase());
+}
+
+export function isQuietDecision(decision) {
+  if (!decision) return false;
+  return QUIET_STATUSES.has(String(decision.status || '').toLowerCase());
 }
 
 // Note the default: a decision with no status at all is OPEN. A missing status
@@ -34,6 +44,11 @@ export function isResolvedDecision(decision) {
 // failure this module exists to fix, just in the other direction.
 export function openDecisions(decisions) {
   return (decisions || []).filter((d) => !isResolvedDecision(d));
+}
+
+// What Georgina and the recap are allowed to talk about: still needs attention.
+export function actionableDecisions(decisions) {
+  return (decisions || []).filter((d) => !isQuietDecision(d));
 }
 
 // Case-insensitive substring match on the title, returning EVERY candidate

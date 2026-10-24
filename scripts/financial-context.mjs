@@ -10,7 +10,7 @@
 // import this file, or vice versa).
 import fs from 'node:fs';
 import { loadBudgetHabits } from './cycle-history.mjs';
-import { openDecisions } from './decisions.mjs';
+import { actionableDecisions } from './decisions.mjs';
 import { isRetiredAccountLabel } from './account-mapping.mjs';
 
 // Mirrors dashboard_v5.html's computeTrackerPacing(): weights by
@@ -179,9 +179,11 @@ export function loadSavingsGoals(goalsPath, accountsPath) {
 // filtered out here, so neither the bot's get_decisions nor the Sun/Thu recap
 // can cite a decision that already happened. They stay in goals.json as
 // history — see scripts/decisions.mjs for why.
+// `good` is also quiet here (2026-10-24): a green-light / cleared item is
+// still on the dashboard, but Georgina must not keep listing it.
 export function loadDecisions(goalsPath) {
   const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
-  return openDecisions(goals.decisions);
+  return actionableDecisions(goals.decisions);
 }
 
 // Flattens the per-category/per-trip transaction line items budget_tracking.json

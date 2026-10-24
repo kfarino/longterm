@@ -294,13 +294,17 @@ the reply path could see Google at all. Rules that follow from it:
   it in inventory, alerts, budget status, and the recap. Replaced cards stay
   in the ledger as history; paging about them is the bug, not the silence.
 - A decision that has been **settled** (an expected refund that posted, a
-  question that got answered) → `resolve_decision`, not a second `log_decision`
-  entry saying the first is done. It sets `status: "resolved"` and every "open
-  decisions" surface filters through `scripts/decisions.mjs` — recap bundle,
-  `get_decisions`, dashboard tab, generated plan doc. Filter in that shared
-  helper, never per-consumer: a decision that goes quiet in one place and keeps
-  talking in another is the bug this replaced. Resolved entries stay in
-  `goals.json` as history; do not delete them.
+  question that got answered, "take it off the list") → `resolve_decision`,
+  not a second `log_decision` entry saying the first is done, and not
+  `get_decisions` (dumping the list is how a closed item kept coming up).
+  It sets `status: "resolved"` and every "open decisions" surface filters
+  through `scripts/decisions.mjs` — recap bundle, `get_decisions`, dashboard
+  tab, generated plan doc. Filter in that shared helper, never per-consumer:
+  a decision that goes quiet in one place and keeps talking in another is
+  the bug this replaced. Resolved entries stay in `goals.json` as history;
+  do not delete them. `status: "good"` is a green light: the dashboard may
+  still show it, but Georgina and the recap use `actionableDecisions` and
+  must not keep citing it.
 - An ask no existing tool can fulfill → `request_capability` (not a wrong
   card mapping — that is `remap_account` now). That files
   `data/bot-capability-requests.json` and detaches `scripts/claude-code-run.mjs`

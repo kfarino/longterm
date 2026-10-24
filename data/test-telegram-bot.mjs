@@ -55,6 +55,7 @@ const seedGoals = () => ({
   decisions: [
     { status: 'urgent', title: 'Urgent test decision', body: 'test body', action: 'Do the urgent thing' },
     { status: 'watch', title: 'Watch test decision', body: 'test body', action: 'Keep an eye on it' },
+    { status: 'good', title: 'Test cleared review', body: 'Cleared.', action: 'No further action' },
   ],
 });
 
@@ -1601,6 +1602,7 @@ await asyncTest('get_decisions: lists open decisions, urgent ones first', async 
   assert.ok(reply.includes('[urgent] Urgent test decision — Do the urgent thing'));
   assert.ok(reply.includes('[watch] Watch test decision — Keep an eye on it'));
   assert.ok(reply.indexOf('Urgent test decision') < reply.indexOf('Watch test decision'), 'urgent decisions should be listed first');
+  assert.ok(!reply.includes('Test cleared review'), 'a green-light item is off the talking list');
 });
 
 await asyncTest('search_transactions: finds a matching current-cycle line item by merchant, with its category and tracker', async () => {
@@ -2159,6 +2161,7 @@ await asyncTest('resolve_decision: an unknown title replies with what is actuall
   assert.equal(result.goalsChanged, false);
   assert.ok(result.sentReplies[0].includes("Couldn't find"));
   assert.ok(result.sentReplies[0].includes('Urgent test decision'), 'the reply names the open decisions it could have meant');
+  assert.ok(!result.sentReplies[0].includes('Test cleared review'), 'a green-light item is not something she should still be listing');
 });
 
 await asyncTest('resolve_decision: an already-resolved decision says so rather than reporting a fresh close-out', async () => {
@@ -2191,6 +2194,12 @@ await asyncTest('resolve_decision: a missing title replies with a clear error an
   const result = await runOnce(baseOpts(paths, { anthropicClient: mockAnthropic }));
   assert.equal(result.goalsChanged, false);
   assert.ok(result.sentReplies[0].includes('which decision'));
+});
+
+test('BOT_SYSTEM_PROMPT closes a settled item instead of listing it again', () => {
+  assert.match(BOT_SYSTEM_PROMPT, /off the list/);
+  assert.match(BOT_SYSTEM_PROMPT, /Never dump get_decisions instead of closing it/);
+  assert.match(BOT_SYSTEM_PROMPT, /status good/);
 });
 
 // --- Multi-turn clarification (2026-08-02): the bot waits for an answer instead of guessing or dead-ending ---
