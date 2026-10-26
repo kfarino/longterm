@@ -176,6 +176,21 @@ await test('jumpToTrajectory() does not double-construct Chart when Trajectory i
   assert.equal(chartCalls, 1, 'jumpToTrajectory must not construct Chart again for an already-open Trajectory section');
 });
 
+await test('Trajectory is current balances + savings controls, not income scenarios', () => {
+  const d = loadDashboard();
+  d.show('position', fakeTab());
+  d.showPosition('trajectory', fakeTab());
+  const html = d.elements['sub-trajectory'].innerHTML;
+  assert.ok(html.includes('Monthly savings'), 'side panel should have a monthly savings slider');
+  assert.ok(html.includes('Start saving'), 'side panel should have a start-year slider');
+  assert.ok(html.includes('Growth rate'), 'growth slider stays');
+  assert.ok(html.includes('Liquid/Cash rate'), 'liquid slider stays');
+  assert.ok(html.includes('Croatia budget'), 'Croatia budget slider stays');
+  assert.ok(!html.includes('Hanna scenario'), 'Hanna Fail/Neutral/Success/Croatia scenario row is gone');
+  assert.ok(!html.includes('Kevin $300K'), 'Kevin $300k year slider is gone');
+  assert.ok(!html.includes('scn-btn'), 'scenario buttons are gone');
+});
+
 await test('pg-budget mounts a pg-monthplan mount point, which itself renders real Month Plan content (no leftover stat-strip)', async () => {
   const d = loadDashboard();
   await d.initReady;

@@ -277,16 +277,9 @@
     "growthRate": 0.07,
     "liquidRate": 0.02,
     "croatiaK": 0,
-    "incomeStepYear": 2028,
-    "kevin300kYr": 2028,
-    "sabbaticalK": 0,
-    "sabbaticalYear": 2035,
     "croatiaYear": 2030,
-    "partnerScenario": "neutral",
-    "hannaScenario": "neutral",
-    "goPayoutYear": 2032,
-    "goPayout": 0,
-    "annualRetirementContribution": 46000
+    "monthlySavings": 0,
+    "saveStartYear": 2028
   },
   "lifestyleScenarios": {
     "croatia": {

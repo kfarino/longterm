@@ -171,16 +171,18 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .ms-title{font-size:14px;font-weight:600;color:var(--navy);margin-bottom:4px}
 .ms-detail{font-size:13px;color:var(--mid);line-height:1.7}
 .chart-panel{background:#fff;border:1px solid var(--rule);border-radius:3px;padding:22px 26px}
+.chart-layout{display:grid;grid-template-columns:1fr 220px;gap:22px;align-items:start}
+.chart-main{min-width:0}
+.chart-side{border-left:1px solid var(--rule2);padding:2px 0 0 20px}
+.chart-side .ctrl-label{margin-top:16px}
+.chart-side .ctrl-label:first-child{margin-top:0}
+.chart-side-note{font-size:12px;color:var(--mid);line-height:1.45;margin-top:14px}
 .chart-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 24px;padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid var(--rule2)}
 .ctrl-label{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sub);margin-bottom:7px}
 .ctrl-row{display:flex;align-items:center;gap:8px}
 .ctrl-row input[type=range]{flex:1;height:3px;-webkit-appearance:none;appearance:none;background:var(--rule);border-radius:2px;outline:none}
 .ctrl-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--navy);cursor:pointer}
 .ctrl-val{font-size:14px;font-weight:600;min-width:44px;text-align:right;color:var(--navy)}
-.scn-row{display:flex;gap:4px}
-.scn-btn{flex:1;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:6px 4px;border:1px solid var(--rule);background:#fff;color:var(--sub);border-radius:3px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
-.scn-btn:hover{border-color:var(--navy);color:var(--navy)}
-.scn-btn.active{background:var(--navy);border-color:var(--navy);color:#fff}
 .chart-legend{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:12px}
 .leg{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mid)}
 .leg-line{width:20px;height:2px}
@@ -216,6 +218,8 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
   .content{padding:20px}
   .g2,.g3,.dining-grid,.venue-cats{grid-template-columns:1fr}
   .m4,.m3{grid-template-columns:1fr 1fr}
+  .chart-layout{grid-template-columns:1fr}
+  .chart-side{border-left:none;border-top:1px solid var(--rule2);padding:18px 0 0}
   .chart-controls{grid-template-columns:1fr 1fr}
   .stat-strip{grid-template-columns:1fr 1fr}
   .stat-strip.stat-strip-3{grid-template-columns:1fr 1fr}
@@ -505,8 +509,7 @@ function renderGoalsSection() {
       </div>`;
   }).join('');
 
-  const c = D.chart;
-  const proj = computeProjection(c.growthRate, c.liquidRate, c.croatiaK, c.kevin300kYr, c.sabbaticalK, c.sabbaticalYear, c.croatiaYear, c.hannaScenario);
+  const proj = projectFromChart();
   const ret2050 = proj.ret[YEARS.indexOf(2050)];
 
   return `
@@ -2130,133 +2133,106 @@ function milestoneLines() {
     .filter(m => m && YEARS.includes(m.yr));
 }
 
-// Phase-boundary and contribution logic both derive from D.phases directly
-// (never hand-typed duplicate figures) so the chart can't silently drift out
-// of sync with the Phases tab.
-// Neutral and Fail land Hanna at the same $300K-equivalent income on the
-// same timeline (startup stabilizing vs. a new job by Jan 2029 are just two
-// different paths to the identical number) — so they share the same phase
-// boundaries. Only "Go" changes the trajectory math (the one-time payout,
-// applied separately in computeProjection).
-// Phase 1 (dual income, pre-transition) is a brief window inside the same
-// coarse annual step 2026 already collapses to 6 months — the trajectory
-// model has no sub-year resolution, so 2026 uses Phase 2's (the startup
-// transition's) contribution rate rather than gaining its own chart segment.
-function phaseForYear(yr, kv) {
-  if (yr < kv) return 2;
-  if (yr < 2030) return 3;
-  if (yr < 2039) return 4;
-  if (yr < 2045) return 5;
-  return 6;
-}
-function phaseContribution(phase, bucket) {
-  return (phase?.allocation || []).filter(a => a.bucket === bucket).reduce((sum,a) => sum + a.amount, 0);
+// Trajectory is today's investable balances (retirement + brokerage + cash)
+// compounded forward. No phase income, no Hanna scenarios, no Kevin $300k
+// step. Extra savings are a single monthly rate that starts in a chosen year
+// and lands in brokerage. Croatia is an optional one-time brokerage draw.
+function chartDefaults() {
+  const c = D.chart || {};
+  return {
+    growthRate: Number(c.growthRate) || 0,
+    liquidRate: Number(c.liquidRate) || 0,
+    croatiaK: Number(c.croatiaK) || 0,
+    croatiaYear: Number(c.croatiaYear) || 2033,
+    monthlySavings: Number(c.monthlySavings) || 0,
+    saveStartYear: Number(c.saveStartYear) || 2027,
+  };
 }
 
-// Croatia lifestyle (Trajectory alternate): surplus = Kevin income + LA rental − rent − living budget.
-// Cap order: Kevin brokerage first (min of Phase-1 Kevin brokerage + surplus), then retirement with remainder.
-function croatiaLifestyle() {
-  return D.lifestyleScenarios?.croatia || null;
-}
-function croatiaMonthlySurplus() {
-  const ls = croatiaLifestyle();
-  if (!ls) return 0;
-  const kevinIncome = Number(ls.income?.Kevin ?? D.phases[0]?.income?.Kevin) || 0;
-  const la = Number(ls.income?.['LA rental surplus']) || 0;
-  const rent = Number(ls.expenses?.['Croatia rent']) || 0;
-  const living = Number(ls.expenses?.['Living budget (incl. personals)']) || 0;
-  return kevinIncome + la - rent - living;
-}
-function croatiaContributions(annualRetContrib) {
-  const ls = croatiaLifestyle();
-  const surplus = Math.max(0, croatiaMonthlySurplus());
-  const label = ls?.baseKevinBrokerageLabel || 'Kevin brokerage';
-  const baseKevinBrok = Number(
-    (D.phases[0]?.allocation || []).find(a => a.label === label)?.amount
-  ) || 0;
-  const brokMonthly = Math.min(baseKevinBrok, surplus);
-  const remaining = Math.max(0, surplus - brokMonthly);
-  const retMonthly = Math.min(annualRetContrib / 12, remaining);
-  return { brokMonthly, retMonthly, liqMonthly: 0, surplus };
+function projectFromChart() {
+  const c = chartDefaults();
+  return computeProjection(c.growthRate, c.liquidRate, c.croatiaK, c.monthlySavings, c.saveStartYear, c.croatiaYear);
 }
 
-function computeProjection(g, lr, cr, kv, sb, sabbaticalYear, croatiaYear, hannaScenario) {
-  const all = []; for (let y=2026;y<=2050;y++) all.push(y);
-  let ret=sumOwnerBucket(D.assets.retirement);
-  let brok=sumOwnerBucket(D.assets.brokerage);
-  let liq=sumOwnerBucket(D.assets.cash);
-  const cro = croatiaLifestyle();
-  const croStart = cro?.startYear ?? 2027;
-  const croatiaOn = hannaScenario === 'croatia' && cro;
-  const croMonthly = croatiaOn ? croatiaContributions(D.chart.annualRetirementContribution) : null;
-  const rA=[], bA=[], lA=[];
-  for (let i=0;i<all.length;i++) {
-    const yr=all[i], mo=yr===2026?6:12;
-    const ph = phaseForYear(yr, kv);
-    const phase = D.phases[ph-1];
-    let retContrib, brokContrib, liqContrib;
-    if (croatiaOn && yr >= croStart) {
-      retContrib  = croMonthly.retMonthly * mo;
-      brokContrib = croMonthly.brokMonthly * mo;
-      liqContrib  = croMonthly.liqMonthly * mo;
-    } else {
-      retContrib  = ph < D.phases.length ? D.chart.annualRetirementContribution * (mo/12) : 0;
-      brokContrib = phaseContribution(phase, 'brokerage') * mo;
-      liqContrib  = phaseContribution(phase, 'liquid') * mo;
+function computeProjection(g, lr, cr, monthlySavings, saveStartYear, croatiaYear) {
+  const all = [];
+  for (let y = 2026; y <= 2050; y++) all.push(y);
+  let ret = sumOwnerBucket(D.assets.retirement);
+  let brok = sumOwnerBucket(D.assets.brokerage);
+  let liq = sumOwnerBucket(D.assets.cash);
+  const saveMo = Number(monthlySavings) || 0;
+  const saveYr = Number(saveStartYear) || 2027;
+  const croYr = Number(croatiaYear) || 2033;
+  const croDraw = (Number(cr) || 0) * 1000;
+  const rA = [], bA = [], lA = [];
+  for (const yr of all) {
+    if (yr > 2026) {
+      ret *= (1 + g);
+      brok *= (1 + g);
+      liq *= (1 + lr);
+      if (yr >= saveYr) brok += saveMo * 12;
+      if (yr === croYr) brok = Math.max(0, brok - croDraw);
     }
-    ret  = ret  * (1+g)    + retContrib;
-    brok = brok * (1+g)    + brokContrib;
-    liq  = liq  * (1+lr)   + liqContrib;
-    if (yr === sabbaticalYear) liq  = Math.max(0, liq  - sb*1000);
-    if (yr === croatiaYear)    brok = Math.max(0, brok - cr*1000);
-    if (hannaScenario === 'go' && yr === D.chart.goPayoutYear) brok += D.chart.goPayout;
     rA.push(Math.round(ret));
-    bA.push(Math.round(Math.max(0,brok)));
-    lA.push(Math.round(Math.max(0,liq)));
+    bA.push(Math.round(Math.max(0, brok)));
+    lA.push(Math.round(Math.max(0, liq)));
   }
-  const get=(a,y)=>a[all.indexOf(y)];
-  const sR=YEARS.map(y=>get(rA,y)), sB=YEARS.map(y=>get(bA,y)), sL=YEARS.map(y=>get(lA,y));
-  return { ret:sR, brok:sB, liq:sL, tot:YEARS.map((_,i)=>sR[i]+sB[i]+sL[i]) };
+  const get = (a, y) => a[all.indexOf(y)];
+  const sR = YEARS.map(y => get(rA, y));
+  const sB = YEARS.map(y => get(bA, y));
+  const sL = YEARS.map(y => get(lA, y));
+  return { ret: sR, brok: sB, liq: sL, tot: YEARS.map((_, i) => sR[i] + sB[i] + sL[i]) };
+}
+
+function fmtSaveMo(n) {
+  return '$' + Math.round(Number(n) || 0).toLocaleString();
+}
+
+function savingsSideNote(monthly, startYear) {
+  if (!monthly) return 'Until you set a monthly rate, the chart is just today\'s balances compounding.';
+  return `From ${startYear}, ${fmtSaveMo(monthly)}/mo goes into brokerage. Until then, today\'s balances just compound.`;
 }
 
 function renderTrajectory() {
-  const kvYr = D.chart.kevin300kYr || D.chart.incomeStepYear || 2027;
-  if (!D.chart.kevin300kYr) D.chart.kevin300kYr = kvYr;
-  if (!D.chart.hannaScenario) D.chart.hannaScenario = 'neutral';
+  const c = chartDefaults();
+  D.chart.monthlySavings = c.monthlySavings;
+  D.chart.saveStartYear = c.saveStartYear;
   $('sub-trajectory').innerHTML = `
     <div class="content">
       <div class="slabel">Net worth trajectory</div>
       <div class="stat-strip">
-        <div class="stat-box"><div class="sb-label">Retirement by 2050</div><div class="sb-val" id="st-ret">—</div><div class="sb-note">Maxed 401K compounding</div></div>
-        <div class="stat-box"><div class="sb-label">Brokerage pre-Croatia</div><div class="sb-val" id="st-brok">—</div><div class="sb-note">By 2033 · largely self-funded</div></div>
-        <div class="stat-box"><div class="sb-label">Liquid pre-sabbatical</div><div class="sb-val" id="st-liq">—</div><div class="sb-note">2035 · before 2036 spend</div></div>
-        <div class="stat-box"><div class="sb-label">Total net worth 2050</div><div class="sb-val" id="st-tot">—</div><div class="sb-note">Base case · excl. company exit</div></div>
+        <div class="stat-box"><div class="sb-label">Today</div><div class="sb-val" id="st-now">—</div><div class="sb-note">Retirement + brokerage + cash</div></div>
+        <div class="stat-box"><div class="sb-label">Retirement by 2050</div><div class="sb-val" id="st-ret">—</div><div class="sb-note">Growth rate only</div></div>
+        <div class="stat-box"><div class="sb-label">Brokerage pre-Croatia</div><div class="sb-val" id="st-brok">—</div><div class="sb-note">Last year before the draw</div></div>
+        <div class="stat-box"><div class="sb-label">Investable 2050</div><div class="sb-val" id="st-tot">—</div><div class="sb-note">Excludes home equity</div></div>
       </div>
       <div class="chart-panel">
-        <div class="chart-controls">
-          <div><div class="ctrl-label" title="Applies to Retirement &amp; Brokerage only">Growth rate</div><div class="ctrl-row"><input type="range" id="sl-g" min="4" max="12" step="0.5" value="${D.chart.growthRate*100}"><span class="ctrl-val" id="lb-g">${(D.chart.growthRate*100).toFixed(1)}%</span></div></div>
-          <div><div class="ctrl-label" title="Applies to Liquid/Cash only — deliberately separate from Growth rate">Liquid/Cash rate</div><div class="ctrl-row"><input type="range" id="sl-lr" min="0" max="5" step="0.5" value="${D.chart.liquidRate*100}"><span class="ctrl-val" id="lb-lr">${(D.chart.liquidRate*100).toFixed(1)}%</span></div></div>
-          <div><div class="ctrl-label">Hanna scenario</div><div class="scn-row" id="scn-row">
-            <button class="scn-btn" data-v="fail">Fail</button>
-            <button class="scn-btn" data-v="neutral">Neutral</button>
-            <button class="scn-btn" data-v="go">Success</button>
-            <button class="scn-btn" data-v="croatia">Croatia</button>
+        <div class="chart-layout">
+          <div class="chart-main">
+            <div class="chart-controls">
+              <div><div class="ctrl-label" title="Applies to Retirement &amp; Brokerage only">Growth rate</div><div class="ctrl-row"><input type="range" id="sl-g" min="4" max="12" step="0.5" value="${c.growthRate*100}"><span class="ctrl-val" id="lb-g">${(c.growthRate*100).toFixed(1)}%</span></div></div>
+              <div><div class="ctrl-label" title="Applies to Liquid/Cash only — deliberately separate from Growth rate">Liquid/Cash rate</div><div class="ctrl-row"><input type="range" id="sl-lr" min="0" max="5" step="0.5" value="${c.liquidRate*100}"><span class="ctrl-val" id="lb-lr">${(c.liquidRate*100).toFixed(1)}%</span></div></div>
+              <div><div class="ctrl-label">Croatia budget</div><div class="ctrl-row"><input type="range" id="sl-c" min="0" max="1200" step="50" value="${c.croatiaK}"><span class="ctrl-val" id="lb-c">$${c.croatiaK}K</span></div></div>
+            </div>
+            <div class="chart-legend">
+              <div class="leg"><div class="leg-line" style="background:rgba(26,39,68,.6);border-top:2px dashed rgba(26,39,68,.5)"></div>Investable total</div>
+              <div class="leg"><div class="leg-line" style="background:#7a6230"></div>Retirement</div>
+              <div class="leg"><div class="leg-line" style="background:#1e4d8c"></div>Brokerage</div>
+              <div class="leg"><div class="leg-line" style="background:#2d6a3f"></div>Liquid</div>
+            </div>
+            <div class="chart-wrap"><canvas id="mc" role="img" aria-label="Net worth trajectory 2026–2050"></canvas></div>
+            <div class="chart-foot">
+              ${milestoneLines().map(({yr,short,color})=>`<div class="cev" style="color:${color}"><div class="ev-line" style="border-color:${color}"></div>${yr} ${short}</div>`).join('')}
+              <div style="margin-left:auto;font-size:13px;color:var(--sub)">Hover for values · 2026 is today</div>
+            </div>
           </div>
-          <div class="ctrl-note" id="croatia-lifestyle-note" style="display:none;font-size:12px;color:var(--sub);margin-top:6px;max-width:42rem;line-height:1.35"></div></div>
-          <div><div class="ctrl-label">Croatia budget</div><div class="ctrl-row"><input type="range" id="sl-c" min="400" max="1200" step="50" value="${D.chart.croatiaK}"><span class="ctrl-val" id="lb-c">$${D.chart.croatiaK}K</span></div></div>
-          <div><div class="ctrl-label">Kevin $300K year</div><div class="ctrl-row"><input type="range" id="sl-k" min="2027" max="2030" step="1" value="${kvYr}"><span class="ctrl-val" id="lb-k">${kvYr}</span></div></div>
-          <div><div class="ctrl-label" id="lb-sabbatical-title">Sabbatical cost</div><div class="ctrl-row"><input type="range" id="sl-s" min="80" max="250" step="10" value="${D.chart.sabbaticalK}"><span class="ctrl-val" id="lb-s">$${D.chart.sabbaticalK}K</span></div></div>
-        </div>
-        <div class="chart-legend">
-          <div class="leg"><div class="leg-line" style="background:rgba(26,39,68,.6);border-top:2px dashed rgba(26,39,68,.5)"></div>Total net worth</div>
-          <div class="leg"><div class="leg-line" style="background:#7a6230"></div>Retirement</div>
-          <div class="leg"><div class="leg-line" style="background:#1e4d8c"></div>Brokerage</div>
-          <div class="leg"><div class="leg-line" style="background:#2d6a3f"></div>Liquid</div>
-        </div>
-        <div class="chart-wrap"><canvas id="mc" role="img" aria-label="Net worth trajectory 2026–2050"></canvas></div>
-        <div class="chart-foot">
-          ${milestoneLines().map(({yr,short,color})=>`<div class="cev" style="color:${color}"><div class="ev-line" style="border-color:${color}"></div>${yr} ${short}</div>`).join('')}
-          <div style="margin-left:auto;font-size:13px;color:var(--sub)">Hover for values · sliders &amp; scenario buttons model outcomes</div>
+          <aside class="chart-side">
+            <div class="ctrl-label">Monthly savings</div>
+            <div class="ctrl-row"><input type="range" id="sl-s" min="0" max="15000" step="250" value="${c.monthlySavings}"><span class="ctrl-val" id="lb-s">${fmtSaveMo(c.monthlySavings)}</span></div>
+            <div class="ctrl-label">Start saving</div>
+            <div class="ctrl-row"><input type="range" id="sl-y" min="2026" max="2035" step="1" value="${c.saveStartYear}"><span class="ctrl-val" id="lb-y">${c.saveStartYear}</span></div>
+            <div class="chart-side-note" id="save-note">${savingsSideNote(c.monthlySavings, c.saveStartYear)}</div>
+          </aside>
         </div>
       </div>
     </div>`;
@@ -2269,16 +2245,13 @@ let chartInst = null;
 const overlayPlugin = {
   id:'ov',
   beforeDatasetsDraw(chart) {
-    const {ctx,scales:{x,y}}=chart, L=chart.data.labels, n=L.length-1;
+    const {ctx,scales:{x,y}}=chart, L=chart.data.labels;
     const xp=yr=>{const i=L.indexOf(yr);return i<0?null:x.getPixelForValue(i);};
-    const fill=(x1,x2,col)=>{if(!x1||!x2||x2<=x1)return;ctx.save();ctx.fillStyle=col;ctx.fillRect(x1,y.top,x2-x1,y.bottom-y.top);ctx.restore();};
     const div=px=>{if(!px)return;ctx.save();ctx.strokeStyle='rgba(0,0,0,.07)';ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(px,y.top);ctx.lineTo(px,y.bottom);ctx.stroke();ctx.restore();};
-    fill(xp(2026),xp(2027),  'rgba(122,98,48,.05)');
-    fill(xp(2027),xp(2030),  'rgba(45,106,63,.04)');
-    fill(xp(2030),xp(2039),  'rgba(122,46,36,.04)');
-    fill(xp(2039),xp(2045),  'rgba(74,48,112,.05)');
-    fill(xp(2045),x.getPixelForValue(n),'rgba(90,82,48,.04)');
-    [xp(2027),xp(2030),xp(2039),xp(2045)].forEach(div);
+    const saveYr = D.chart?.saveStartYear;
+    const croYr = D.chart?.croatiaYear;
+    if (saveYr) div(xp(saveYr));
+    if (croYr) div(xp(croYr));
   },
   afterDatasetsDraw(chart) {
     const {ctx,scales:{x,y}}=chart, L=chart.data.labels;
@@ -2302,8 +2275,7 @@ const overlayPlugin = {
 };
 
 function initChart() {
-  const c = D.chart;
-  const proj = computeProjection(c.growthRate, c.liquidRate, c.croatiaK, c.kevin300kYr, c.sabbaticalK, c.sabbaticalYear, c.croatiaYear, c.hannaScenario);
+  const proj = projectFromChart();
   const f = "'Source Sans 3',sans-serif";
 
   chartInst = new Chart($('mc'), {
@@ -2311,7 +2283,7 @@ function initChart() {
     data:{
       labels:YEARS,
       datasets:[
-        {label:'Total NW',   data:proj.tot,  borderColor:'rgba(26,39,68,.65)', borderWidth:2.5, borderDash:[7,4], pointRadius:0, fill:false, tension:.35},
+        {label:'Investable', data:proj.tot,  borderColor:'rgba(26,39,68,.65)', borderWidth:2.5, borderDash:[7,4], pointRadius:0, fill:false, tension:.35},
         {label:'Retirement', data:proj.ret,  borderColor:'#7a6230', borderWidth:1.5, pointRadius:0, fill:false, tension:.4},
         {label:'Brokerage',  data:proj.brok, borderColor:'#1e4d8c', borderWidth:1.5, pointRadius:0, fill:false, tension:.4},
         {label:'Liquid',     data:proj.liq,  borderColor:'#2d6a3f', borderWidth:1.5, pointRadius:0, fill:false, tension:.1},
@@ -2342,61 +2314,30 @@ function initChart() {
   });
 
   updateStats(proj);
-  syncScenarioUI();
 
-  ['sl-g','sl-lr','sl-c','sl-k','sl-s'].forEach(id=>{
+  ['sl-g','sl-lr','sl-c','sl-s','sl-y'].forEach(id=>{
     const el=$(id); if(!el)return;
     el.addEventListener('input',refreshChart);
   });
-  document.querySelectorAll('#scn-row .scn-btn').forEach(btn=>{
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('#scn-row .scn-btn').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      D.chart.hannaScenario = btn.dataset.v;
-      syncScenarioUI();
-      refreshChart();
-    });
-  });
-}
-
-function syncScenarioUI() {
-  const scn = D.chart.hannaScenario || 'neutral';
-  document.querySelectorAll('#scn-row .scn-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.v === scn);
-  });
-  const note = $('croatia-lifestyle-note');
-  const sabTitle = $('lb-sabbatical-title');
-  const cro = croatiaLifestyle();
-  if (note) {
-    if (scn === 'croatia' && cro) {
-      const c = croatiaContributions(D.chart.annualRetirementContribution);
-      const fmt = n => '$' + Math.round(n).toLocaleString();
-      note.style.display = 'block';
-      note.textContent =
-        `Croatia lifestyle from ${cro.startYear}: LA rental + living burn from goals · surplus ${fmt(c.surplus)}/mo ` +
-        `(Kevin brokerage ${fmt(c.brokMonthly)}, retirement ${fmt(c.retMonthly)}, Hanna $0). ` +
-        `Sabbatical still applies (${cro.sabbaticalFraming || 'alternate destination'}) · home purchase via Croatia budget slider.`;
-    } else {
-      note.style.display = 'none';
-      note.textContent = '';
-    }
-  }
-  if (sabTitle) {
-    sabTitle.textContent = scn === 'croatia'
-      ? 'Sabbatical cost (e.g. SA / Asia)'
-      : 'Sabbatical cost';
-  }
 }
 
 function refreshChart() {
   const g=parseFloat($('sl-g').value)/100, lr=parseFloat($('sl-lr').value)/100;
-  const cr=parseFloat($('sl-c').value), kv=parseInt($('sl-k').value), sb=parseFloat($('sl-s').value);
+  const cr=parseFloat($('sl-c').value);
+  const saveMo=parseFloat($('sl-s').value);
+  const saveYr=parseInt($('sl-y').value, 10);
   $('lb-g').textContent=(g*100).toFixed(1)+'%';
   $('lb-lr').textContent=(lr*100).toFixed(1)+'%';
   $('lb-c').textContent='$'+cr+'K';
-  $('lb-k').textContent=kv;
-  $('lb-s').textContent='$'+sb+'K';
-  const p=computeProjection(g,lr,cr,kv,sb,D.chart.sabbaticalYear,D.chart.croatiaYear,D.chart.hannaScenario);
+  if($('lb-s')) $('lb-s').textContent=fmtSaveMo(saveMo);
+  if($('lb-y')) $('lb-y').textContent=String(saveYr);
+  D.chart.growthRate = g;
+  D.chart.liquidRate = lr;
+  D.chart.croatiaK = cr;
+  D.chart.monthlySavings = saveMo;
+  D.chart.saveStartYear = saveYr;
+  if($('save-note')) $('save-note').textContent=savingsSideNote(saveMo, saveYr);
+  const p=computeProjection(g,lr,cr,saveMo,saveYr,D.chart.croatiaYear);
   chartInst.data.datasets[0].data=p.tot;
   chartInst.data.datasets[1].data=p.ret;
   chartInst.data.datasets[2].data=p.brok;
@@ -2408,12 +2349,12 @@ function refreshChart() {
 function updateStats(p) {
   const idx=yr=>YEARS.indexOf(yr);
   const f2=v=>v>=1000000?'$'+(v/1000000).toFixed(1)+'M':v>=1000?'$'+Math.round(v/1000)+'K':'$'+v;
+  const croYr = Number(D.chart?.croatiaYear) || 2033;
+  const preCro = croYr - 1;
+  if($('st-now')) $('st-now').textContent=f2(p.tot[idx(2026)]);
   if($('st-ret')) $('st-ret').textContent=f2(p.ret[idx(2050)]);
-  // 2032, not 2033 — the Croatia draw is applied during 2033's own step in
-  // computeProjection, so proj.brok[2033] is already POST-draw. 2032 is the
-  // last value before that withdrawal happens.
-  if($('st-brok'))$('st-brok').textContent=f2(p.brok[idx(2032)]);
-  if($('st-liq')) $('st-liq').textContent=f2(p.liq[idx(2035)]);
+  // Last year before the Croatia draw is applied (draw happens in croatiaYear).
+  if($('st-brok'))$('st-brok').textContent=f2(p.brok[idx(preCro)] ?? p.brok[idx(2032)]);
   if($('st-tot')) $('st-tot').textContent=f2(p.tot[idx(2050)]);
 }
 
