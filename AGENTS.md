@@ -81,6 +81,16 @@ file — usually no code change. The Telegram tool for the
 numeric id outright, because one written there matches no transaction ever
 and still looks like a successful remap.
 
+A mapped `accounts.json` `monarchId` that disappears from `get_accounts` leaves
+the last-seen balance forever — the pull does not clobber it, and until
+2026-10-25 it also said nothing (Hero 401k moved TriNet/Empower → Justworks;
+combined net worth sat on the old figure while Monarch showed the new one).
+`networth-pull.mjs` now lists `missingMappedAccounts`. Remap the new id; do
+not leave the dead one. Home equity / Zagreb / Marko Car / Royal London stay
+manual on purpose — Monarch's headline net worth will not match ours even
+when every mapped id is live (we include the UK pension, we do not subtract
+cards, and the house is a split manual field).
+
 ### Current-cycle view vs accumulating ledger
 - `budget_tracking.json` is **fully rebuilt** each pull for the **current**
   joint/personal/travel windows. Hand-edits there die on the next morning pull.

@@ -199,10 +199,17 @@ function writeJson(filePath, data) {
 function applyMapping(accountsJson, liveAccounts) {
   const byId = new Map(liveAccounts.map((a) => [String(a.id ?? a.account_id ?? a.name), a]));
   let updated = 0;
+  const missingMapped = [];
 
   for (const entry of accountsJson.mapping.accounts) {
     const live = byId.get(String(entry.monarchId));
-    if (!live) continue; // linked in our mapping but not seen in this pull — leave as-is, don't clobber
+    if (!live) {
+      // Leave the stored balance as-is — but do not stay silent. A 401k that
+      // moved providers (TriNet → Justworks, 2026-10-25) kept the last-seen
+      // figure forever because the old id simply never came back.
+      missingMapped.push(entry.label || entry.monarchId);
+      continue;
+    }
 
     const amount = Number(live.balance ?? live.currentBalance ?? live.amount);
     if (!Number.isFinite(amount)) continue;
@@ -225,7 +232,7 @@ function applyMapping(accountsJson, liveAccounts) {
     updated += 1;
   }
 
-  return updated;
+  return { updated, missingMapped };
 }
 
 async function main() {
@@ -253,7 +260,7 @@ async function main() {
     const liveAccounts = await fetchAccounts(client);
 
     const accountsJson = JSON.parse(fs.readFileSync(args.outputPath, 'utf8'));
-    const updated = applyMapping(accountsJson, liveAccounts);
+    const { updated, missingMapped } = applyMapping(accountsJson, liveAccounts);
     accountsJson.meta.asOf = new Date().toISOString().slice(0, 10);
 
     writeJson(args.outputPath, accountsJson);
@@ -265,11 +272,16 @@ async function main() {
       throw new Error(`build-data.mjs failed with exit code ${result.status}`);
     }
 
+    if (missingMapped.length > 0) {
+      console.error(`Mapped Monarch accounts not in this pull (balances left stale): ${missingMapped.join('; ')}`);
+    }
+
     console.log(JSON.stringify({
       ok: true,
       liveAccountCount: liveAccounts.length,
       mappedFieldsUpdated: updated,
       unmappedMappingEntries: accountsJson.mapping.accounts.length - updated,
+      missingMappedAccounts: missingMapped,
       outputPath: args.outputPath,
     }));
   } catch (error) {

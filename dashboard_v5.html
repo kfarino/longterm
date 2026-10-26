@@ -444,7 +444,7 @@ function renderStatusSection() {
   ).join('');
 
   $('sub-status').innerHTML = `
-    <div class="slabel">Today <span>Phase ${p1.id} of ${D.phases.length} — ${p1.name} · live as of ${D.family.asOf}</span></div>
+    <div class="slabel">Today <span>Phase ${p1.id} of ${D.phases.length} — ${p1.name} · balances as of ${D.accountsAsOf || D.family.asOf}</span></div>
     <div class="metrics m4">
       <div class="metric c-blue">
         <div class="mlabel">Monthly surplus</div>
