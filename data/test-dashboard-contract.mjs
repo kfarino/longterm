@@ -2,12 +2,11 @@
 //
 // Permanent regression test (NOT a temp task script — do not delete). Covers
 // dashboard_v5.html's core cross-cutting invariants for the
-// Budget / Current Position (Status+Trajectory sub-tabs) / Goals / Decisions
-// IA: lazy rendering boundaries, the "reveal container before constructing
-// Chart" ordering that jumpToTrajectory() once got backwards, and (since
-// 2026-07-31) Month Plan's storage — moved off localStorage onto a fetch()-
-// backed local API (see dashboard-server.mjs), which makes every Month Plan
-// read/write async now. Run with:
+// Now / Long term / Nights Out IA: lazy Long-term rendering, the "reveal
+// container before constructing Chart" ordering that jumpToTrajectory() once
+// got backwards, and (since 2026-07-31) Month Plan's storage — moved off
+// localStorage onto a fetch()-backed local API (see dashboard-server.mjs),
+// which makes every Month Plan read/write async now. Run with:
 //   node Longterm/data/test-dashboard-contract.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -36,124 +35,74 @@ async function test(name, fn) {
 
 console.log('test-dashboard-contract.mjs');
 
-await test('at load (no show() calls): budget/goals/decisions populated, position + sub-pages untouched', async () => {
+await test('at load: Now + Nights Out populated, Long term untouched', async () => {
   const d = loadDashboard();
-  await d.initReady; // renderBudgetTab() is async (Month Plan's storage is a fetch() call now)
-  assert.ok(d.elements['pg-budget'], 'pg-budget should have been rendered into');
-  assert.ok(d.elements['pg-budget'].innerHTML.length > 0, 'pg-budget should be populated');
-  assert.ok(d.elements['pg-goals'], 'pg-goals should have been rendered into');
-  assert.ok(d.elements['pg-goals'].innerHTML.length > 0, 'pg-goals should be populated');
-  assert.ok(d.elements['pg-decisions'], 'pg-decisions should have been rendered into');
-  assert.ok(d.elements['pg-decisions'].innerHTML.length > 0, 'pg-decisions should be populated');
+  await d.initReady;
+  assert.ok(d.elements['pg-now'], 'pg-now should have been rendered into');
+  assert.ok(d.elements['pg-now'].innerHTML.length > 0, 'pg-now should be populated');
+  assert.ok(d.elements['pg-now'].innerHTML.includes('This stretch'), 'Now opens with the 12-month context rail');
+  assert.ok(d.elements['pg-now'].innerHTML.includes('This month'), 'budget sits under the context rail');
   assert.ok(d.elements['pg-dining'], 'pg-dining should have been rendered into');
   assert.ok(d.elements['pg-dining'].innerHTML.length > 0, 'pg-dining should be populated');
 
-  assert.equal(d.elements['pg-position'], undefined, 'pg-position must never be touched before the tab is shown');
-  assert.equal(d.elements['sub-status'], undefined, 'sub-status must never be touched before the tab is shown');
-  assert.equal(d.elements['sub-trajectory'], undefined, 'sub-trajectory must never be touched before the tab is shown');
+  assert.equal(d.elements['pg-long'], undefined, 'pg-long must stay untouched until Long term is opened');
+  assert.equal(d.elements['sub-trajectory'], undefined, 'trajectory must stay untouched until Long term is opened');
 });
 
-await test("show('position', ...) populates Status but leaves Trajectory empty; Chart not constructed", () => {
+await test("show('long') constructs Chart once against an already-active page", () => {
   const d = loadDashboard();
   let chartCalls = 0;
-  global.Chart = function (ctx, cfg) { chartCalls++; this.data = cfg.data; this.update = () => {}; };
+  let activeAtConstruction = null;
+  global.Chart = function (ctx, cfg) {
+    chartCalls++;
+    activeAtConstruction = d.elements['pg-long'].classList.contains('active');
+    this.data = cfg.data;
+    this.update = () => {};
+  };
 
-  d.show('position', fakeTab());
+  d.show('long', fakeTab());
+  assert.equal(chartCalls, 1, 'Chart should construct on first Long term open');
+  assert.equal(activeAtConstruction, true, 'pg-long must already be active when Chart constructs');
+  assert.ok(d.elements['sub-trajectory'].innerHTML.length > 0, 'trajectory mount should be populated');
 
-  assert.ok(d.elements['sub-status'].innerHTML.length > 0, 'sub-status should be populated by show(position)');
-  // sub-trajectory is never even touched (getElementById never called for
-  // it) until its sub-tab is switched to — renderPositionTab() only renders
-  // Status eagerly, Trajectory stays lazy.
-  assert.equal(d.elements['sub-trajectory'], undefined, 'sub-trajectory must stay untouched until its sub-tab is opened (lazy)');
-  assert.equal(chartCalls, 0, 'Chart must not be constructed before Trajectory is ever opened');
+  d.show('now', fakeTab());
+  d.show('long', fakeTab());
+  assert.equal(chartCalls, 1, 'Chart must not construct a second time on switch-away-and-back');
 });
 
 await test('every tab switch resets scroll to the top of the page', () => {
-  // Regression (2026-08-06): the tabs differ a lot in height — Planner runs
-  // ~2000px with the month calendar and travel, Current Position ~1300px — and
-  // the browser only *clamps* the previous scroll offset to the shorter page
-  // rather than resetting it. Switching from a scrolled-down Planner therefore
-  // landed you partway down the new tab, looking at whitespace. Reported as
-  // "the dashboard isn't showing anything"; the content was always rendered,
-  // just scrolled past. Verified live in Chrome before and after the fix.
   const d = loadDashboard();
   const before = global.window.scrollCalls.length;
 
-  d.show('position', fakeTab());
-  d.show('goals', fakeTab());
-  d.show('decisions', fakeTab());
+  d.show('long', fakeTab());
+  d.show('dining', fakeTab());
+  d.show('now', fakeTab());
 
   const calls = global.window.scrollCalls.slice(before);
   assert.equal(calls.length, 3, 'each show() should reset scroll exactly once');
   for (const c of calls) assert.deepEqual(c, [0, 0], 'scroll should reset to the very top');
 });
 
-await test('switching Position sub-tabs also resets scroll', () => {
-  const d = loadDashboard();
-  d.show('position', fakeTab());
-  const before = global.window.scrollCalls.length;
-
-  d.showPosition('trajectory', fakeTab());
-
-  assert.deepEqual(global.window.scrollCalls.slice(before), [[0, 0]],
-    'Status and Trajectory are different heights — the same clamp-not-reset problem applies');
-});
-
-await test("Status no longer includes phase cards (moved to the Goals tab)", () => {
-  const d = loadDashboard();
-  d.show('position', fakeTab());
-  assert.ok(!d.elements['sub-status'].innerHTML.includes('phase-card'), 'Status should not render any .phase-card content');
-  assert.ok(d.elements['pg-goals'].innerHTML.includes('phase-card'), 'phase cards should render on the Goals tab instead');
-});
-
-await test('Status includes the savings-goal module, positioned right after the "Today" readout', () => {
-  const d = loadDashboard();
-  d.show('position', fakeTab());
-  const html = d.elements['sub-status'].innerHTML;
-  assert.ok(html.includes('Progress toward targets'), 'Status should include the savings-goal progress panel');
-  assert.ok(html.indexOf('Today') < html.indexOf('Progress toward targets'), 'savings goals should come after the Today module, not before it');
-});
-
-await test('a paused savings goal is labeled paused on Status', () => {
+await test('a paused savings goal is labeled paused on Long term', () => {
   const d = loadDashboard({
     goals: [{ name: 'Test Fund', targetAmount: 10000, current: 0, status: 'paused', color: '#2d6a3f', note: 'paused for test' }],
   });
-  d.show('position', fakeTab());
-  assert.ok(d.elements['sub-status'].innerHTML.includes('Test Fund (paused)'), 'paused goals should show the status next to the name');
+  d.show('long', fakeTab());
+  assert.ok(d.elements['pg-long'].innerHTML.includes('Test Fund (paused)'), 'paused goals should show the status next to the name');
 });
 
-await test('first showPosition(trajectory) constructs Chart once; switching away+back does not duplicate it', () => {
-  const d = loadDashboard();
-  let chartCalls = 0;
-  global.Chart = function (ctx, cfg) { chartCalls++; this.data = cfg.data; this.update = () => {}; };
-
-  d.show('position', fakeTab());
-  assert.equal(chartCalls, 0, 'sanity: Chart not yet constructed right after show(position)');
-
-  d.showPosition('trajectory', fakeTab());
-  assert.ok(d.elements['sub-trajectory'].innerHTML.length > 0, 'trajectory sub-page should be populated after opening');
-  assert.equal(chartCalls, 1, 'Chart should be constructed exactly once on first open');
-
-  d.showPosition('status', fakeTab()); // switch away
-  d.showPosition('trajectory', fakeTab()); // switch back
-  assert.equal(chartCalls, 1, 'Chart must not be constructed a second time on switch-away-and-back');
-});
-
-await test('jumpToTrajectory() called cold: switches to Current Position, constructs Chart once, only after the container is already active', () => {
+await test('jumpToTrajectory() called cold: opens Long term, constructs Chart once, only after the page is already active', () => {
   const d = loadDashboard();
   let chartCalls = 0;
   let activeAtConstruction = null;
   global.Chart = function (ctx, cfg) {
     chartCalls++;
-    // Captured *inside* the constructor — this is the specific check that
-    // would have caught the original bug, where renderTrajectory()/initChart()
-    // ran before the container was ever marked active/visible.
-    activeAtConstruction = d.elements['sub-trajectory'].classList.contains('active');
+    activeAtConstruction = d.elements['pg-long'].classList.contains('active');
     this.data = cfg.data;
     this.update = () => {};
   };
 
-  assert.equal(d.elements['pg-position'], undefined, 'sanity: Current Position must still be cold before jumpToTrajectory()');
+  assert.equal(d.elements['pg-long'], undefined, 'sanity: Long term must still be cold before jumpToTrajectory()');
 
   d.jumpToTrajectory();
 
@@ -161,25 +110,23 @@ await test('jumpToTrajectory() called cold: switches to Current Position, constr
   assert.equal(activeAtConstruction, true, 'container must already be marked active at the moment Chart is constructed');
 });
 
-await test('jumpToTrajectory() does not double-construct Chart when Trajectory is already open', () => {
+await test('jumpToTrajectory() does not double-construct Chart when Long term is already open', () => {
   const d = loadDashboard();
   let chartCalls = 0;
   global.Chart = function (ctx, cfg) { chartCalls++; this.data = cfg.data; this.update = () => {}; };
 
-  d.show('position', fakeTab());
-  d.showPosition('trajectory', fakeTab()); // open it directly first
-  assert.ok(d.elements['sub-trajectory'].classList.contains('active'));
+  d.show('long', fakeTab());
+  assert.ok(d.elements['pg-long'].classList.contains('active'));
   assert.equal(chartCalls, 1);
 
-  d.jumpToTrajectory(); // must be a no-op chart-wise since it's already open
+  d.jumpToTrajectory();
 
-  assert.equal(chartCalls, 1, 'jumpToTrajectory must not construct Chart again for an already-open Trajectory section');
+  assert.equal(chartCalls, 1, 'jumpToTrajectory must not construct Chart again for an already-open Long term page');
 });
 
 await test('Trajectory is current balances + savings controls, not income scenarios', () => {
   const d = loadDashboard();
-  d.show('position', fakeTab());
-  d.showPosition('trajectory', fakeTab());
+  d.show('long', fakeTab());
   const html = d.elements['sub-trajectory'].innerHTML;
   assert.ok(html.includes('Monthly savings'), 'side panel should have a monthly savings slider');
   assert.ok(html.includes('Start saving'), 'side panel should have a start-year slider');
@@ -191,51 +138,32 @@ await test('Trajectory is current balances + savings controls, not income scenar
   assert.ok(!html.includes('scn-btn'), 'scenario buttons are gone');
 });
 
-await test('pg-budget mounts a pg-monthplan mount point, which itself renders real Month Plan content (no leftover stat-strip)', async () => {
+await test('Now mounts a pg-monthplan mount point, which itself renders real Month Plan content (no leftover stat-strip)', async () => {
   const d = loadDashboard();
   await d.initReady;
-  assert.ok(d.elements['pg-budget'].innerHTML.includes('id="pg-monthplan"'), 'pg-budget should mount the pg-monthplan container');
+  assert.ok(d.elements['pg-now'].innerHTML.includes('id="pg-monthplan"'), 'pg-now should mount the pg-monthplan container');
   assert.ok(d.elements['pg-monthplan'], 'pg-monthplan should have been rendered into');
   assert.ok(d.elements['pg-monthplan'].innerHTML.includes('Month Plan'), 'pg-monthplan should contain real Month Plan content');
   assert.ok(!d.elements['pg-monthplan'].innerHTML.includes('Dining budget, rest of cycle'), 'the old dining-budget stat-strip should be gone from the calendar section');
 });
 
-await test('renderGoalsTab() renders phase cards and every merged D.timeline entry in order (savings goals live on Status instead)', () => {
+await test('Now stretch is rolling 12 months; later milestones sit on Long term', async () => {
   const d = loadDashboard();
-  const html = d.elements['pg-goals'].innerHTML;
-  assert.ok(!html.includes('Progress toward targets'), 'Goals tab should NOT include the savings-goal progress panel — that moved to Status');
-  assert.ok(html.includes('phase-card'), 'Goals tab should include the 6 phase cards');
-
-  // Search for the title inside its own ms-title wrapper, not a bare
-  // substring — some entries' detail text mentions another entry's title
-  // (e.g. the Sept 2026 entry's detail mentions "LexiCo breakpoint", which
-  // is also entry #6's own title), which would otherwise produce a false
-  // match at the wrong position.
-  const wrap = (t) => `<div class="ms-title">${t.title}</div>`;
-  d.D.timeline.forEach((t) => {
-    assert.ok(html.includes(wrap(t)), `timeline entry "${t.title}" should appear in Goals`);
-  });
-  const positions = d.D.timeline.map((t) => html.indexOf(wrap(t)));
-  for (let i = 1; i < positions.length; i += 1) {
-    assert.ok(positions[i] > positions[i - 1], `timeline entries should render in D.timeline order (entry ${i} out of order)`);
-  }
+  await d.initReady;
+  const nowHtml = d.elements['pg-now'].innerHTML;
+  assert.ok(nowHtml.includes('This stretch'), 'Now has the context rail');
+  assert.ok(nowHtml.includes('Decide') || nowHtml.includes('Milestone') || nowHtml.includes('Phase'), 'Now rail carries trigger cards');
+  d.show('long', fakeTab());
+  const longHtml = d.elements['pg-long'].innerHTML;
+  assert.ok(longHtml.includes('Later milestones') || longHtml.includes('Vienna') || longHtml.includes('Croatia'), 'Long term keeps far milestones');
 });
 
-await test('renderDecisionsTab(): renders decision cards (no goals, no timeline — "next steps" only)', () => {
-  const d = loadDashboard();
-  const html = d.elements['pg-decisions'].innerHTML;
-  assert.ok(html.includes('Immediate — this week'), 'should render the urgent-decisions panel');
-  assert.ok(html.includes('This quarter — 90 days'), 'should render the this-quarter panel');
-  assert.ok(!html.includes('ms-title'), 'the milestone timeline should not appear on the Decisions tab (it lives on Goals now)');
-  assert.ok(!html.includes('Progress toward targets'), 'savings goals should not appear on the Decisions tab');
-});
-
-await test('renderDecisionsTab() color-codes the Decisions nav tab when an urgent decision exists', () => {
+await test('Now tab is flagged urgent when an urgent decision exists', () => {
   const dUrgent = loadDashboard({ decisions: [{ status: 'urgent', title: 't', body: 'b', action: 'a' }] });
-  assert.ok(dUrgent.elements['ntab-decisions'].classList.contains('ntab-urgent'), 'nav tab should get ntab-urgent when an urgent decision exists');
+  assert.ok(dUrgent.elements['ntab-now'].classList.contains('ntab-urgent'), 'Now tab should get ntab-urgent when an urgent decision exists');
 
   const dCalm = loadDashboard({ decisions: [{ status: 'watch', title: 't', body: 'b', action: 'a' }] });
-  assert.ok(!dCalm.elements['ntab-decisions'].classList.contains('ntab-urgent'), 'nav tab should not be flagged urgent when nothing is urgent');
+  assert.ok(!dCalm.elements['ntab-now'].classList.contains('ntab-urgent'), 'Now tab should not be flagged urgent when nothing is urgent');
 });
 
 await test('computeTrackerPacing: on-pace vs over-pace variance sign', () => {
@@ -488,9 +416,14 @@ await test('liquidCashBreakdown: personal CC debt ignores positive checking', as
   await d.initReady;
 });
 
-await test('nav tab label reads "Planner" (renamed from "Budget")', () => {
+await test('nav tabs are Now, Long term, and Nights Out', () => {
   const html = readFileSync(join(here, '..', 'dashboard_v5.html'), 'utf8');
-  assert.ok(html.includes('id="ntab-budget"    onclick="show(\'budget\',this)">Planner<'), 'the Budget tab\'s visible label should now read Planner');
+  assert.ok(html.includes("onclick=\"show('now',this)\">Now<"), 'first tab is Now');
+  assert.ok(html.includes("onclick=\"show('long',this)\">Long term<"), 'second tab is Long term');
+  assert.ok(html.includes("onclick=\"show('dining',this)\">Nights Out<"), 'dining tab is labeled Nights Out');
+  assert.ok(!html.includes('>Planner<'), 'Planner tab is gone');
+  assert.ok(!html.includes('>Current Position<'), 'Current Position tab is gone');
+  assert.ok(!html.includes('>Dining + Shows<'), 'old Dining + Shows label is gone');
 });
 
 await test('renderTodosSection: renders open items with owner pills, omits null deadlines, shows age, hides done items, and renders weekly-goal progress in one list', () => {

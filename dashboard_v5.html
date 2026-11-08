@@ -34,6 +34,27 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 @keyframes fadeUp{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
 .content{max-width:1080px;margin:0 auto;padding:30px 40px 60px}
 .content .content{max-width:none;margin:0;padding:0}
+.rail{margin-bottom:18px}
+.rail .slabel{margin-top:0}
+.hscroll{
+  display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;
+  scroll-snap-type:x mandatory;padding:2px 2px 10px;margin:0 0 6px;
+  scrollbar-width:thin;
+}
+.hscroll::-webkit-scrollbar{height:6px}
+.hscroll::-webkit-scrollbar-thumb{background:var(--rule);border-radius:3px}
+.rail-card{
+  flex:0 0 252px;scroll-snap-align:start;background:#fff;
+  border:1px solid var(--rule);border-radius:3px;padding:14px 16px;
+}
+.rail-card.phase-card{flex-basis:280px;border-top-width:3px}
+.rail-kicker{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);margin-bottom:4px}
+.rail-title{font-size:14px;font-weight:700;color:var(--navy);line-height:1.3;margin-bottom:6px}
+.rail-body{font-size:12px;color:var(--mid);line-height:1.45;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.rail-card .pc-surplus{font-size:20px;margin:4px 0 2px}
+.rail-card .pc-note{font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:0}
+.rail-card .pc-name{margin-bottom:8px;padding-bottom:8px}
+.rail-empty{font-size:13px;color:var(--mid);padding:8px 0}
 .slabel{font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--sub);margin-bottom:14px;margin-top:30px;padding-bottom:8px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between}
 .slabel:first-child{margin-top:0}
 .metrics{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
@@ -241,18 +262,14 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 </div>
 
 <div class="nav">
-  <div class="ntab active"  id="ntab-budget"    onclick="show('budget',this)">Planner</div>
-  <div class="ntab"         id="ntab-position"  onclick="show('position',this)">Current Position</div>
-  <div class="ntab"         id="ntab-goals"     onclick="show('goals',this)">Goals</div>
-  <div class="ntab"         id="ntab-decisions" onclick="show('decisions',this)">Decisions</div>
-  <div class="ntab"         id="ntab-dining"    onclick="show('dining',this)">Dining + Shows</div>
+  <div class="ntab active" id="ntab-now"    onclick="show('now',this)">Now</div>
+  <div class="ntab"        id="ntab-long"   onclick="show('long',this)">Long term</div>
+  <div class="ntab"        id="ntab-dining" onclick="show('dining',this)">Nights Out</div>
 </div>
 
 <!-- pages filled by JS -->
-<div class="page active" id="pg-budget"></div>
-<div class="page"        id="pg-position"></div>
-<div class="page"        id="pg-goals"></div>
-<div class="page"        id="pg-decisions"></div>
+<div class="page active" id="pg-now"></div>
+<div class="page"        id="pg-long"></div>
 <div class="page"        id="pg-dining"></div>
 
 <script src="data/data.js"></script>
@@ -271,6 +288,75 @@ const $ = id => document.getElementById(id);
 const fmt  = n => '$' + Math.round(n).toLocaleString();
 const fmtM = n => n >= 1000000 ? '~$' + (n/1000000).toFixed(1) + 'M' : n >= 1000 ? '~$' + Math.round(n/1000) + 'K' : fmt(n);
 const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+// Now vs Long term: a rolling 12-month window from today. Goals, milestones,
+// trips, and decisions in that window are trigger cards on Now — context for
+// this month's plan — not their own tabs. Anything later lives on Long term.
+const NOW_WINDOW_MONTHS = 12;
+const MONTH_INDEX = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+function startOfLocalDay(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function addMonths(d, n) {
+  return new Date(d.getFullYear(), d.getMonth() + n, d.getDate());
+}
+function nowWindow() {
+  const start = startOfLocalDay();
+  return { start, end: addMonths(start, NOW_WINDOW_MONTHS) };
+}
+function parseLooseDate(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (/^now$/i.test(s)) return startOfLocalDay();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, day] = s.split('-').map(Number);
+    return new Date(y, m - 1, day);
+  }
+  const mdy = s.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}),?\s+(\d{4})$/i);
+  if (mdy) return new Date(Number(mdy[3]), MONTH_INDEX[mdy[1].slice(0, 3).toLowerCase()], Number(mdy[2]));
+  const my = s.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})$/i);
+  if (my) return new Date(Number(my[2]), MONTH_INDEX[my[1].slice(0, 3).toLowerCase()], 1);
+  const yr = s.match(/~?(\d{4})/);
+  if (yr) return new Date(Number(yr[1]), 0, 1);
+  return null;
+}
+function inNowWindow(dateLike) {
+  const d = dateLike instanceof Date ? dateLike : parseLooseDate(dateLike);
+  if (!d || Number.isNaN(d.getTime())) return false;
+  const { start, end } = nowWindow();
+  return d >= start && d < end;
+}
+function rangeOverlapsNow(startRaw, endRaw) {
+  const { start, end } = nowWindow();
+  const a = parseLooseDate(startRaw);
+  const b = parseLooseDate(endRaw) || a;
+  if (!a) return false;
+  return a < end && b >= start;
+}
+function phaseStartDate(p) {
+  const left = String(p?.period || '').split(/\s*(?:→|->|–|—)\s*/)[0];
+  return parseLooseDate(left);
+}
+function triggerCard({ kind, kicker, title, body, color }) {
+  const kickerStyle = color ? ` style="color:${color}"` : '';
+  return `<div class="rail-card">
+    <div class="rail-kicker"${kickerStyle}>${kind}${kicker ? ` · ${kicker}` : ''}</div>
+    <div class="rail-title">${title}</div>
+    <div class="rail-body">${body || ''}</div>
+  </div>`;
+}
+function hscroll(inner) {
+  if (!inner) return '';
+  return `<div class="hscroll">${inner}</div>`;
+}
+function rail(label, inner, emptyMsg) {
+  if (!inner) {
+    if (!emptyMsg) return '';
+    return `<div class="rail"><div class="slabel">${label}</div><div class="rail-empty">${emptyMsg}</div></div>`;
+  }
+  return `<div class="rail"><div class="slabel">${label}</div>${hscroll(inner)}</div>`;
+}
 
 function ownersList() { return D.owners || []; }
 function ownerIds() { return ownersList().map((o) => o.id); }
@@ -334,6 +420,98 @@ function liquidCashBreakdown() {
 function phaseIncome(p) { return Object.values(p.income).reduce((a,b)=>a+b,0); }
 function phaseExpenses(p) { return Object.values(p.expenses).reduce((a,b)=>a+b,0); }
 function phaseSurplus(p) { return phaseIncome(p) - phaseExpenses(p); }
+
+function nowStretchCards() {
+  const cards = [];
+  (D.phases || []).forEach((p, i) => {
+    const start = phaseStartDate(p);
+    if (i !== 0 && !inNowWindow(start)) return;
+    const sur = phaseSurplus(p);
+    cards.push(triggerCard({
+      kind: 'Phase',
+      kicker: p.period,
+      title: p.name + (i === 0 ? ' · current' : ''),
+      body: `${sur >= 0 ? '+' : ''}${fmt(sur)}/mo · ${p.note || ''}`,
+      color: p.color,
+    }));
+  });
+  (D.travel || []).filter((t) => t.startDate && rangeOverlapsNow(t.startDate, t.endDate)).forEach((t) => {
+    const budget = t.budgetedAmount == null ? 'already paid' : `budget ${fmt(t.budgetedAmount)}`;
+    cards.push(triggerCard({
+      kind: 'Trip',
+      kicker: `${t.startDate} → ${t.endDate}`,
+      title: t.trip || t.label || t.id,
+      body: budget,
+    }));
+  });
+  (D.timeline || []).filter((t) => inNowWindow(t.year)).forEach((t) => {
+    cards.push(triggerCard({
+      kind: 'Milestone',
+      kicker: t.year,
+      title: t.short || t.title,
+      body: t.detail || t.title,
+      color: t.dotColor,
+    }));
+  });
+  (D.decisions || []).filter((d) => d.status === 'urgent' || d.status === 'active').forEach((d) => {
+    cards.push(triggerCard({
+      kind: 'Decide',
+      kicker: d.status,
+      title: d.title,
+      body: d.action || d.body,
+    }));
+  });
+  (D.goals || []).filter((g) => inNowWindow(String(g.targetYear))).forEach((g) => {
+    const current = g.trackLiveBrokerage ? sumOwnerBucket(D.assets.brokerage) : g.current;
+    cards.push(triggerCard({
+      kind: 'Goal',
+      kicker: String(g.targetYear),
+      title: g.name,
+      body: `${fmtM(current)} / ${fmtM(g.targetAmount)}`,
+      color: g.color,
+    }));
+  });
+  return cards.join('');
+}
+
+function laterStretchCards(kind) {
+  if (kind === 'phases') {
+    return (D.phases || []).filter((p, i) => i !== 0 && !inNowWindow(phaseStartDate(p))).map((p) => {
+      const sur = phaseSurplus(p);
+      return triggerCard({
+        kind: 'Phase',
+        kicker: p.period,
+        title: p.name,
+        body: `${sur >= 0 ? '+' : ''}${fmt(sur)}/mo · ${p.note || ''}`,
+        color: p.color,
+      });
+    }).join('');
+  }
+  if (kind === 'milestones') {
+    return (D.timeline || []).filter((t) => !inNowWindow(t.year)).map((t) => triggerCard({
+      kind: 'Milestone',
+      kicker: t.year,
+      title: t.short || t.title,
+      body: t.detail || t.title,
+      color: t.dotColor,
+    })).join('');
+  }
+  if (kind === 'decisions') {
+    return (D.decisions || []).filter((d) => d.status !== 'urgent' && d.status !== 'active').map((d) => triggerCard({
+      kind: 'Watch',
+      kicker: d.status,
+      title: d.title,
+      body: d.action || d.body,
+    })).join('');
+  }
+  return '';
+}
+
+function markNowUrgent() {
+  const tab = $('ntab-now');
+  if (!tab) return;
+  tab.classList.toggle('ntab-urgent', (D.decisions || []).some((d) => d.status === 'urgent'));
+}
 
 function totalNW() {
   const a = D.assets;
@@ -530,43 +708,45 @@ function renderGoalsSection() {
 }
 
 /* ═══════════════════════════════
-   RENDER: CURRENT POSITION (2 sub-tabs: Status, Trajectory)
+   RENDER: LONG TERM (chart + later triggers)
    ═══════════════════════════════ */
-const renderedSections = new Set(); // sub-page ids: currently only 'trajectory' needs lazy rendering
-
-function renderPositionTab() {
-  $('pg-position').innerHTML = `
-    <div class="content">
-      <div class="subnav">
-        <div class="subtab active" id="subtab-status"     onclick="showPosition('status', this)">Status</div>
-        <div class="subtab"        id="subtab-trajectory" onclick="showPosition('trajectory', this)">Trajectory</div>
+function longAssetsHTML() {
+  const a = D.assets;
+  const futureAssetsHTML = (D.futureAssets || []).map((fa) =>
+    trHTML(`${fa.name} (${fa.owner})`, `${fmt(fa.value)} · accessible ${fa.accessibleYear}`, 'muted')
+  ).join('');
+  return `
+    <div class="g2">
+      <div class="panel">
+        <div class="ptitle">Asset allocation</div>
+        ${trHTML('Retirement — tax-advantaged', Math.round(sumOwnerBucket(a.retirement) / totalNW() * 100) + '%')}
+        ${trHTML('Brokerage — liquid, taxable', Math.round(sumOwnerBucket(a.brokerage) / totalNW() * 100) + '%')}
+        ${trHTML('Home equity', Math.round(sumOwnerBucket(a.homeEquity) / totalNW() * 100) + '%')}
+        ${trHTML('Cash', Math.round(sumOwnerBucket(a.cash) / totalNW() * 100) + '%')}
       </div>
-      <div class="subpage active" id="sub-status"></div>
-      <div class="subpage"        id="sub-trajectory"></div>
+      <div class="panel">
+        <div class="ptitle">Future assets (not liquid today)</div>
+        ${futureAssetsHTML}
+      </div>
     </div>`;
-
-  renderStatusSection();
 }
 
-function showPosition(id, el) {
-  document.querySelectorAll('#pg-position .subpage').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('#pg-position .subtab').forEach(t => t.classList.remove('active'));
-  $('sub-' + id).classList.add('active');
-  el.classList.add('active');
-  if (id === 'trajectory' && !renderedSections.has('trajectory')) {
-    renderTrajectory(); // reveal container first, then inject+initChart — order matters, see initChart()
-    renderedSections.add('trajectory');
-  }
-  // Same clamp-not-reset problem as show() — Status and Trajectory are very
-  // different heights, so switching between them from a scrolled position
-  // leaves you mid-page.
-  window.scrollTo(0, 0);
+function renderLongTab() {
+  $('pg-long').innerHTML = `
+    <div class="content">
+      <div id="sub-trajectory"></div>
+      ${rail('Later phases', laterStretchCards('phases'))}
+      ${rail('Later milestones', laterStretchCards('milestones'))}
+      ${rail('On the horizon', laterStretchCards('decisions'))}
+      ${renderGoalsSection()}
+      ${longAssetsHTML()}
+    </div>`;
+  renderTrajectory();
 }
 
 function jumpToTrajectory() {
-  show('position', $('ntab-position'));
-  showPosition('trajectory', $('subtab-trajectory'));
-  const el = $('sub-trajectory');
+  show('long', $('ntab-long'));
+  const el = $('mc') || $('sub-trajectory');
   if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -1418,50 +1598,32 @@ async function onTodoDone(btn) {
   }
 }
 
-async function renderBudgetTab() {
+async function renderNowTab() {
   const bt = D.budgetTracking;
   const liveTodos = await loadTodos();
   D.todos = liveTodos;
   const jointPersonalHtml = await renderSpendTrackers();
-  $('pg-budget').innerHTML = `
+  $('pg-now').innerHTML = `
     <div class="content">
+      ${rail('This stretch', nowStretchCards(), `Nothing in the next ${NOW_WINDOW_MONTHS} months.`)}
       ${renderTodosSection(liveTodos)}
-      <div class="slabel">Spend tracking</div>
+      <div class="slabel">This month</div>
       ${jointPersonalHtml}
       <div id="pg-monthplan"></div>
       ${renderTravelSummary(bt.travel)}
     </div>`;
   await renderMonthPlan();
+  markNowUrgent();
 }
+async function renderBudgetTab() { return renderNowTab(); }
 
 /* ═══════════════════════════════
    RENDER: GOALS (savings goals, 6 phases, timeline)
    ═══════════════════════════════ */
 function renderGoalsTab() {
-  // Merged timeline (goals.json's old separate milestones + decisionGates
-  // lists collapsed 2026-07-29 — they described mostly the same breakpoints
-  // twice, in two shapes, on two different tabs) using the same
-  // .milestone/.ms-spine/.ms-dot visual the old Goals tab already had.
-  const timelineHTML = D.timeline.map((t) => `
-    <div class="milestone">
-      <div class="ms-yr">${t.year}</div>
-      <div class="ms-spine"><div class="ms-dot" style="${t.dotColor ? 'background:' + t.dotColor : ''}"></div><div class="ms-line"></div></div>
-      <div class="ms-body">
-        <div class="ms-title">${t.title}</div>
-        <div class="ms-detail">${t.detail}</div>
-      </div>
-    </div>`).join('');
-
-  $('pg-goals').innerHTML = `
-    <div class="content">
-      <div class="slabel">Timeline</div>
-      <div class="panel">${timelineHTML}</div>
-
-      <div class="slabel">6 phases of the plan</div>
-      <div class="g3">${buildPhaseCardsHTML()}</div>
-    </div>`;
-
-  updateP6();
+  // Timeline and phase cards now live as trigger rails on Now (rolling 12
+  // months) and Long term (everything after). Kept as a named no-op so older
+  // harness exports do not throw.
 }
 
 /* ═══════════════════════════════
@@ -2087,39 +2249,7 @@ async function renderDiningShowsTab() {
    RENDER: DECISIONS (next steps)
    ═══════════════════════════════ */
 function renderDecisionsTab() {
-  const urgentDecs = D.decisions.filter(d => d.status === 'urgent');
-  const otherDecs  = D.decisions.filter(d => d.status !== 'urgent');
-
-  const decCard = d => `
-    <div class="decision">
-      <div class="dec-head">
-        <span class="dec-status ds-${d.status}">${d.status.charAt(0).toUpperCase()+d.status.slice(1)}</span>
-        <span class="dec-title">${d.title}</span>
-      </div>
-      <div class="dec-body">${d.body}</div>
-      <div class="dec-action">${d.action}</div>
-    </div>`;
-
-  $('pg-decisions').innerHTML = `
-    <div class="content">
-      <div class="slabel">Decisions &amp; actions</div>
-      <div class="g2">
-        <div class="panel">
-          <div class="ptitle">Immediate — this week</div>
-          ${urgentDecs.map(decCard).join('')}
-        </div>
-        <div class="panel">
-          <div class="ptitle">This quarter — 90 days</div>
-          ${otherDecs.map(decCard).join('')}
-        </div>
-      </div>
-    </div>`;
-
-  // Color-codes the Decisions nav tab itself when something's urgent,
-  // replacing the old Budget-tab peek banner — the signal lives on the tab
-  // you'd actually go act on, not a separate interruption elsewhere.
-  const tab = $('ntab-decisions');
-  if (tab) tab.classList.toggle('ntab-urgent', urgentDecs.length > 0);
+  markNowUrgent();
 }
 
 /* ═══════════════════════════════
@@ -2367,18 +2497,14 @@ function show(id, el) {
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.ntab').forEach(t=>t.classList.remove('active'));
   $('pg-'+id).classList.add('active');
-  el.classList.add('active');
-  if (id === 'position' && !rendered.has('position')) {
-    renderPositionTab();
-    rendered.add('position');
+  if (el) el.classList.add('active');
+  if (id === 'long' && !rendered.has('long')) {
+    renderLongTab();
+    rendered.add('long');
   }
-  // Reset scroll on every tab switch. The tabs differ a lot in height (Planner
-  // runs ~2000px with the month calendar and travel; Current Position is
-  // ~1300px), and the browser only *clamps* the old scroll offset to the new
-  // page instead of resetting it — so switching from a scrolled-down Planner
-  // landed you partway down the shorter tab, showing whitespace where the top
-  // of the page should be. Reported as "the dashboard isn't showing anything";
-  // the content was always rendered, just scrolled past.
+  // Reset scroll on every tab switch. Now (budget + month plan) and Long term
+  // (chart) differ a lot in height; the browser only *clamps* the old offset
+  // to the shorter page, which looked like a blank dashboard.
   window.scrollTo(0, 0);
 }
 
@@ -2386,16 +2512,13 @@ function show(id, el) {
    INIT
    ═══════════════════════════════ */
 renderHeader();
-// renderBudgetTab() and renderDiningShowsTab() are both async (Month Plan's
-// storage and the Dining + Shows tab's favorite-places/venues/shows-cache
-// reads are all fetch() calls now, not localStorage/build-time data) — kept
-// as a named const, not a bare call, so the test harness can grab this
-// promise and await initial-render completion before asserting on
-// pg-budget's/pg-dining's content.
-const initReady = Promise.all([renderBudgetTab(), renderDiningShowsTab()]);
-renderGoalsTab();
-renderDecisionsTab();
-// Current Position (and, within it, Trajectory) render lazily — see show()/showPosition().
+// renderNowTab() and renderDiningShowsTab() are both async (Month Plan and
+// Nights Out live fetches). Named const so the test harness can await
+// initial-render completion before asserting on pg-now / pg-dining.
+const initReady = Promise.all([renderNowTab(), renderDiningShowsTab()]);
+markNowUrgent();
+// Long term (trajectory) renders lazily on first show('long') — Chart must
+// construct against an already-active container.
 </script>
 </body>
 </html>
