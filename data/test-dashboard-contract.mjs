@@ -216,6 +216,30 @@ await test('This stretch timeline places phases, trips, milestones, and decision
   assert.ok(!html.includes('class="hscroll"'), 'This stretch no longer uses the card scroller');
 });
 
+await test('marks at the left of This stretch keep a title next to the dot', async () => {
+  const d = loadDashboard({
+    timeline: [
+      { year: isoFromToday(0), short: 'Left gate', title: 'Left gate', detail: 'today fixture' },
+    ],
+    decisions: [
+      { status: 'active', date: isoFromToday(14), title: 'Left review', body: 'b', action: 'a' },
+    ],
+    travel: [],
+    goals: [],
+  });
+  await d.initReady;
+  const html = d.elements['pg-now'].innerHTML;
+  const mileOpen = html.match(/<span class="([^"]*)"[^>]*data-kind="milestone"[^>]*>/);
+  const decOpen = html.match(/<span class="([^"]*)"[^>]*data-kind="decision"[^>]*>/);
+  assert.ok(mileOpen, 'today milestone is on the axis');
+  assert.ok(!/\bnolabel\b/.test(mileOpen[1]), 'today milestone is not stripped of its title');
+  assert.ok(/\bfrom-left\b/.test(mileOpen[1]), 'today title hangs to the right of the dot so it stays on the canvas');
+  assert.ok(html.includes('Left gate'), 'milestone title is on the mark');
+  assert.ok(decOpen, 'near-left decision is on the axis');
+  assert.ok(!/\bnolabel\b/.test(decOpen[1]), 'the nearby decision keeps its title too');
+  assert.ok(html.includes('Left review'), 'decision title is on the mark');
+});
+
 await test('Now shows the Kevin $300k tracker and 9 hr/week clears the line', async () => {
   const d = loadDashboard({
     kevin300k: {

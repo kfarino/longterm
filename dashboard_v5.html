@@ -71,7 +71,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .stretch-gutter .g-months{height:14px}
 .stretch-gutter .g-phase{height:20px}
 .stretch-gutter .g-trip{height:18px}
-.stretch-gutter .g-marks{height:28px;align-items:flex-start;padding-top:4px}
+.stretch-gutter .g-marks{height:34px;align-items:flex-start;padding-top:4px}
 .stretch-plot{flex:1;min-width:0;position:relative;overflow:visible}
 .stretch-today{
   position:absolute;top:14px;bottom:0;width:1px;background:var(--navy);opacity:.4;
@@ -92,7 +92,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .stretch-lane{position:relative}
 .stretch-lane-phase{height:20px;margin-bottom:3px}
 .stretch-lane-trip{height:18px;margin-bottom:4px}
-.stretch-lane-marks{height:28px}
+.stretch-lane-marks{height:34px}
 .stretch-span{
   position:absolute;top:1px;height:16px;min-width:14px;border-radius:2px;
   color:#fff;font-size:10px;font-weight:600;line-height:16px;
@@ -134,7 +134,16 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 }
 .stretch-mark.stagger .stretch-mark-label{margin-top:12px}
 .stretch-mark.nolabel .stretch-mark-label{display:none}
-.stretch-mark.from-left{transform:none;align-items:flex-start}
+.stretch-mark.from-left{
+  transform:none;flex-direction:row;align-items:center;gap:5px;
+  max-width:none;z-index:4;
+}
+.stretch-mark.from-left .stretch-dot{margin-top:0}
+.stretch-mark.from-left .stretch-mark-label{
+  margin-top:0;text-align:left;max-width:132px;
+}
+.stretch-mark.from-left.stagger{top:14px}
+.stretch-mark.from-left.stagger .stretch-mark-label{margin-top:0}
 .stretch-legend{
   display:flex;flex-wrap:wrap;gap:8px 12px;margin:0;padding:0;
   font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--sub);
@@ -578,10 +587,11 @@ function nowStretchItems() {
   });
   return items;
 }
-function tripCanvasName(title) {
+function canvasName(title) {
   const parts = String(title || '').split(/\s*[—–]\s*/);
   return (parts[parts.length - 1] || title).trim();
 }
+function tripCanvasName(title) { return canvasName(title); }
 function nowStretchHTML() {
   const win = nowWindow();
   const items = nowStretchItems();
@@ -635,16 +645,21 @@ function nowStretchHTML() {
   let lastLabeled = -100;
   const markHtml = markGroups.map((g) => g.items.map((it, i) => {
     const clustered = g.items.length > 1;
-    const nearEdge = g.left < 6;
-    const close = g.left - lastLabeled < 8;
-    const showLabel = !clustered && !nearEdge && !close;
+    const nearEdge = g.left < 8;
+    const close = g.left - lastLabeled < 10;
+    const showLabel = i === 0;
     if (showLabel) lastLabeled = g.left;
     const status = it.status ? ` data-status="${it.status}"` : '';
-    const cls = ['stretch-mark', clustered || nearEdge ? 'nolabel' : '', showLabel && close ? 'stagger' : '', nearEdge ? 'from-left' : ''].filter(Boolean).join(' ');
-    const top = clustered ? `top:${i * 10}px;` : '';
+    const cls = [
+      'stretch-mark',
+      showLabel ? '' : 'nolabel',
+      showLabel && close ? 'stagger' : '',
+      nearEdge ? 'from-left' : '',
+    ].filter(Boolean).join(' ');
+    const top = clustered && i > 0 ? `top:${i * 10}px;` : '';
     return `<span class="${cls}" data-kind="${it.kind}" data-stretch-id="${it.id}"${status} style="left:${g.left.toFixed(2)}%;${top}" title="${esc(it.title)}">
       <i class="stretch-dot" style="${it.color && it.kind !== 'decision' ? `background:${esc(it.color)}` : ''}"></i>
-      <span class="stretch-mark-label">${esc(it.title)}</span>
+      <span class="stretch-mark-label">${esc(canvasName(it.title))}</span>
     </span>`;
   }).join('')).join('');
   const tripLane = trips.length
