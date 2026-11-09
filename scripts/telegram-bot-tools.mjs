@@ -407,8 +407,8 @@ export function classifyEventKind(title) {
   return null;
 }
 
-// kind 'family' = social/spend (Month Plan + Google); kind 'schedule' =
-// appointment/logistics (Google only — hidden from Month Plan budget view).
+// kind 'family' = social/spend; kind 'schedule' = appointment/logistics.
+// Both are pushed to the Family Google Calendar.
 // Hosting dinners default to ~$75 grocery cost (see familyEventBudgetFields);
 // schedule events stay cost:0. Recurrence materializes N concrete weekly events.
 export function add_family_event(monthPlanEvents, { date, title, time, recurrenceWeeks, durationHours, kind }) {
@@ -424,7 +424,7 @@ export function add_family_event(monthPlanEvents, { date, title, time, recurrenc
   if (!resolvedKind) {
     return {
       monthPlanEvents,
-      reply: `Is "${trimmedTitle}" a social/spend plan (shows on Month Plan) or just scheduling (Google Cal only)? Say which and I'll add it.`,
+      reply: `Is "${trimmedTitle}" a social/spend plan or just scheduling? Both go on Google Calendar. Say which and I'll add it.`,
       needsClarification: true,
     };
   }
@@ -1791,13 +1791,13 @@ export const TOOL_DEFS = [
   },
   {
     name: 'add_family_event',
-    description: 'Add a one-off event on a specific date that is NOT one of the 3 routine dining occasions (use set_dinner_plan for those). Classify with kind: "family" = social/spend (dinner with friends, birthday party — shows on Month Plan budget calendar); "schedule" = appointment/logistics (PT, pediatrician, school pickup — Google Calendar only, hidden from Month Plan). Prefer passing kind yourself from the user\'s wording; if truly ambiguous, omit kind and the tool will ask. Requires an explicit date: resolve relative days ("tomorrow", "Thursday") into YYYY-MM-DD using today from context.',
+    description: 'Add a one-off event on a specific date that is NOT one of the 3 routine dining occasions (use set_dinner_plan for those). Every added event is pushed to the Family Google Calendar. Classify with kind: "family" = social/spend (dinner with friends, birthday party); "schedule" = appointment/logistics (PT, pediatrician, school pickup). Prefer passing kind yourself from the user\'s wording; if truly ambiguous, omit kind and the tool will ask. Requires an explicit date: resolve relative days ("tomorrow", "Thursday") into YYYY-MM-DD using today from context.',
     input_schema: {
       type: 'object',
       properties: {
         date: { type: 'string', description: 'The event date as YYYY-MM-DD, resolved from whatever the user said using the current date in context.' },
         title: { type: 'string', description: 'A short description of the event.' },
-        kind: { type: 'string', enum: ['family', 'schedule'], description: 'family = social/spend (Month Plan); schedule = appointment (Google Cal only). Omit only if ambiguous — the tool will ask rather than guess.' },
+        kind: { type: 'string', enum: ['family', 'schedule'], description: 'family = social/spend; schedule = appointment. Both are written to Google Calendar. Omit only if ambiguous — the tool will ask rather than guess.' },
         time: { type: 'string', description: 'Time of day, only if the user gave an unambiguous one (explicit AM/PM, e.g. "9am", or 24-hour like "14:30"). Omit entirely if ambiguous (e.g. a bare "9") or not mentioned — do not guess AM/PM for a general event.' },
         recurrenceWeeks: { type: 'integer', description: 'If the user said this repeats weekly (e.g. "every Tuesday for the next 2 months"), how many weekly occurrences to create starting from date. Omit entirely for a one-off event.' },
         durationHours: { type: 'number', description: 'How long the event runs, in hours (e.g. 0.5 for 30 minutes), if the user gave one. Omit for the default 2-hour Calendar block.' },
@@ -2009,7 +2009,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_sync_status',
-    description: "Report whether the Month Plan is actually reaching Google Calendar right now, and how many saved events have not synced. Call this ANY time someone says an event is missing from their calendar, isn't showing up, or that you didn't really add something. Never speculate about why an event is missing (calendar visibility, app refresh, a stale event id) — check with this tool and report what it says. Read-only.",
+    description: "Report whether events Georgina adds are actually reaching Google Calendar right now, and how many saved events have not synced. Call this ANY time someone says an event is missing from their calendar, isn't showing up, or that you didn't really add something. Never speculate about why an event is missing (calendar visibility, app refresh, a stale event id) — check with this tool and report what it says. Read-only.",
     input_schema: { type: 'object', properties: {} },
   },
   {

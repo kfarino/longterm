@@ -980,7 +980,7 @@ A dining plan has two states: a live suggestion (nothing stored, recomputed each
 ## One-off events (anything that is not one of the 3 dining occasions)
 An appointment, school event, trip note, dinner with friends, poker night, any other one-off → add_family_event.
 - Resolve relative days ("tomorrow", "Thursday", "next Friday") into an explicit YYYY-MM-DD using today's date as the anchor.
-- kind "family" = social/spend (shows on the Month Plan). kind "schedule" = appointments/logistics (Google Calendar only). Classify from the title and pass kind; if genuinely ambiguous, ask.
+- kind "family" = social/spend. kind "schedule" = appointments/logistics. Both are written to Google Calendar. Classify from the title and pass kind; if genuinely ambiguous, ask.
 - Only pass time if they gave an unambiguous one (explicit AM/PM, or 24-hour). A general event has no "always evening" assumption to fall back on.
 - If they gave a time range ("7-11"), pass the start as time and the length as durationHours.
 - If it repeats weekly, pass recurrenceWeeks.
@@ -1070,7 +1070,7 @@ export function syncStatusReply({ authPausePath, monthPlanEvents, now = new Date
   const downFor = hours >= 24 ? `${Math.round(hours / 24)} day(s)` : `${hours} hour(s)`;
   return [
     `Google Calendar sync is DOWN (auth expired, down for ${downFor}).${backlog}`,
-    'Anything I add is saved to the Month Plan but is not reaching your calendars.',
+    'Anything I add is saved but is not reaching your calendars.',
     'Fix on the desktop: node scripts/calendar-auth-setup.mjs --reauth-only',
   ].join(' ');
 }
@@ -1104,10 +1104,10 @@ async function syncNowForReply(args) {
 export function calendarCaveatText(status) {
   if (!status) return null;
   if (status.state === 'down') {
-    return '⚠️ Saved to the Month Plan, but Google Calendar sync is down right now — this will NOT show up on your calendar until that is fixed. I have flagged it.';
+    return '⚠️ Saved, but Google Calendar sync is down right now — this will NOT show up on your calendar until that is fixed. I have flagged it.';
   }
   if (status.state === 'failed') {
-    return '⚠️ Saved to the Month Plan, but the sync to Google Calendar did not go through just now. I will retry automatically.';
+    return '⚠️ Saved, but the sync to Google Calendar did not go through just now. I will retry automatically.';
   }
   return null;
 }

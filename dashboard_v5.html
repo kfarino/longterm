@@ -1724,69 +1724,7 @@ async function computeMonthPlanProjectedSpend() {
 }
 
 async function renderMonthPlan() {
-  const joint = D.budgetTracking.joint;
-  const fp = D.favoritePlaces;
-  const favorites = fp ? fp.places : [];
-  const recentDiningActivity = fp ? fp.recentDiningActivity : [];
-  const routineOverrides = await loadRoutineOverrides();
-  const diningRoutine = effectiveDiningRoutine(D.diningRoutine, routineOverrides);
-  const lowKeyHangIdeas = D.lowKeyHangIdeas;
-  const state = await loadMonthPlanState();
-  const calloutHTML = fp
-    ? ''
-    : `<div class="callout">No favorites synced yet — ask Claude to sync your dining list from the Google Sheet. Ad-hoc events below still work; routine-day suggestions are limited until then.</div>`;
-
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const plan = planRemainingMonth(diningRoutine, joint, today, state.events, favorites, recentDiningActivity, lowKeyHangIdeas, D.travel);
-  const slotByDate = {};
-  plan.slots.forEach((s) => { (slotByDate[s.date] = slotByDate[s.date] || []).push(s); });
-
-  const localDateFromISO = (iso) => {
-    const [y, m, d] = iso.split('-').map(Number);
-    return new Date(y, m - 1, d);
-  };
-  const cycleStart = localDateFromISO(joint.cycleStart);
-  const cycleEnd = cycleEndDate(joint.cycleStart, joint.cycleDays);
-  const leadingBlanks = cycleStart.getDay();
-  const totalDays = Math.floor((cycleEnd - cycleStart) / 86400000) + 1;
-
-  const cells = [];
-  for (let i = 0; i < leadingBlanks; i += 1) cells.push('<div class="cal-cell cal-empty"></div>');
-  for (let i = 0; i < totalDays; i += 1) {
-    const day = new Date(cycleStart); day.setDate(day.getDate() + i);
-    const dISO = isoDate(day);
-    const isPast = day < today;
-    let body = '';
-    if (isPast) {
-      // Read-only history, built directly (not via buildEventChip, which
-      // is edit/remove-oriented and only knows tier symbols, not raw
-      // dollar amounts) — shows the real Monarch-verified spend, which
-      // always wins over whatever was planned for that date.
-      const matched = recentDiningActivity.filter((a) => a.date === dISO);
-      body = matched.map((a) =>
-        `<div class="cal-event-chip"><span>${a.matchedPlace || a.merchant} · ${fmt(a.amount)}</span></div>`
-      ).join('');
-    } else {
-      const daySlots = slotByDate[dISO] || [];
-      body = daySlots.map((s, idx) => buildEventChip(dISO, s, s.isLive ? 'live' : idx)).join('');
-    }
-    cells.push(`<div class="cal-cell${isPast ? ' cal-past' : ''}"><div class="cal-daynum">${day.getDate()}</div>${body}</div>`);
-  }
-
-  // The old "Dining budget, rest of cycle / Planned spend / Vs. budget"
-  // stat-strip that lived here moved into the Joint spend tracker on the
-  // Budget tab (see renderSpendTracker's plannedNote param) — that's where
-  // the actual budget-vs-target framing belongs; this section is just the
-  // calendar itself now.
-  $('pg-monthplan').innerHTML = `
-    <div class="content">
-      <div class="slabel">Month Plan</div>
-      ${calloutHTML}
-      <div class="cal-grid">
-        <div class="cal-cell cal-head">Sun</div><div class="cal-cell cal-head">Mon</div><div class="cal-cell cal-head">Tue</div><div class="cal-cell cal-head">Wed</div><div class="cal-cell cal-head">Thu</div><div class="cal-cell cal-head">Fri</div><div class="cal-cell cal-head">Sat</div>
-        ${cells.join('')}
-      </div>
-    </div>`;
+  // The household looks at Google Calendar. Dining suggestions stay in Georgina.
 }
 
 // Split from Travel — Joint + per-owner personal trackers lead the Budget tab
@@ -1794,7 +1732,6 @@ async function renderMonthPlan() {
 // a recurring monthly budget) stays below it.
 async function renderSpendTrackers() {
   const bt = D.budgetTracking;
-  const plannedSpend = await computeMonthPlanProjectedSpend();
   const personalHtml = ownersList().map((o) => {
     const tracker = bt.personal && bt.personal[o.id];
     if (!tracker) return '';
@@ -1802,7 +1739,7 @@ async function renderSpendTrackers() {
   }).join('');
   return `
     <div class="g2">
-      ${renderSpendTracker(bt.joint.label || 'Joint', bt.joint, 'drill-joint', plannedSpend)}
+      ${renderSpendTracker(bt.joint.label || 'Joint', bt.joint, 'drill-joint')}
       ${personalHtml}
     </div>`;
 }
@@ -1970,11 +1907,9 @@ async function renderNowTab() {
       ${renderKevin300kHTML(k300)}
       <div class="slabel">This month</div>
       ${jointPersonalHtml}
-      <div id="pg-monthplan"></div>
       ${renderTravelSummary(bt.travel)}
       ${renderTodosSection(liveTodos)}
     </div>`;
-  await renderMonthPlan();
   markNowUrgent();
 }
 async function renderBudgetTab() { return renderNowTab(); }

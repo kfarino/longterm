@@ -142,13 +142,14 @@ await test('Trajectory is current balances + savings controls, not income scenar
   assert.ok(!html.includes('scn-btn'), 'scenario buttons are gone');
 });
 
-await test('Now mounts a pg-monthplan mount point, which itself renders real Month Plan content (no leftover stat-strip)', async () => {
+await test('Now has no Month Plan calendar — that lives in Google Calendar', async () => {
   const d = loadDashboard();
   await d.initReady;
-  assert.ok(d.elements['pg-now'].innerHTML.includes('id="pg-monthplan"'), 'pg-now should mount the pg-monthplan container');
-  assert.ok(d.elements['pg-monthplan'], 'pg-monthplan should have been rendered into');
-  assert.ok(d.elements['pg-monthplan'].innerHTML.includes('Month Plan'), 'pg-monthplan should contain real Month Plan content');
-  assert.ok(!d.elements['pg-monthplan'].innerHTML.includes('Dining budget, rest of cycle'), 'the old dining-budget stat-strip should be gone from the calendar section');
+  const html = d.elements['pg-now'].innerHTML;
+  assert.ok(!html.includes('id="pg-monthplan"'), 'Now should not mount a Month Plan grid');
+  assert.ok(!html.includes('Month Plan'), 'the Month Plan heading stays off Now');
+  assert.ok(!html.includes('cal-grid'), 'no calendar grid on Now');
+  assert.ok(!html.includes('cal-ai-accent'), 'dining suggestions stay in Georgina, not on Now');
 });
 
 function isoFromToday(days) {
@@ -616,22 +617,7 @@ await test('loadMonthPlanState reads events through the fake fetch API (display-
   assert.deepEqual(state.events, { '2026-08-05': [{ name: 'Great White', tier: 'high' }] }, 'should read back the seeded events unchanged');
 });
 
-await test('a future day with a planned/live-suggested slot renders a plain, non-interactive chip', async () => {
-  // Three staleness / environment bugs this assertion has hit:
-  //  1. The seeded event carried no `kind`, but isBudgetPlanEvent() has
-  //     required kind 'dining'|'family' since 2026-08-04, so the chip was
-  //     filtered out and never rendered.
-  //  2. The date was hardcoded to 2026-08-10. Month Plan only draws today
-  //     through the cycle end, so the fixture silently stopped being a
-  //     "future day" once the real clock passed it — same class of bug as
-  //     get_dining_plan reading the real clock in test-telegram-recap.mjs.
-  //     Derived from today instead, so it can't rot again.
-  //  3. Tomorrow is still outside the calendar if data.js's joint cycle
-  //     already ended. CI seeds examples (cycleStart 2026-08-01, 31 days →
-  //     ended Aug 31); a developer machine with a live current-cycle
-  //     data.js still passed. Override the joint window so today+tomorrow
-  //     are always inside it. loadDashboard shallow-merges, so the override
-  //     must keep travel/personal shape renderBudgetTab() reads.
+await test('Now does not render a Month Plan calendar of Family events or dining chips', async () => {
   const today = isoDaysAgo(0);
   const tomorrow = isoDaysAgo(-1);
   const d = loadDashboard({
@@ -648,11 +634,9 @@ await test('a future day with a planned/live-suggested slot renders a plain, non
     },
   }, { [tomorrow]: [{ source: 'manual', kind: 'dining', name: 'Bestia', tier: 'high', cost: 120 }] });
   await d.initReady;
-  const html = d.elements['pg-monthplan'].innerHTML;
-  assert.ok(html.includes('Bestia'), 'the stored event should be displayed');
-  assert.ok(!html.includes('cal-add-event'), 'no "+ add event" control should render');
-  assert.ok(!html.includes('cal-event-form'), 'no edit/add form should render');
-  assert.ok(!html.includes('onclick'), 'Month Plan chips should carry no click handlers (display-only)');
+  const html = d.elements['pg-now'].innerHTML;
+  assert.ok(!html.includes('Bestia'), 'stored dining plans are Georgina-only');
+  assert.ok(!html.includes('cal-grid'), 'Google Calendar is the calendar, not Now');
 });
 
 // --- Bot-editable routine days (set_routine_day, via dining-routine-overrides.json) ---

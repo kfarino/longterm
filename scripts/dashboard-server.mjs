@@ -314,9 +314,9 @@ export function createServer(
   return http.createServer(async (req, res) => {
     const urlPath = req.url.split('?')[0];
 
-    // GET-only — the dashboard no longer edits Month Plan (that happens via
-    // the Telegram bot, which writes month_plan_events.json directly), so
-    // there is no PUT route here anymore.
+    // GET-only — Georgina writes month_plan_events.json directly. The
+    // dashboard no longer shows a Month Plan calendar (Google Calendar is
+    // the calendar). This route stays so dining tools can still be inspected.
     if (urlPath === '/api/month-plan-events' && req.method === 'GET') {
       sendJson(res, 200, readEvents(eventsPath));
       return;
