@@ -42,6 +42,10 @@ await test('at load: Now + Nights Out populated, Long term untouched', async () 
   assert.ok(d.elements['pg-now'].innerHTML.length > 0, 'pg-now should be populated');
   assert.ok(d.elements['pg-now'].innerHTML.includes('This stretch'), 'Now opens with the 12-month context rail');
   assert.ok(d.elements['pg-now'].innerHTML.includes('This month'), 'budget sits under the context rail');
+  assert.ok(
+    d.elements['pg-now'].innerHTML.indexOf('This month') < d.elements['pg-now'].innerHTML.indexOf('todos-wrap'),
+    'This month (the budget) comes before to-dos so it stays on screen',
+  );
   assert.ok(d.elements['pg-dining'], 'pg-dining should have been rendered into');
   assert.ok(d.elements['pg-dining'].innerHTML.length > 0, 'pg-dining should be populated');
 
@@ -204,6 +208,7 @@ await test('This stretch timeline places phases, trips, milestones, and decision
   assert.ok(html.includes('data-kind="trip"') && html.includes('Test Coast trip'), 'vacation is a span on the timeline');
   assert.ok(/stretch-trip-name[^>]*>Test Coast trip</.test(html), 'trip names sit on the canvas, not only in a tooltip');
   assert.ok(html.includes('stretch-legend'), 'a legend says what each mark is');
+  assert.ok(!html.includes('stretch-key'), 'the 9-row stretch key is gone — it buried the monthly budget');
   assert.ok(html.includes('data-kind="milestone"') && html.includes('Test gate'), 'in-window milestone is a mark');
   assert.ok(html.includes('data-kind="decision"') && html.includes('Test path decision'), 'open decision is a mark');
   assert.ok(html.includes('Test second decision'), 'a quoted body must not swallow the next key row');
@@ -226,6 +231,8 @@ await test('Now shows the Kevin $300k tracker and 9 hr/week clears the line', as
   assert.ok(html.includes('id="kevin-300k"'), 'Now mounts the Kevin $300k tracker');
   assert.ok(/Cleared/.test(html), 'planned 9 hr/week clears $300k');
   assert.ok(html.includes('Bill'), "Bill's cap is marked on the climb");
+  assert.ok(html.includes('k300-meta'), 'the climb is one slim line, not a stats grid');
+  assert.ok(!html.includes('k300-stats'), 'the bulky k300 stats grid must stay gone');
 });
 
 await test('a green-light decision is not a Now or Long-term trigger', async () => {

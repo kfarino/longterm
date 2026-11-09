@@ -32,7 +32,7 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .ntab.ntab-urgent:not(.active):hover{color:var(--red)}
 .page{display:none}.page.active{display:block;animation:fadeUp .2s ease}
 @keyframes fadeUp{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-.content{max-width:1080px;margin:0 auto;padding:30px 40px 60px}
+.content{max-width:1080px;margin:0 auto;padding:16px 40px 48px}
 .content .content{max-width:none;margin:0;padding:0}
 .rail{margin-bottom:18px}
 .rail .slabel{margin-top:0}
@@ -55,33 +55,33 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .rail-card .pc-note{font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:0}
 .rail-card .pc-name{margin-bottom:8px;padding-bottom:8px}
 .rail-empty{font-size:13px;color:var(--mid);padding:8px 0}
-.stretch{margin-bottom:22px}
-.stretch .slabel{margin-bottom:10px}
+.stretch{margin-bottom:8px}
+.stretch .slabel{margin-bottom:6px;padding-bottom:4px;align-items:center}
 .stretch-window{font-weight:400;letter-spacing:0;text-transform:none;color:var(--sub)}
 .stretch-tl{
-  display:flex;gap:12px;
+  display:flex;gap:10px;
   background:#fff;border:1px solid var(--rule);border-radius:3px;
-  padding:12px 16px 14px 12px;
+  padding:8px 12px 10px 10px;
 }
 .stretch-gutter{
-  width:3.6rem;flex-shrink:0;display:flex;flex-direction:column;
+  width:3.2rem;flex-shrink:0;display:flex;flex-direction:column;
   font-size:10px;font-weight:600;color:var(--sub);line-height:1.2;
 }
-.stretch-gutter > span{display:flex;align-items:flex-end;padding-bottom:4px}
-.stretch-gutter .g-months{height:16px}
-.stretch-gutter .g-phase{height:26px}
-.stretch-gutter .g-trip{height:36px}
-.stretch-gutter .g-marks{height:52px;align-items:flex-start;padding-top:6px}
+.stretch-gutter > span{display:flex;align-items:flex-end;padding-bottom:2px}
+.stretch-gutter .g-months{height:14px}
+.stretch-gutter .g-phase{height:20px}
+.stretch-gutter .g-trip{height:18px}
+.stretch-gutter .g-marks{height:28px;align-items:flex-start;padding-top:4px}
 .stretch-plot{flex:1;min-width:0;position:relative;overflow:visible}
 .stretch-today{
-  position:absolute;top:16px;bottom:0;width:1px;background:var(--navy);opacity:.4;
+  position:absolute;top:14px;bottom:0;width:1px;background:var(--navy);opacity:.4;
   pointer-events:none;z-index:2;
 }
 .stretch-today-cap{
   position:absolute;top:0;font-size:9px;font-weight:700;color:var(--navy);
   letter-spacing:.04em;transform:translateX(4px);white-space:nowrap;
 }
-.stretch-months{position:relative;height:16px;margin-bottom:4px}
+.stretch-months{position:relative;height:14px;margin-bottom:2px}
 .stretch-month{
   position:absolute;top:0;bottom:auto;
   font-size:10px;font-weight:600;color:var(--sub);
@@ -90,26 +90,26 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .stretch-grid{position:absolute;left:0;right:0;top:20px;bottom:0;pointer-events:none}
 .stretch-grid i{position:absolute;top:0;bottom:0;border-left:1px solid var(--rule2)}
 .stretch-lane{position:relative}
-.stretch-lane-phase{height:26px;margin-bottom:6px}
-.stretch-lane-trip{height:36px;margin-bottom:8px}
-.stretch-lane-marks{height:52px}
+.stretch-lane-phase{height:20px;margin-bottom:3px}
+.stretch-lane-trip{height:18px;margin-bottom:4px}
+.stretch-lane-marks{height:28px}
 .stretch-span{
-  position:absolute;top:2px;height:22px;min-width:14px;border-radius:2px;
-  color:#fff;font-size:11px;font-weight:600;line-height:22px;
-  padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;z-index:1;
+  position:absolute;top:1px;height:16px;min-width:14px;border-radius:2px;
+  color:#fff;font-size:10px;font-weight:600;line-height:16px;
+  padding:0 6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;z-index:1;
 }
-.stretch-span.tight{padding:0 4px}
+.stretch-span.tight{padding:0 3px}
 .stretch-trip{
-  position:absolute;top:2px;min-width:22px;z-index:1;
+  position:absolute;top:3px;min-width:18px;z-index:1;
 }
 .stretch-trip-bar{
-  display:block;height:9px;border-radius:1px;
+  display:block;height:8px;border-radius:1px;
   background:repeating-linear-gradient(-55deg, rgba(122,98,48,.45) 0 3px, rgba(122,98,48,.12) 3px 6px);
   border:1px solid var(--gold);box-sizing:border-box;
 }
 .stretch-trip-name{
-  display:block;margin-top:3px;padding-left:1px;
-  font-size:11px;font-weight:600;line-height:1.2;color:var(--gold);
+  position:absolute;left:100%;top:-3px;margin-left:5px;
+  font-size:10px;font-weight:600;line-height:1.2;color:var(--gold);
   white-space:nowrap;
 }
 .stretch-mark{
@@ -128,16 +128,16 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .stretch-mark[data-kind="decision"][data-status="urgent"] .stretch-dot{border-color:var(--red)}
 .stretch-mark[data-kind="goal"] .stretch-dot{border-radius:1px;background:var(--green)}
 .stretch-mark-label{
-  font-size:10px;line-height:1.25;color:var(--navy);text-align:center;
-  margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  font-size:10px;line-height:1.2;color:var(--navy);text-align:center;
+  margin-top:2px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;
   overflow:hidden;
 }
-.stretch-mark.stagger .stretch-mark-label{margin-top:18px}
+.stretch-mark.stagger .stretch-mark-label{margin-top:12px}
 .stretch-mark.nolabel .stretch-mark-label{display:none}
 .stretch-mark.from-left{transform:none;align-items:flex-start}
 .stretch-legend{
-  display:flex;flex-wrap:wrap;gap:10px 16px;margin:8px 0 0;padding:0 2px;
-  font-size:11px;color:var(--sub);
+  display:flex;flex-wrap:wrap;gap:8px 12px;margin:0;padding:0;
+  font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;color:var(--sub);
 }
 .stretch-legend span{display:inline-flex;align-items:center;gap:6px}
 .stretch-legend i{display:inline-block;flex-shrink:0}
@@ -148,40 +148,17 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 }
 .stretch-legend .lg-mile{width:8px;height:8px;border-radius:50%;background:var(--navy)}
 .stretch-legend .lg-dec{width:8px;height:8px;border-radius:50%;border:2px solid var(--gold);box-sizing:border-box}
-.stretch-key{
-  list-style:none;margin:10px 0 0;padding:0;
-  display:grid;grid-template-columns:12px 7.2rem 5.4rem minmax(0,1fr);
-  column-gap:10px;row-gap:5px;font-size:12px;
-}
-.stretch-key li{display:contents}
-.stretch-swatch{width:10px;height:10px;margin-top:4px;border-radius:1px;background:var(--navy)}
-.stretch-swatch[data-kind="trip"]{
-  background:repeating-linear-gradient(-55deg, rgba(122,98,48,.45) 0 3px, rgba(122,98,48,.12) 3px 6px);
-  border:1px solid var(--gold);box-sizing:border-box;
-}
-.stretch-swatch[data-kind="milestone"]{border-radius:50%}
-.stretch-swatch[data-kind="decision"]{border-radius:50%;background:transparent;border:2px solid var(--gold);box-sizing:border-box}
-.stretch-swatch[data-kind="goal"]{background:var(--green)}
-.stretch-key time{color:var(--sub);font-variant-numeric:tabular-nums}
-.stretch-key .stretch-kind{font-weight:600;color:var(--mid)}
-.stretch-key .stretch-what{color:var(--navy);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media (max-width:720px){
-  .stretch-mark-label{display:none}
-  .stretch-lane-marks{height:16px}
-  .stretch-gutter .g-marks{height:16px}
-  .stretch-span{font-size:10px;padding:0 5px}
-}
 .k300{
   background:#fff;border:1px solid var(--rule);border-radius:3px;
-  padding:18px 22px;margin:0 0 22px;
+  padding:8px 12px;margin:0 0 8px;
 }
-.k300-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:12px}
-.k300-title{font-size:15px;font-weight:700;color:var(--navy)}
-.k300-status{font-size:13px;font-weight:700;white-space:nowrap}
+.k300-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
+.k300-title{font-size:13px;font-weight:700;color:var(--navy)}
+.k300-status{font-size:12px;font-weight:700;white-space:nowrap}
 .k300-status.cleared{color:var(--green)}
 .k300-status.short{color:var(--gold)}
 .k300-track{
-  position:relative;height:16px;background:var(--bg);
+  position:relative;height:8px;background:var(--bg);
   border:1px solid var(--rule2);border-radius:3px;overflow:visible;
 }
 .k300-fill{
@@ -190,18 +167,16 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 }
 .k300-fill.cleared{border-radius:2px;background:var(--green)}
 .k300-cap{
-  position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--red);z-index:2;
+  position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--red);z-index:2;
 }
-.k300-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--sub);margin-top:8px}
-.k300-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
-.k300-stat .n{font-size:22px;font-weight:700;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}
-.k300-stat .l{font-size:11px;color:var(--sub);margin-top:3px}
-.k300-quota{margin-top:12px}
-.k300-quota-bar{height:6px;background:var(--bg);border:1px solid var(--rule2);border-radius:3px;overflow:hidden}
-.k300-quota-fill{height:100%;background:var(--navy)}
-.k300-quota-fill.over{background:var(--green)}
-.k300-note{font-size:12px;color:var(--mid);margin-top:12px;line-height:1.45}
-.slabel{font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--sub);margin-bottom:14px;margin-top:30px;padding-bottom:8px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between}
+.k300-meta{font-size:11px;color:var(--sub);margin-top:6px;line-height:1.35}
+@media (max-width:720px){
+  .stretch-mark-label{display:none}
+  .stretch-lane-marks{height:16px}
+  .stretch-gutter .g-marks{height:16px}
+  .stretch-span{font-size:10px;padding:0 5px}
+}
+.slabel{font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--sub);margin-bottom:10px;margin-top:16px;padding-bottom:6px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between}
 .slabel:first-child{margin-top:0}
 .metrics{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
 .m4{grid-template-columns:repeat(4,1fr)}.m3{grid-template-columns:repeat(3,1fr)}.m2{grid-template-columns:repeat(2,1fr)}
@@ -603,9 +578,6 @@ function nowStretchItems() {
   });
   return items;
 }
-function kindLabel(kind) {
-  return { phase: 'Phase', trip: 'Trip', milestone: 'Milestone', decision: 'Decision', goal: 'Goal' }[kind] || kind;
-}
 function tripCanvasName(title) {
   const parts = String(title || '').split(/\s*[—–]\s*/);
   return (parts[parts.length - 1] || title).trim();
@@ -613,7 +585,6 @@ function tripCanvasName(title) {
 function nowStretchHTML() {
   const win = nowWindow();
   const items = nowStretchItems();
-  const range = `${win.start.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} – ${win.end.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
   const monthTicks = [];
   {
     const firstLabel = win.start.toLocaleDateString('en-US', { month: 'short' });
@@ -676,17 +647,17 @@ function nowStretchHTML() {
       <span class="stretch-mark-label">${esc(it.title)}</span>
     </span>`;
   }).join('')).join('');
-  const key = [...items].sort((a, b) => a.start - b.start).map((it) => {
-    const when = it.lane === 'span' ? fmtSpanWhen(it.start < win.start ? win.start : it.start, it.end > win.end ? win.end : it.end) : fmtShortDay(it.start);
-    const swatchColor = it.kind === 'phase' && it.color ? ` style="background:${esc(it.color)}"` : '';
-    return `<li data-kind="${it.kind}" data-stretch-id="${it.id}"><i class="stretch-swatch" data-kind="${it.kind}"${swatchColor}></i><time>${esc(when)}</time><span class="stretch-kind">${kindLabel(it.kind)}</span><span class="stretch-what" title="${esc(it.body || '')}">${esc(it.title)}</span></li>`;
-  }).join('');
   const tripLane = trips.length
     ? `<div class="stretch-lane stretch-lane-trip">${tripSpans}</div>`
     : '';
   const tripGutter = trips.length ? `<span class="g-trip">Trips</span>` : '';
   return `<div class="stretch">
-    <div class="slabel">This stretch<span class="stretch-window">${range}</span></div>
+    <div class="slabel">This stretch<span class="stretch-legend">
+      <span><i class="lg-phase"></i>Phase</span>
+      <span><i class="lg-trip"></i>Trip</span>
+      <span><i class="lg-mile"></i>Milestone</span>
+      <span><i class="lg-dec"></i>Decision</span>
+    </span></div>
     <div class="stretch-tl">
       <div class="stretch-gutter">
         <span class="g-months"></span>
@@ -704,13 +675,6 @@ function nowStretchHTML() {
         <div class="stretch-lane stretch-lane-marks">${markHtml}</div>
       </div>
     </div>
-    <div class="stretch-legend">
-      <span><i class="lg-phase"></i>Phase</span>
-      <span><i class="lg-trip"></i>Trip</span>
-      <span><i class="lg-mile"></i>Milestone</span>
-      <span><i class="lg-dec"></i>Decision</span>
-    </div>
-    <ol class="stretch-key">${key}</ol>
   </div>`;
 }
 function triggerCard({ kind, kicker, title, body, color }) {
@@ -833,38 +797,14 @@ function renderKevin300kHTML(t) {
     ? `<span class="k300-status cleared">Cleared · ${fmtM(t.current)}</span>`
     : `<span class="k300-status short">${fmtM(Math.abs(t.gap))} to go</span>`;
   const weekHrs = t.hoursSource === 'helios' && t.hours7 != null ? t.hours7 : null;
-  const quota = weekHrs != null ? weekHrs : t.hoursPerWeek;
-  const quotaPct = t.hoursNeedWeek > 0 ? Math.min(100, (quota / t.hoursNeedWeek) * 100) : 0;
-  const quotaOver = quota >= t.hoursNeedWeek;
-  const quotaLabel = weekHrs != null
-    ? `This week ${fmtHrs(weekHrs)} hr · ${fmtHrs(t.hoursNeedWeek)} hr holds the line`
-    : `Pace ${fmtHrs(t.hoursPerWeek)} hr/wk · ${fmtHrs(t.hoursNeedWeek)} hr/wk holds the line`;
-  const sourceNote = t.hoursSource === 'helios'
-    ? 'Hours from the last 4 weeks on Helios.'
-    : 'Using planned Helios hours until the live log is linked.';
-  const capNote = t.billCapMonthly
-    ? ` Bill's ${fmt(t.billCapMonthly)}/mo cap lands at ${fmtM(t.atBillCap)} — ${t.atBillCap >= t.target ? 'still clears' : fmtM(t.target - t.atBillCap) + ' short of'} $300k.`
-    : '';
-  const resultNote = t.cleared
-    ? ` Past the line by ${fmtM(Math.abs(t.gap))}. Keep the hours; the cap is a floor, not the goal.`
-    : ` Need ${fmtHrs(t.hoursNeedWeek)} hr/week at ${fmt(t.rate)}/hr on top of Hero.`;
+  const weekBit = weekHrs != null ? ` · this week ${fmtHrs(weekHrs)} hr` : '';
   return `<div class="k300" id="kevin-300k">
     <div class="k300-head"><span class="k300-title">Kevin → $300k</span>${status}</div>
     <div class="k300-track">
       <div class="k300-fill${t.cleared ? ' cleared' : ''}" style="width:${t.climbPct.toFixed(1)}%"></div>
       ${t.capPct > 0 && t.capPct < 100 ? `<div class="k300-cap" style="left:${t.capPct.toFixed(1)}%" title="Bill's monthly cap"></div>` : ''}
     </div>
-    <div class="k300-scale"><span>${fmtM(t.base)} Hero</span><span>$300k</span></div>
-    <div class="k300-stats">
-      <div class="k300-stat"><div class="n">${fmtM(t.current)}</div><div class="l">Annualized pre-tax</div></div>
-      <div class="k300-stat"><div class="n">${fmtHrs(t.hoursPerWeek)}</div><div class="l">hr / week pace</div></div>
-      <div class="k300-stat"><div class="n">${fmt(t.overlayMonthly)}</div><div class="l">Helios $/mo pre-tax</div></div>
-    </div>
-    <div class="k300-quota">
-      <div class="k300-quota-bar"><div class="k300-quota-fill${quotaOver ? ' over' : ''}" style="width:${quotaPct.toFixed(1)}%"></div></div>
-      <div class="k300-note" style="margin-top:6px">${quotaLabel}</div>
-    </div>
-    <div class="k300-note">${sourceNote}${capNote}${resultNote}</div>
+    <div class="k300-meta">${fmtHrs(t.hoursPerWeek)} hr/wk${weekBit} · ${fmtHrs(t.hoursNeedWeek)} hr holds $300k · red tick is Bill's ${fmt(t.billCapMonthly)}/mo</div>
   </div>`;
 }
 async function loadKevin300k() {
@@ -2013,11 +1953,11 @@ async function renderNowTab() {
     <div class="content">
       ${nowStretchHTML()}
       ${renderKevin300kHTML(k300)}
-      ${renderTodosSection(liveTodos)}
       <div class="slabel">This month</div>
       ${jointPersonalHtml}
       <div id="pg-monthplan"></div>
       ${renderTravelSummary(bt.travel)}
+      ${renderTodosSection(liveTodos)}
     </div>`;
   await renderMonthPlan();
   markNowUrgent();
