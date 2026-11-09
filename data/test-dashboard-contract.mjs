@@ -209,6 +209,20 @@ await test('This stretch timeline places phases, trips, milestones, and decision
   assert.ok(!html.includes('class="hscroll"'), 'This stretch no longer uses the card scroller');
 });
 
+await test('a green-light decision is not a Now or Long-term trigger', async () => {
+  const d = loadDashboard({
+    decisions: [
+      { status: 'good', title: 'Test outgoing path', body: 'b', action: 'a' },
+      { status: 'watch', title: 'Test later watch', body: 'b', action: 'a' },
+    ],
+  });
+  await d.initReady;
+  assert.ok(!d.elements['pg-now'].innerHTML.includes('Test outgoing path'), 'good is not a Now decision mark');
+  d.show('long', fakeTab());
+  assert.ok(!d.elements['pg-long'].innerHTML.includes('Test outgoing path'), 'good is not a Long-term trigger card');
+  assert.ok(d.elements['pg-long'].innerHTML.includes('Test later watch'), 'watch items still sit on Long term');
+});
+
 await test('Now tab is flagged urgent when an urgent decision exists', () => {
   const dUrgent = loadDashboard({ decisions: [{ status: 'urgent', title: 't', body: 'b', action: 'a' }] });
   assert.ok(dUrgent.elements['ntab-now'].classList.contains('ntab-urgent'), 'Now tab should get ntab-urgent when an urgent decision exists');

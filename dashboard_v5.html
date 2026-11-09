@@ -752,7 +752,7 @@ function laterStretchCards(kind) {
     })).join('');
   }
   if (kind === 'decisions') {
-    return (D.decisions || []).filter((d) => d.status !== 'urgent' && d.status !== 'active').map((d) => triggerCard({
+    return (D.decisions || []).filter((d) => d.status === 'watch').map((d) => triggerCard({
       kind: 'Watch',
       kicker: d.status,
       title: d.title,
