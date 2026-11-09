@@ -202,6 +202,8 @@ await test('This stretch timeline places phases, trips, milestones, and decision
   assert.ok(html.includes('stretch-month'), 'month ticks mark the axis');
   assert.ok(html.includes('data-kind="phase"') && html.includes('Test current phase'), 'current phase is a span on the timeline');
   assert.ok(html.includes('data-kind="trip"') && html.includes('Test Coast trip'), 'vacation is a span on the timeline');
+  assert.ok(/stretch-trip-name[^>]*>Test Coast trip</.test(html), 'trip names sit on the canvas, not only in a tooltip');
+  assert.ok(html.includes('stretch-legend'), 'a legend says what each mark is');
   assert.ok(html.includes('data-kind="milestone"') && html.includes('Test gate'), 'in-window milestone is a mark');
   assert.ok(html.includes('data-kind="decision"') && html.includes('Test path decision'), 'open decision is a mark');
   assert.ok(html.includes('Test second decision'), 'a quoted body must not swallow the next key row');
