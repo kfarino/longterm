@@ -55,6 +55,93 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
 .rail-card .pc-note{font-size:12px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:0}
 .rail-card .pc-name{margin-bottom:8px;padding-bottom:8px}
 .rail-empty{font-size:13px;color:var(--mid);padding:8px 0}
+.stretch{margin-bottom:22px}
+.stretch .slabel{margin-bottom:10px}
+.stretch-window{font-weight:400;letter-spacing:0;text-transform:none;color:var(--sub)}
+.stretch-tl{
+  display:flex;gap:12px;
+  background:#fff;border:1px solid var(--rule);border-radius:3px;
+  padding:12px 16px 14px 12px;
+}
+.stretch-gutter{
+  width:3.6rem;flex-shrink:0;display:flex;flex-direction:column;
+  font-size:10px;font-weight:600;color:var(--sub);line-height:1.2;
+}
+.stretch-gutter > span{display:flex;align-items:flex-end;padding-bottom:4px}
+.stretch-gutter .g-months{height:16px}
+.stretch-gutter .g-phase{height:26px}
+.stretch-gutter .g-trip{height:22px}
+.stretch-gutter .g-marks{height:52px;align-items:flex-start;padding-top:6px}
+.stretch-plot{flex:1;min-width:0;position:relative;overflow:hidden}
+.stretch-today{
+  position:absolute;top:16px;bottom:0;width:1px;background:var(--navy);opacity:.4;
+  pointer-events:none;z-index:2;
+}
+.stretch-today-cap{
+  position:absolute;top:0;font-size:9px;font-weight:700;color:var(--navy);
+  letter-spacing:.04em;transform:translateX(4px);white-space:nowrap;
+}
+.stretch-months{position:relative;height:16px;margin-bottom:4px}
+.stretch-month{
+  position:absolute;top:0;bottom:auto;
+  font-size:10px;font-weight:600;color:var(--sub);
+  transform:translateX(-2px);white-space:nowrap;
+}
+.stretch-grid{position:absolute;left:0;right:0;top:20px;bottom:0;pointer-events:none}
+.stretch-grid i{position:absolute;top:0;bottom:0;border-left:1px solid var(--rule2)}
+.stretch-lane{position:relative}
+.stretch-lane-phase{height:26px;margin-bottom:6px}
+.stretch-lane-trip{height:22px;margin-bottom:8px}
+.stretch-lane-marks{height:52px}
+.stretch-span{
+  position:absolute;top:2px;height:22px;min-width:14px;border-radius:2px;
+  color:#fff;font-size:11px;font-weight:600;line-height:22px;
+  padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;z-index:1;
+}
+.stretch-span[data-kind="trip"]{
+  height:18px;top:2px;line-height:16px;min-width:28px;
+  background:rgba(122,98,48,.14);color:var(--gold);
+  border:1px solid var(--gold);padding:0 7px;
+}
+.stretch-span.tight{padding:0 4px}
+.stretch-mark{
+  position:absolute;top:0;transform:translateX(-50%);
+  background:none;border:0;padding:0;margin:0;
+  display:flex;flex-direction:column;align-items:center;
+  cursor:default;z-index:3;max-width:88px;
+}
+.stretch-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--navy);
+  margin-top:2px;flex-shrink:0;
+}
+.stretch-mark[data-kind="decision"] .stretch-dot{
+  background:transparent;border:2px solid var(--gold);width:8px;height:8px;box-sizing:border-box;
+}
+.stretch-mark[data-kind="decision"][data-status="urgent"] .stretch-dot{border-color:var(--red)}
+.stretch-mark[data-kind="goal"] .stretch-dot{border-radius:1px;background:var(--green)}
+.stretch-mark-label{
+  font-size:10px;line-height:1.25;color:var(--navy);text-align:center;
+  margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.stretch-mark.stagger .stretch-mark-label{margin-top:18px}
+.stretch-mark.nolabel .stretch-mark-label{display:none}
+.stretch-mark.from-left{transform:none;align-items:flex-start}
+.stretch-key{
+  list-style:none;margin:10px 0 0;padding:0;
+  display:grid;grid-template-columns:7.2rem 5.4rem minmax(0,1fr);
+  column-gap:10px;row-gap:5px;font-size:12px;
+}
+.stretch-key li{display:contents}
+.stretch-key time{color:var(--sub);font-variant-numeric:tabular-nums}
+.stretch-key .stretch-kind{font-weight:600;color:var(--mid)}
+.stretch-key .stretch-what{color:var(--navy);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:720px){
+  .stretch-mark-label{display:none}
+  .stretch-lane-marks{height:16px}
+  .stretch-gutter .g-marks{height:16px}
+  .stretch-span{font-size:10px;padding:0 5px}
+}
 .slabel{font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--sub);margin-bottom:14px;margin-top:30px;padding-bottom:8px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between}
 .slabel:first-child{margin-top:0}
 .metrics{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
@@ -290,7 +377,7 @@ const fmtM = n => n >= 1000000 ? '~$' + (n/1000000).toFixed(1) + 'M' : n >= 1000
 const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // Now vs Long term: a rolling 12-month window from today. Goals, milestones,
-// trips, and decisions in that window are trigger cards on Now — context for
+// trips, and decisions in that window sit on the Now timeline — context for
 // this month's plan — not their own tabs. Anything later lives on Long term.
 const NOW_WINDOW_MONTHS = 12;
 const MONTH_INDEX = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
@@ -337,6 +424,225 @@ function rangeOverlapsNow(startRaw, endRaw) {
 function phaseStartDate(p) {
   const left = String(p?.period || '').split(/\s*(?:→|->|–|—)\s*/)[0];
   return parseLooseDate(left);
+}
+function phaseEndDate(p, next) {
+  const right = String(p?.period || '').split(/\s*(?:→|->|–|—)\s*/)[1];
+  const parsed = parseLooseDate(right);
+  if (parsed) return parsed;
+  const nextStart = next ? phaseStartDate(next) : null;
+  return nextStart || null;
+}
+function axisPct(date, win) {
+  const span = win.end - win.start;
+  if (!(span > 0)) return 0;
+  return Math.max(0, Math.min(100, ((date - win.start) / span) * 100));
+}
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtShortDay(d) {
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function fmtSpanWhen(start, end) {
+  if (!end || isoDate(start) === isoDate(end)) return fmtShortDay(start);
+  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+    return `${fmtShortDay(start)}–${end.getDate()}`;
+  }
+  return `${fmtShortDay(start)}–${fmtShortDay(end)}`;
+}
+function decisionWhen(d, fallback) {
+  return parseLooseDate(d.year || d.by || d.due || d.date) || fallback;
+}
+function nowStretchItems() {
+  const win = nowWindow();
+  const items = [];
+  const phases = D.phases || [];
+  phases.forEach((p, i) => {
+    const start = phaseStartDate(p) || (i === 0 ? win.start : null);
+    if (!start) return;
+    const end = phaseEndDate(p, phases[i + 1]) || (i === 0 ? win.end : null);
+    if (!end) return;
+    if (end <= win.start || start >= win.end) return;
+    const sur = phaseSurplus(p);
+    items.push({
+      id: `phase-${p.id || i}`,
+      kind: 'phase',
+      lane: 'span',
+      start,
+      end,
+      title: p.name + (i === 0 ? ' · current' : ''),
+      when: p.period,
+      body: `${sur >= 0 ? '+' : ''}${fmt(sur)}/mo`,
+      color: p.color,
+    });
+  });
+  (D.travel || []).forEach((t, i) => {
+    if (!t.startDate || !rangeOverlapsNow(t.startDate, t.endDate)) return;
+    const start = parseLooseDate(t.startDate);
+    const end = parseLooseDate(t.endDate) || start;
+    if (!start) return;
+    const budget = t.budgetedAmount == null ? 'already paid' : `budget ${fmt(t.budgetedAmount)}`;
+    items.push({
+      id: `trip-${t.id || i}`,
+      kind: 'trip',
+      lane: 'span',
+      start,
+      end,
+      title: t.trip || t.label || t.id,
+      when: fmtSpanWhen(start, end),
+      body: budget,
+      color: 'var(--gold)',
+    });
+  });
+  (D.timeline || []).forEach((t, i) => {
+    if (!inNowWindow(t.year)) return;
+    const start = parseLooseDate(t.year);
+    if (!start) return;
+    items.push({
+      id: `mile-${i}`,
+      kind: 'milestone',
+      lane: 'mark',
+      start,
+      end: start,
+      title: t.short || t.title,
+      when: t.year,
+      body: t.detail || t.title,
+      color: t.dotColor,
+    });
+  });
+  (D.decisions || []).forEach((d, i) => {
+    if (d.status !== 'urgent' && d.status !== 'active') return;
+    const start = decisionWhen(d, win.start);
+    items.push({
+      id: `dec-${i}`,
+      kind: 'decision',
+      lane: 'mark',
+      start,
+      end: start,
+      title: d.title,
+      when: fmtShortDay(start),
+      body: d.action || d.body,
+      status: d.status,
+    });
+  });
+  (D.goals || []).forEach((g, i) => {
+    if (!inNowWindow(String(g.targetYear))) return;
+    const start = parseLooseDate(String(g.targetYear));
+    if (!start) return;
+    const current = g.trackLiveBrokerage ? sumOwnerBucket(D.assets.brokerage) : g.current;
+    items.push({
+      id: `goal-${i}`,
+      kind: 'goal',
+      lane: 'mark',
+      start,
+      end: start,
+      title: g.name,
+      when: String(g.targetYear),
+      body: `${fmtM(current)} / ${fmtM(g.targetAmount)}`,
+      color: g.color,
+    });
+  });
+  return items;
+}
+function kindLabel(kind) {
+  return { phase: 'Phase', trip: 'Trip', milestone: 'Milestone', decision: 'Decision', goal: 'Goal' }[kind] || kind;
+}
+function nowStretchHTML() {
+  const win = nowWindow();
+  const items = nowStretchItems();
+  const range = `${win.start.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} – ${win.end.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+  const monthTicks = [];
+  {
+    const firstLabel = win.start.toLocaleDateString('en-US', { month: 'short' });
+    monthTicks.push({ date: win.start, label: firstLabel });
+    let y = win.start.getFullYear();
+    let m = win.start.getMonth() + 1;
+    if (m === 12) { m = 0; y++; }
+    while (true) {
+      const d = new Date(y, m, 1);
+      if (d >= win.end) break;
+      monthTicks.push({ date: d, label: d.toLocaleDateString('en-US', { month: 'short' }) });
+      m++;
+      if (m === 12) { m = 0; y++; }
+    }
+  }
+  const months = monthTicks.map((t, i) => {
+    const left = axisPct(t.date, win);
+    if (i === 0 || left > 93) return '';
+    return `<span class="stretch-month" style="left:${left.toFixed(2)}%">${t.label}</span>`;
+  }).join('');
+  const grid = monthTicks.slice(1).map((t) => {
+    const left = axisPct(t.date, win);
+    if (left > 99) return '';
+    return `<i style="left:${left.toFixed(2)}%"></i>`;
+  }).join('');
+  const phaseSpans = items.filter((it) => it.kind === 'phase').map((it) => {
+    const left = axisPct(it.start < win.start ? win.start : it.start, win);
+    const right = axisPct(it.end > win.end ? win.end : it.end, win);
+    const width = Math.max(0.8, right - left);
+    const tight = width < 8;
+    return `<span class="stretch-span${tight ? ' tight' : ''}" data-kind="phase" data-stretch-id="${it.id}" style="left:${left.toFixed(2)}%;width:max(${width.toFixed(2)}%,14px);background:${it.color || 'var(--navy)'}" title="${esc(it.title)}">${tight ? '' : esc(it.title)}</span>`;
+  }).join('');
+  const trips = items.filter((it) => it.kind === 'trip');
+  const tripSpans = trips.map((it) => {
+    const left = axisPct(it.start < win.start ? win.start : it.start, win);
+    const right = axisPct(it.end > win.end ? win.end : it.end, win);
+    const width = Math.max(1.2, right - left);
+    const tight = width < 10;
+    return `<span class="stretch-span${tight ? ' tight' : ''}" data-kind="trip" data-stretch-id="${it.id}" style="left:${left.toFixed(2)}%;width:max(${width.toFixed(2)}%,28px)" title="${esc(it.title)}">${tight ? '' : esc(it.title)}</span>`;
+  }).join('');
+  const marks = items.filter((it) => it.lane === 'mark').sort((a, b) => a.start - b.start);
+  const markGroups = [];
+  marks.forEach((it) => {
+    const left = axisPct(it.start, win);
+    const g = markGroups.find((x) => Math.abs(x.left - left) < 1.4);
+    if (g) g.items.push(it);
+    else markGroups.push({ left, items: [it] });
+  });
+  let lastLabeled = -100;
+  const markHtml = markGroups.map((g) => g.items.map((it, i) => {
+    const clustered = g.items.length > 1;
+    const nearEdge = g.left < 6;
+    const close = g.left - lastLabeled < 8;
+    const showLabel = !clustered && !nearEdge && !close;
+    if (showLabel) lastLabeled = g.left;
+    const status = it.status ? ` data-status="${it.status}"` : '';
+    const cls = ['stretch-mark', clustered || nearEdge ? 'nolabel' : '', showLabel && close ? 'stagger' : '', nearEdge ? 'from-left' : ''].filter(Boolean).join(' ');
+    const top = clustered ? `top:${i * 10}px;` : '';
+    return `<span class="${cls}" data-kind="${it.kind}" data-stretch-id="${it.id}"${status} style="left:${g.left.toFixed(2)}%;${top}" title="${esc(it.title)}">
+      <i class="stretch-dot" style="${it.color && it.kind !== 'decision' ? `background:${esc(it.color)}` : ''}"></i>
+      <span class="stretch-mark-label">${esc(it.title)}</span>
+    </span>`;
+  }).join('')).join('');
+  const key = [...items].sort((a, b) => a.start - b.start).map((it) => {
+    const when = it.lane === 'span' ? fmtSpanWhen(it.start < win.start ? win.start : it.start, it.end > win.end ? win.end : it.end) : fmtShortDay(it.start);
+    return `<li data-kind="${it.kind}" data-stretch-id="${it.id}"><time>${esc(when)}</time><span class="stretch-kind">${kindLabel(it.kind)}</span><span class="stretch-what" title="${esc(it.body || '')}">${esc(it.title)}</span></li>`;
+  }).join('');
+  const tripLane = trips.length
+    ? `<div class="stretch-lane stretch-lane-trip">${tripSpans}</div>`
+    : '';
+  const tripGutter = trips.length ? `<span class="g-trip">Trips</span>` : '';
+  return `<div class="stretch">
+    <div class="slabel">This stretch<span class="stretch-window">${range}</span></div>
+    <div class="stretch-tl">
+      <div class="stretch-gutter">
+        <span class="g-months"></span>
+        <span class="g-phase">Phases</span>
+        ${tripGutter}
+        <span class="g-marks"></span>
+      </div>
+      <div class="stretch-plot">
+        <div class="stretch-today" style="left:${axisPct(win.start, win).toFixed(2)}%"></div>
+        <span class="stretch-today-cap" style="left:${axisPct(win.start, win).toFixed(2)}%">today</span>
+        <div class="stretch-grid">${grid}</div>
+        <div class="stretch-months">${months}</div>
+        <div class="stretch-lane stretch-lane-phase">${phaseSpans}</div>
+        ${tripLane}
+        <div class="stretch-lane stretch-lane-marks">${markHtml}</div>
+      </div>
+    </div>
+    <ol class="stretch-key">${key}</ol>
+  </div>`;
 }
 function triggerCard({ kind, kicker, title, body, color }) {
   const kickerStyle = color ? ` style="color:${color}"` : '';
@@ -421,58 +727,7 @@ function phaseIncome(p) { return Object.values(p.income).reduce((a,b)=>a+b,0); }
 function phaseExpenses(p) { return Object.values(p.expenses).reduce((a,b)=>a+b,0); }
 function phaseSurplus(p) { return phaseIncome(p) - phaseExpenses(p); }
 
-function nowStretchCards() {
-  const cards = [];
-  (D.phases || []).forEach((p, i) => {
-    const start = phaseStartDate(p);
-    if (i !== 0 && !inNowWindow(start)) return;
-    const sur = phaseSurplus(p);
-    cards.push(triggerCard({
-      kind: 'Phase',
-      kicker: p.period,
-      title: p.name + (i === 0 ? ' · current' : ''),
-      body: `${sur >= 0 ? '+' : ''}${fmt(sur)}/mo · ${p.note || ''}`,
-      color: p.color,
-    }));
-  });
-  (D.travel || []).filter((t) => t.startDate && rangeOverlapsNow(t.startDate, t.endDate)).forEach((t) => {
-    const budget = t.budgetedAmount == null ? 'already paid' : `budget ${fmt(t.budgetedAmount)}`;
-    cards.push(triggerCard({
-      kind: 'Trip',
-      kicker: `${t.startDate} → ${t.endDate}`,
-      title: t.trip || t.label || t.id,
-      body: budget,
-    }));
-  });
-  (D.timeline || []).filter((t) => inNowWindow(t.year)).forEach((t) => {
-    cards.push(triggerCard({
-      kind: 'Milestone',
-      kicker: t.year,
-      title: t.short || t.title,
-      body: t.detail || t.title,
-      color: t.dotColor,
-    }));
-  });
-  (D.decisions || []).filter((d) => d.status === 'urgent' || d.status === 'active').forEach((d) => {
-    cards.push(triggerCard({
-      kind: 'Decide',
-      kicker: d.status,
-      title: d.title,
-      body: d.action || d.body,
-    }));
-  });
-  (D.goals || []).filter((g) => inNowWindow(String(g.targetYear))).forEach((g) => {
-    const current = g.trackLiveBrokerage ? sumOwnerBucket(D.assets.brokerage) : g.current;
-    cards.push(triggerCard({
-      kind: 'Goal',
-      kicker: String(g.targetYear),
-      title: g.name,
-      body: `${fmtM(current)} / ${fmtM(g.targetAmount)}`,
-      color: g.color,
-    }));
-  });
-  return cards.join('');
-}
+function nowStretchCards() { return nowStretchHTML(); }
 
 function laterStretchCards(kind) {
   if (kind === 'phases') {
@@ -1605,7 +1860,7 @@ async function renderNowTab() {
   const jointPersonalHtml = await renderSpendTrackers();
   $('pg-now').innerHTML = `
     <div class="content">
-      ${rail('This stretch', nowStretchCards(), `Nothing in the next ${NOW_WINDOW_MONTHS} months.`)}
+      ${nowStretchHTML()}
       ${renderTodosSection(liveTodos)}
       <div class="slabel">This month</div>
       ${jointPersonalHtml}

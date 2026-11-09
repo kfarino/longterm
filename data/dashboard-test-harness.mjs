@@ -75,7 +75,7 @@ const exportNames = [
   'buildEventChip',
   'renderBudgetTab', 'renderNowTab', 'renderLongTab', 'computeMonthPlanProjectedSpend', 'renderTodosSection',
   'buildPhaseCardsHTML', 'renderStatusSection', 'renderGoalsSection',
-  'jumpToTrajectory', 'nowWindow', 'inNowWindow', 'nowStretchCards',
+  'jumpToTrajectory', 'nowWindow', 'inNowWindow', 'nowStretchCards', 'nowStretchHTML', 'nowStretchItems',
   'renderGoalsTab', 'renderDecisionsTab', 'milestoneLines', 'markNowUrgent',
   'computeTrackerPacing', 'renderCategoryDrilldown', 'toggleDrilldown',
   'renderSpendTracker', 'renderTravelSummary', 'renderJointKevinTrackers',

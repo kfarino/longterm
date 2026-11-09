@@ -147,15 +147,66 @@ await test('Now mounts a pg-monthplan mount point, which itself renders real Mon
   assert.ok(!d.elements['pg-monthplan'].innerHTML.includes('Dining budget, rest of cycle'), 'the old dining-budget stat-strip should be gone from the calendar section');
 });
 
+function isoFromToday(days) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 await test('Now stretch is rolling 12 months; later milestones sit on Long term', async () => {
   const d = loadDashboard();
   await d.initReady;
   const nowHtml = d.elements['pg-now'].innerHTML;
   assert.ok(nowHtml.includes('This stretch'), 'Now has the context rail');
-  assert.ok(nowHtml.includes('Decide') || nowHtml.includes('Milestone') || nowHtml.includes('Phase'), 'Now rail carries trigger cards');
+  assert.ok(nowHtml.includes('stretch-tl'), 'This stretch is a timeline, not a card scroller');
   d.show('long', fakeTab());
   const longHtml = d.elements['pg-long'].innerHTML;
   assert.ok(longHtml.includes('Later milestones') || longHtml.includes('Vienna') || longHtml.includes('Croatia'), 'Long term keeps far milestones');
+});
+
+await test('This stretch timeline places phases, trips, milestones, and decisions on one 12-month axis', async () => {
+  const tripStart = isoFromToday(30);
+  const tripEnd = isoFromToday(40);
+  const mileDate = isoFromToday(80);
+  const d = loadDashboard({
+    phases: [{
+      id: 1,
+      color: '#1e4d8c',
+      name: 'Test current phase',
+      period: `Now → ${isoFromToday(200)}`,
+      note: 'fixture phase',
+      income: { teddy: 10 },
+      expenses: { rent: 1 },
+    }],
+    travel: [{
+      id: 'test-coast',
+      trip: 'Test Coast trip',
+      startDate: tripStart,
+      endDate: tripEnd,
+      budgetedAmount: 100,
+    }],
+    timeline: [
+      { year: mileDate, short: 'Test gate', title: 'Test gate', detail: 'in-window fixture' },
+      { year: '2045', short: 'Far test', title: 'Far test milestone', detail: 'must not appear on Now' },
+    ],
+    decisions: [
+      { status: 'active', title: 'Test path decision', body: 'say "this" fixture', action: 'fixture action' },
+      { status: 'active', title: 'Test second decision', body: 'fixture body', action: 'a' },
+    ],
+    goals: [],
+  });
+  await d.initReady;
+  const html = d.elements['pg-now'].innerHTML;
+  assert.ok(html.includes('class="stretch-tl"') || html.includes("class='stretch-tl'") || html.includes('stretch-tl'), 'timeline root is present');
+  assert.ok(html.includes('stretch-month'), 'month ticks mark the axis');
+  assert.ok(html.includes('data-kind="phase"') && html.includes('Test current phase'), 'current phase is a span on the timeline');
+  assert.ok(html.includes('data-kind="trip"') && html.includes('Test Coast trip'), 'vacation is a span on the timeline');
+  assert.ok(html.includes('data-kind="milestone"') && html.includes('Test gate'), 'in-window milestone is a mark');
+  assert.ok(html.includes('data-kind="decision"') && html.includes('Test path decision'), 'open decision is a mark');
+  assert.ok(html.includes('Test second decision'), 'a quoted body must not swallow the next key row');
+  assert.ok(!html.includes('Far test milestone'), 'milestones past the 12-month window stay off Now');
+  assert.ok(!html.includes('class="hscroll"'), 'This stretch no longer uses the card scroller');
 });
 
 await test('Now tab is flagged urgent when an urgent decision exists', () => {
