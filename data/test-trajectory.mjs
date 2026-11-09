@@ -1,21 +1,26 @@
 // Trajectory math: today's investable balances compound; optional monthly
 // savings start in a chosen year; Croatia is a one-time brokerage draw.
 // Invented balances only — never copy live accounts into this file.
+// Owners are part of the fixture: sumOwnerBucket only adds keys that match
+// D.owners, and CI seeds a different household than a local data.js.
 import assert from 'node:assert/strict';
 import { loadDashboard } from './dashboard-test-harness.mjs';
 
 console.log('test-trajectory.mjs');
 
+const FIXTURE_OWNERS = [
+  { id: 'pat', displayName: 'Pat' },
+  { id: 'jo', displayName: 'Jo' },
+];
 const FIXTURE_ASSETS = {
-  retirement: { kevin: 100000, hanna: 0 },
-  brokerage: { kevin: 50000, hanna: 0 },
-  cash: { kevin: 10000, hanna: 0 },
-  homeEquity: { kevin: 200000, hanna: 0 },
+  retirement: { pat: 100000, jo: 0 },
+  brokerage: { pat: 50000, jo: 0 },
+  cash: { pat: 10000, jo: 0 },
+  homeEquity: { pat: 200000, jo: 0 },
 };
 
 function load() {
-  const d = loadDashboard({ assets: FIXTURE_ASSETS });
-  return d;
+  return loadDashboard({ owners: FIXTURE_OWNERS, assets: FIXTURE_ASSETS });
 }
 
 const d = load();
