@@ -38,8 +38,8 @@ function writeFixture(dir, recentDiningActivity) {
   return { rawPath, outPath };
 }
 
-function txn({ id, date, amount, merchant, category = 'Restaurants & Bars', account = ' More Mastercard (...9054)' }) {
-  return { id, date, amount, merchant, category, account };
+function txn({ id, date, amount, merchant, category = 'Restaurants & Bars', account = ' More Mastercard (...9054)', plaidName }) {
+  return { id, date, amount, merchant, category, account, ...(plaidName ? { plaidName } : {}) };
 }
 
 console.log('test-budget-tracking-pull.mjs');
@@ -917,6 +917,43 @@ test('Ally debit: tennis Zelle is spend, not a skipped Transfer', () => {
   const tennis = txn({ amount: -135, merchant: 'Zelle', category: 'Transfer', account: 'FIXTURE ALLY (...2524)' });
   assert.equal(isBalanceMovement(tennis, rules), false);
   assert.equal(categoryName(tennis, rules), 'Tennis');
+});
+
+test('Ally Zelle: recipient on the bank line still counts when Monarch names the sender', () => {
+  const rules = {
+    categoryRules: [{ merchantMatch: 'fixture coach', category: 'Tennis' }],
+    reassignments: [],
+    amountRules: [],
+  };
+  const tennis = txn({
+    amount: -135,
+    merchant: 'Fixture Sender',
+    plaidName: 'Zelle payment from Fixture Sender to FIXTURE COACH',
+    category: 'Transfer',
+    account: 'FIXTURE ALLY (...2524)',
+  });
+  assert.equal(categoryName(tennis, rules), 'Tennis');
+  assert.equal(isBalanceMovement(tennis, rules), false);
+  const rows = ledgerRowsFromTransactions([tennis], {
+    mapping: {
+      jointAccountLabels: ['FIXTURE JOINT (...0001)'],
+      personalAccountLabels: { kevin: ['FIXTURE ALLY (...2524)'] },
+      travelCategoryNames: ['Travel & Vacation'],
+    },
+  }, { overrides: rules });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].category, 'Tennis');
+  assert.equal(rows[0].ownerId, 'kevin');
+
+  const other = txn({
+    amount: -120,
+    merchant: 'Fixture Sender',
+    plaidName: 'Zelle payment from Fixture Sender to SOMEONE ELSE',
+    category: 'Transfer',
+    account: 'FIXTURE ALLY (...2524)',
+  });
+  assert.equal(categoryName(other, rules), 'Transfer');
+  assert.equal(isBalanceMovement(other, rules), true);
 });
 
 test('Ally debit: tennis paid to the instructor by name is spend even when Monarch calls it Transfer', () => {

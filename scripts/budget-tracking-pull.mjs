@@ -512,6 +512,19 @@ export function merchantName(transaction) {
   return transaction?.plaidName || '';
 }
 
+/** Display name plus the bank line. Ally Zelle sets merchant to the sender
+ *  and puts the recipient only in plaidName. Matching the display name alone
+ *  leaves the lesson as Transfer, and isBalanceMovement then drops it. */
+export function merchantMatchText(transaction) {
+  const parts = [];
+  const display = merchantName(transaction);
+  if (display) parts.push(display);
+  if (typeof transaction?.plaidName === 'string' && transaction.plaidName !== display) {
+    parts.push(transaction.plaidName);
+  }
+  return parts.join(' ').toLowerCase();
+}
+
 /** Prefer a real Monarch id over a hand seed id when collapsing duplicates. */
 export function preferDiningActivityId(a, b) {
   const aSeed = String(a || '').startsWith('seed-');
@@ -563,7 +576,7 @@ export function collapsePendingPostedDiningDuplicates(entries) {
 
 export function categoryName(transaction, overrides = null) {
   const rules = overrides || loadTransactionOverrides();
-  const merchant = merchantName(transaction).toLowerCase();
+  const merchant = merchantMatchText(transaction);
   const matches = (rules.categoryRules || []).filter((o) => merchant.includes(String(o.merchantMatch || '').toLowerCase()));
   const abs = Math.abs(Number(transaction.amount));
   const withAmount = Number.isFinite(abs)

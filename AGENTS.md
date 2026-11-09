@@ -145,7 +145,9 @@ relabelled `Tennis` first so it is not skipped as a Transfer. Those lessons
 are already inside the Kevin personal monthly target — do not add a second
 Tennis expense line or treat them as unbudgeted. Match the instructor's
 name on the Ally row (Monarch often stores the recipient, not the word
-"Zelle"); an amount-only "Zelle" + $135 rule misses that payment.
+"Zelle"); an amount-only "Zelle" + $135 rule misses that payment. The
+recipient is often only in `plaidName` while `merchant` is the sender, so
+category matching has to see both or the lesson is dropped as a Transfer.
 
 A mapped Monarch spend card that is disconnected, needs reconnect, or has
 not updated in two days is incomplete spend — including mid-cycle, not only
