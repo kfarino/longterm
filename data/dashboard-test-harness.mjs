@@ -76,6 +76,7 @@ const exportNames = [
   'renderBudgetTab', 'renderNowTab', 'renderLongTab', 'computeMonthPlanProjectedSpend', 'renderTodosSection',
   'buildPhaseCardsHTML', 'renderStatusSection', 'renderGoalsSection',
   'jumpToTrajectory', 'nowWindow', 'inNowWindow', 'nowStretchCards', 'nowStretchHTML', 'nowStretchItems',
+  'computeKevin300k', 'renderKevin300kHTML', 'loadKevin300k',
   'renderGoalsTab', 'renderDecisionsTab', 'milestoneLines', 'markNowUrgent',
   'computeTrackerPacing', 'renderCategoryDrilldown', 'toggleDrilldown',
   'renderSpendTracker', 'renderTravelSummary', 'renderJointKevinTrackers',

@@ -77,6 +77,7 @@ const DATA = {
   decisions: openDecisions(goals.decisions),
   travel: goals.travel,
   chart: goals.chart,
+  kevin300k: goals.kevin300k || null,
   lifestyleScenarios: goals.lifestyleScenarios || {},
   favoritePlaces,
   todos: { items: todos.items || [], weeklyGoals: todos.weeklyGoals || [] },

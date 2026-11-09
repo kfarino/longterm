@@ -211,6 +211,23 @@ await test('This stretch timeline places phases, trips, milestones, and decision
   assert.ok(!html.includes('class="hscroll"'), 'This stretch no longer uses the card scroller');
 });
 
+await test('Now shows the Kevin $300k tracker and 9 hr/week clears the line', async () => {
+  const d = loadDashboard({
+    kevin300k: {
+      basePreTax: 230000,
+      targetPreTax: 300000,
+      hourlyRate: 180,
+      billCapMonthly: 4000,
+      hoursPerWeek: 9,
+    },
+  });
+  await d.initReady;
+  const html = d.elements['pg-now'].innerHTML;
+  assert.ok(html.includes('id="kevin-300k"'), 'Now mounts the Kevin $300k tracker');
+  assert.ok(/Cleared/.test(html), 'planned 9 hr/week clears $300k');
+  assert.ok(html.includes('Bill'), "Bill's cap is marked on the climb");
+});
+
 await test('a green-light decision is not a Now or Long-term trigger', async () => {
   const d = loadDashboard({
     decisions: [

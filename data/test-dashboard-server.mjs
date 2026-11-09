@@ -426,6 +426,64 @@ await test('POST /api/todos returns 400 for a missing title or unknown owner', a
   }
 });
 
+await test('GET /api/kevin-300k uses Helios hours when a log is present', async () => {
+  const goalsPath = path.join(tmpDir, 'goals-k300.json');
+  const logPath = path.join(tmpDir, 'helios-time-log.json');
+  writeJsonAtomic(goalsPath, {
+    kevin300k: {
+      basePreTax: 230000,
+      targetPreTax: 300000,
+      hourlyRate: 180,
+      billCapMonthly: 4000,
+      hoursPerWeek: 2,
+    },
+  });
+  const day = (offset) => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  writeJsonAtomic(logPath, {
+    entries: [
+      { date: day(0), hours: 9, note: 'Test fixture week' },
+      { date: day(-7), hours: 9, note: 'Test fixture week' },
+      { date: day(-14), hours: 9, note: 'Test fixture week' },
+      { date: day(-21), hours: 9, note: 'Test fixture week' },
+    ],
+  });
+  const prev = process.env.HELIOS_TIME_LOG;
+  process.env.HELIOS_TIME_LOG = logPath;
+  const todosPath = path.join(tmpDir, 'todos-k300.json');
+  writeJsonAtomic(todosPath, { items: [], weeklyGoals: [] });
+  const server = await startTodosServer(todosPath);
+  // startTodosServer points goals at sibling goals-owners.json — write kevin300k there too
+  writeJsonAtomic(path.join(tmpDir, 'goals-owners.json'), {
+    owners: [{ id: 'kevin', displayName: 'Kevin' }],
+    kevin300k: {
+      basePreTax: 230000,
+      targetPreTax: 300000,
+      hourlyRate: 180,
+      billCapMonthly: 4000,
+      hoursPerWeek: 2,
+    },
+  });
+  const port = server.address().port;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/kevin-300k`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.skip, undefined);
+    assert.equal(body.hoursSource, 'helios');
+    assert.ok(body.cleared, '9 hours this week annualizes past $300k');
+    assert.ok(body.hoursPerWeek >= 2, 'live hours beat the 2 hr/week fallback');
+  } finally {
+    if (prev === undefined) delete process.env.HELIOS_TIME_LOG;
+    else process.env.HELIOS_TIME_LOG = prev;
+    server.close();
+  }
+});
+
 await test('liveNationPullConfigured is false when the env file is missing or the key is blank', () => {
   const missing = path.join(tmpDir, 'no-ticketmaster.env');
   assert.equal(liveNationPullConfigured(missing), false);

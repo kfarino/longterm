@@ -171,6 +171,36 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
   .stretch-gutter .g-marks{height:16px}
   .stretch-span{font-size:10px;padding:0 5px}
 }
+.k300{
+  background:#fff;border:1px solid var(--rule);border-radius:3px;
+  padding:18px 22px;margin:0 0 22px;
+}
+.k300-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:12px}
+.k300-title{font-size:15px;font-weight:700;color:var(--navy)}
+.k300-status{font-size:13px;font-weight:700;white-space:nowrap}
+.k300-status.cleared{color:var(--green)}
+.k300-status.short{color:var(--gold)}
+.k300-track{
+  position:relative;height:16px;background:var(--bg);
+  border:1px solid var(--rule2);border-radius:3px;overflow:visible;
+}
+.k300-fill{
+  position:absolute;left:0;top:0;bottom:0;background:var(--gold);border-radius:2px 0 0 2px;
+  min-width:2px;
+}
+.k300-fill.cleared{border-radius:2px;background:var(--green)}
+.k300-cap{
+  position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--red);z-index:2;
+}
+.k300-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--sub);margin-top:8px}
+.k300-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+.k300-stat .n{font-size:22px;font-weight:700;color:var(--navy);line-height:1.1;font-variant-numeric:tabular-nums}
+.k300-stat .l{font-size:11px;color:var(--sub);margin-top:3px}
+.k300-quota{margin-top:12px}
+.k300-quota-bar{height:6px;background:var(--bg);border:1px solid var(--rule2);border-radius:3px;overflow:hidden}
+.k300-quota-fill{height:100%;background:var(--navy)}
+.k300-quota-fill.over{background:var(--green)}
+.k300-note{font-size:12px;color:var(--mid);margin-top:12px;line-height:1.45}
 .slabel{font-size:11px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--sub);margin-bottom:14px;margin-top:30px;padding-bottom:8px;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between}
 .slabel:first-child{margin-top:0}
 .metrics{display:grid;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:3px;overflow:hidden;margin-bottom:20px}
@@ -767,6 +797,87 @@ function phaseExpenses(p) { return Object.values(p.expenses).reduce((a,b)=>a+b,0
 function phaseSurplus(p) { return phaseIncome(p) - phaseExpenses(p); }
 
 function nowStretchCards() { return nowStretchHTML(); }
+
+// Keep in sync with scripts/kevin-300k.mjs — the Now tracker falls back to
+// this copy when /api/kevin-300k is unreachable (harness, file://).
+function computeKevin300k(cfg, hoursPerWeek) {
+  const base = Number(cfg?.basePreTax);
+  const target = Number(cfg?.targetPreTax);
+  const rate = Number(cfg?.hourlyRate);
+  if (!(base > 0) || !(target > base) || !(rate > 0)) return null;
+  const hrs = Number(hoursPerWeek);
+  const weekly = Number.isFinite(hrs) && hrs >= 0 ? hrs : Number(cfg.hoursPerWeek) || 0;
+  const needYear = target - base;
+  const overlayYear = weekly * 52 * rate;
+  const current = base + overlayYear;
+  const billCapMonthly = Number(cfg.billCapMonthly) || 0;
+  const billCapYear = billCapMonthly * 12;
+  const atBillCap = base + billCapYear;
+  const hoursNeedWeek = needYear / (rate * 52);
+  const climbPct = Math.min(100, Math.max(0, (overlayYear / needYear) * 100));
+  const capPct = needYear > 0 ? Math.min(100, Math.max(0, (billCapYear / needYear) * 100)) : 0;
+  return {
+    base, target, rate, hoursPerWeek: weekly, hoursNeedWeek, overlayYear,
+    overlayMonthly: overlayYear / 12, current, billCapMonthly, billCapYear, atBillCap,
+    cleared: current >= target - 0.5, gap: target - current, climbPct, capPct,
+  };
+}
+function fmtHrs(n) {
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  const v = Math.round(Number(n) * 10) / 10;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+}
+function renderKevin300kHTML(t) {
+  if (!t) return '';
+  const status = t.cleared
+    ? `<span class="k300-status cleared">Cleared · ${fmtM(t.current)}</span>`
+    : `<span class="k300-status short">${fmtM(Math.abs(t.gap))} to go</span>`;
+  const weekHrs = t.hoursSource === 'helios' && t.hours7 != null ? t.hours7 : null;
+  const quota = weekHrs != null ? weekHrs : t.hoursPerWeek;
+  const quotaPct = t.hoursNeedWeek > 0 ? Math.min(100, (quota / t.hoursNeedWeek) * 100) : 0;
+  const quotaOver = quota >= t.hoursNeedWeek;
+  const quotaLabel = weekHrs != null
+    ? `This week ${fmtHrs(weekHrs)} hr · ${fmtHrs(t.hoursNeedWeek)} hr holds the line`
+    : `Pace ${fmtHrs(t.hoursPerWeek)} hr/wk · ${fmtHrs(t.hoursNeedWeek)} hr/wk holds the line`;
+  const sourceNote = t.hoursSource === 'helios'
+    ? 'Hours from the last 4 weeks on Helios.'
+    : 'Using planned Helios hours until the live log is linked.';
+  const capNote = t.billCapMonthly
+    ? ` Bill's ${fmt(t.billCapMonthly)}/mo cap lands at ${fmtM(t.atBillCap)} — ${t.atBillCap >= t.target ? 'still clears' : fmtM(t.target - t.atBillCap) + ' short of'} $300k.`
+    : '';
+  const resultNote = t.cleared
+    ? ` Past the line by ${fmtM(Math.abs(t.gap))}. Keep the hours; the cap is a floor, not the goal.`
+    : ` Need ${fmtHrs(t.hoursNeedWeek)} hr/week at ${fmt(t.rate)}/hr on top of Hero.`;
+  return `<div class="k300" id="kevin-300k">
+    <div class="k300-head"><span class="k300-title">Kevin → $300k</span>${status}</div>
+    <div class="k300-track">
+      <div class="k300-fill${t.cleared ? ' cleared' : ''}" style="width:${t.climbPct.toFixed(1)}%"></div>
+      ${t.capPct > 0 && t.capPct < 100 ? `<div class="k300-cap" style="left:${t.capPct.toFixed(1)}%" title="Bill's monthly cap"></div>` : ''}
+    </div>
+    <div class="k300-scale"><span>${fmtM(t.base)} Hero</span><span>$300k</span></div>
+    <div class="k300-stats">
+      <div class="k300-stat"><div class="n">${fmtM(t.current)}</div><div class="l">Annualized pre-tax</div></div>
+      <div class="k300-stat"><div class="n">${fmtHrs(t.hoursPerWeek)}</div><div class="l">hr / week pace</div></div>
+      <div class="k300-stat"><div class="n">${fmt(t.overlayMonthly)}</div><div class="l">Helios $/mo pre-tax</div></div>
+    </div>
+    <div class="k300-quota">
+      <div class="k300-quota-bar"><div class="k300-quota-fill${quotaOver ? ' over' : ''}" style="width:${quotaPct.toFixed(1)}%"></div></div>
+      <div class="k300-note" style="margin-top:6px">${quotaLabel}</div>
+    </div>
+    <div class="k300-note">${sourceNote}${capNote}${resultNote}</div>
+  </div>`;
+}
+async function loadKevin300k() {
+  try {
+    const res = await fetch('/api/kevin-300k');
+    if (res.ok) {
+      const body = await res.json();
+      if (body && !body.skip) return body;
+    }
+  } catch (err) { /* harness / offline: fall through */ }
+  const fallback = computeKevin300k(D.kevin300k, D.kevin300k?.hoursPerWeek);
+  return fallback ? { ...fallback, hoursSource: 'goals', hours7: null } : null;
+}
 
 function laterStretchCards(kind) {
   if (kind === 'phases') {
@@ -1896,10 +2007,12 @@ async function renderNowTab() {
   const bt = D.budgetTracking;
   const liveTodos = await loadTodos();
   D.todos = liveTodos;
+  const k300 = await loadKevin300k();
   const jointPersonalHtml = await renderSpendTrackers();
   $('pg-now').innerHTML = `
     <div class="content">
       ${nowStretchHTML()}
+      ${renderKevin300kHTML(k300)}
       ${renderTodosSection(liveTodos)}
       <div class="slabel">This month</div>
       ${jointPersonalHtml}

@@ -281,6 +281,13 @@
     "monthlySavings": 0,
     "saveStartYear": 2028
   },
+  "kevin300k": {
+    "basePreTax": 180000,
+    "targetPreTax": 250000,
+    "hourlyRate": 150,
+    "billCapMonthly": 3000,
+    "hoursPerWeek": 6
+  },
   "lifestyleScenarios": {
     "croatia": {
       "label": "Croatia",

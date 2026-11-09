@@ -22,6 +22,7 @@ import { parseShowsFromText, dedupeShows, takeTopShows } from './show-parse.mjs'
 import { readActRatings, setActRating } from './spotify-act-ratings.mjs';
 import { ticketmasterEnvPath } from './longterm-paths.mjs';
 import { add_todo, mark_todo_done } from './telegram-bot-tools.mjs';
+import { loadKevin300kTracker, readHeliosHours } from './kevin-300k.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.join(here, '..');
@@ -388,6 +389,18 @@ export function createServer(
     // todos.json Georgina reads/writes. GET is live so a Telegram add shows
     // without waiting for data.js; POST uses add_todo / mark_todo_done so
     // both writers share one shape.
+    if (urlPath === '/api/kevin-300k' && req.method === 'GET') {
+      let goals = {};
+      try {
+        if (fs.existsSync(goalsPath)) goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
+      } catch {
+        goals = {};
+      }
+      const tracker = loadKevin300kTracker(goals, readHeliosHours());
+      sendJson(res, 200, tracker || { skip: true });
+      return;
+    }
+
     if (urlPath === '/api/todos' && req.method === 'GET') {
       sendJson(res, 200, readTodos(todosPath));
       return;
