@@ -16,6 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { add_todo, TOOL_DEFS, TOOL_IMPL, DINING_TOOL_NAMES, FINANCIAL_TOOL_NAMES, FAMILY_EVENT_TOOL_NAMES, ROUTINE_OVERRIDE_TOOL_NAMES, GOALS_TOOL_NAMES, REMINDER_TOOL_NAMES, HEALTH_TOOL_NAMES, TODO_TOOL_NAMES, MANUAL_CHARGE_TOOL_NAMES, TRIP_REASSIGN_TOOL_NAMES, BUDGET_ADJUST_TOOL_NAMES, ACCOUNT_MAPPING_TOOL_NAMES, CAPABILITY_TOOL_NAMES } from './telegram-bot-tools.mjs';
 import { loadFinancialContext } from './financial-context.mjs';
+import { currentPhaseIndex } from './phases.mjs';
 import { applyManualChargesToTracking, applyTripReassignmentsToTracking, applyBudgetAdjustmentsToTracking, loadTransactionOverrides } from './budget-tracking-pull.mjs';
 import { spawnDetachedLauncher } from './claude-code-run.mjs';
 import { loadHealthContext, defaultHealthOverridesPath } from './health-context.mjs';
@@ -474,9 +475,16 @@ function formatRecentConversation(entries) {
 // The minimal slice of goals.json's phases relevant to update_phase_expense
 // (id/name/period/current expenses) — not the whole file (life goals, chart
 // assumptions, etc. aren't needed for this and would just bloat the prompt).
-function phasesSummary(goals) {
+function phasesSummary(goals, now = new Date()) {
   if (!goals || !goals.phases) return null;
-  return goals.phases.map((p) => ({ id: p.id, name: p.name, period: p.period, expenses: p.expenses }));
+  const current = currentPhaseIndex(goals.phases, now);
+  return goals.phases.map((p, i) => ({
+    id: p.id,
+    name: p.name,
+    period: p.period,
+    expenses: p.expenses,
+    current: i === current,
+  }));
 }
 
 // Rendered when this message is a reply to a still-open clarifying question
@@ -518,7 +526,7 @@ async function callAnthropicFallback({ apiKey, text, todos, monthPlanEvents, rem
       tools: TOOL_DEFS,
       system: BOT_SYSTEM_PROMPT,
       messages: [
-        { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nCurrent reminders:\n${JSON.stringify(reminders.items.filter((r) => !r.sent), null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions; the trips and transactions lists are also what reassign_transaction matches against):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; expenses shows current monthly figures):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
+        { role: 'user', content: `${formatPendingClarification(pendingClarification)}${formatRecentConversation(recentConversation)}Today's date: ${isoToday()}\n\nCurrent to-do state:\n${JSON.stringify(todos, null, 2)}\n\nCurrent month plan events:\n${JSON.stringify(monthPlanEvents, null, 2)}\n\nCurrent reminders:\n${JSON.stringify(reminders.items.filter((r) => !r.sent), null, 2)}\n\nDining routine (for get_dining_plan/set_dinner_plan/set_routine_day — dayOfWeek already reflects any prior reschedule):\n${JSON.stringify(diningContext.diningRoutine, null, 2)}\n\nFinancial context (for get_budget_status/get_savings_goals/get_decisions/search_transactions; the trips and transactions lists are also what reassign_transaction matches against):\n${JSON.stringify(financialContext, null, 2)}\n\nFinancial plan phases (for update_phase_expense — pick the phaseId(s) this cost applies to; the phase with current:true is the one in effect today):\n${JSON.stringify(phasesSummary(goals), null, 2)}\n\nMessage: ${text}` },
       ],
     }),
   });
@@ -995,7 +1003,7 @@ To change an existing reminder's time (including fixing an am/pm mixup), cancel_
 Use delete_todo (not mark_done) when a to-do is no longer relevant rather than finished.
 
 ## Money
-Budget and spending questions → get_budget_status. The household cares about **this month's spend**: what's logged, what's left, how many days are left, and whether that's on pace.
+Budget and spending questions → get_budget_status. The household cares about **this month's spend**: what's logged, what's left, how many days are left, and whether that's on pace. Targets in that reply already come from the phase marked current. Do not quote an earlier phase's expense, or a run rate written in a note, as this month's budget.
 The tool reply already phrases leftover-days (under a week left: remaining for the rest of this cycle, not $X/wk) and may include a prior-cycle habit heads-up even before halfway. After halfway it may name one watch category. Do not invent a weekly rate when the tool used leftover-days copy, and do not invent a category cue that is not in the tool reply.
 If get_budget_status says a Monarch account needs a reconnect, is disconnected, or has not synced, say that. Do not treat the logged total as complete — new charges after the last sync are missing. Do not treat $0 as the real total. Do not say on-track from a stale number.
 Do NOT report travel or trip budgets unless the person explicitly asked about travel, a trip, or a vacation — pass includeTravel only then. Trip budgets are long-horizon and bury the monthly numbers that were actually asked for.

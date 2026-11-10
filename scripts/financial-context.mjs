@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import { loadBudgetHabits } from './cycle-history.mjs';
 import { actionableDecisions } from './decisions.mjs';
 import { isRetiredAccountLabel } from './account-mapping.mjs';
+import { currentPhase } from './phases.mjs';
 
 // Mirrors dashboard_v5.html's computeTrackerPacing(): weights by
 // days-in-bucket, not entry count, so a trailing partial week doesn't skew
@@ -85,10 +86,10 @@ export function budgetGuidance(tracker, now = new Date()) {
 // "target is derived from the current phase's expense line, never a
 // separately hand-typed number" rule build-data.mjs already enforces) and
 // returns pacing for joint + each personal.<ownerId> tracker.
-export function loadBudgetStatus(budgetTrackingPath, goalsPath) {
+export function loadBudgetStatus(budgetTrackingPath, goalsPath, now = new Date()) {
   const bt = JSON.parse(fs.readFileSync(budgetTrackingPath, 'utf8'));
   const goals = JSON.parse(fs.readFileSync(goalsPath, 'utf8'));
-  const currentPhaseExpenses = goals.phases[0].expenses;
+  const currentPhaseExpenses = (currentPhase(goals.phases, now) || goals.phases[0]).expenses;
   const owners = goals.owners || [];
 
   const joint = { ...bt.joint, target: currentPhaseExpenses[bt.joint.targetExpenseKey] };

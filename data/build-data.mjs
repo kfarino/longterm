@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 // Resolved/closed decisions stay in goals.json as history but are not 'open'
 // decisions — the dashboard's Decisions tab shows what still needs deciding.
 import { openDecisions } from '../scripts/decisions.mjs';
+import { currentPhase } from '../scripts/phases.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -56,12 +57,12 @@ const accounts = {
   futureAssets: accountsRaw.futureAssets,
 };
 
-const phase0Expenses = goals.phases[0].expenses;
+const currentExpenses = (currentPhase(goals.phases) || goals.phases[0]).expenses;
 const personal = {};
 for (const [ownerId, tracker] of Object.entries(budgetTracking.personal || {})) {
   personal[ownerId] = {
     ...tracker,
-    target: phase0Expenses[tracker.targetExpenseKey],
+    target: currentExpenses[tracker.targetExpenseKey],
   };
 }
 
@@ -86,7 +87,7 @@ const DATA = {
   budgetTracking: {
     // target is derived from the current phase's expense line, never a
     // separately hand-typed number — goals.json is the only place it's typed.
-    joint: { ...budgetTracking.joint, target: phase0Expenses[budgetTracking.joint.targetExpenseKey] },
+    joint: { ...budgetTracking.joint, target: currentExpenses[budgetTracking.joint.targetExpenseKey] },
     personal,
     travel: budgetTracking.travel,
   },

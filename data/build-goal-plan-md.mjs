@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 // Same rule as Georgina: the generated plan lists decisions that still need
 // attention, not resolved items or green lights (see scripts/decisions.mjs).
 import { actionableDecisions } from '../scripts/decisions.mjs';
+import { currentPhase } from '../scripts/phases.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outPath = join(here, '..', 'kevin_hanna_goal_plan.md');
@@ -59,8 +60,8 @@ function assetRow(label, bucket) {
   return `| ${label} | ${cells} | ${fmt(sumBucket(bucket))} |`;
 }
 
-const currentPhase = goals.phases[0];
-function trackerTarget(tracker) { return currentPhase.expenses[tracker.targetExpenseKey]; }
+const phaseNow = currentPhase(goals.phases) || goals.phases[0];
+function trackerTarget(tracker) { return phaseNow.expenses[tracker.targetExpenseKey]; }
 
 function weeksTable(tracker) {
   if (!tracker.weeks?.length) return '*No weeks logged yet this cycle.*';

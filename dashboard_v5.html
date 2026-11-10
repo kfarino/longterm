@@ -475,6 +475,22 @@ function phaseEndDate(p, next) {
   const nextStart = next ? phaseStartDate(next) : null;
   return nextStart || null;
 }
+// Same rule as scripts/phases.mjs: the latest phase whose start has arrived
+// is current. "Now" counts as already started. A phase with no period does not.
+function phaseHasStarted(p, today = new Date()) {
+  const left = String(p?.period || '').split(/\s*(?:→|->|–|—)\s*/)[0].trim();
+  if (!left) return false;
+  if (/^now$/i.test(left)) return true;
+  const start = parseLooseDate(left);
+  if (!start || Number.isNaN(start.getTime())) return false;
+  return start <= startOfLocalDay(today);
+}
+function currentPhaseIndex(phases, today = new Date()) {
+  const list = phases || [];
+  let idx = 0;
+  list.forEach((p, i) => { if (phaseHasStarted(p, today)) idx = i; });
+  return idx;
+}
 function axisPct(date, win) {
   const span = win.end - win.start;
   if (!(span > 0)) return 0;
@@ -500,10 +516,11 @@ function nowStretchItems() {
   const win = nowWindow();
   const items = [];
   const phases = D.phases || [];
+  const currentIdx = currentPhaseIndex(phases);
   phases.forEach((p, i) => {
-    const start = phaseStartDate(p) || (i === 0 ? win.start : null);
+    const start = phaseStartDate(p) || (i === currentIdx ? win.start : null);
     if (!start) return;
-    const end = phaseEndDate(p, phases[i + 1]) || (i === 0 ? win.end : null);
+    const end = phaseEndDate(p, phases[i + 1]) || (i === currentIdx ? win.end : null);
     if (!end) return;
     if (end <= win.start || start >= win.end) return;
     const sur = phaseSurplus(p);
@@ -513,7 +530,7 @@ function nowStretchItems() {
       lane: 'span',
       start,
       end,
-      title: p.name + (i === 0 ? ' · current' : ''),
+      title: p.name + (i === currentIdx ? ' · current' : ''),
       when: p.period,
       body: `${sur >= 0 ? '+' : ''}${fmt(sur)}/mo`,
       color: p.color,
@@ -836,7 +853,8 @@ async function loadKevin300k() {
 
 function laterStretchCards(kind) {
   if (kind === 'phases') {
-    return (D.phases || []).filter((p, i) => i !== 0 && !inNowWindow(phaseStartDate(p))).map((p) => {
+    const currentIdx = currentPhaseIndex(D.phases);
+    return (D.phases || []).filter((p, i) => i > currentIdx && !inNowWindow(phaseStartDate(p))).map((p) => {
       const sur = phaseSurplus(p);
       return triggerCard({
         kind: 'Phase',
@@ -915,13 +933,15 @@ function renderHeader() {
 // Phase 2 carries the "what's next" comparison Position used to show in
 // its own panel, now living directly on the card the comparison is about.
 function buildPhaseCardsHTML() {
-  const p1Surplus = phaseSurplus(D.phases[0]);
+  const phases = D.phases || [];
+  const currentIdx = currentPhaseIndex(phases);
+  const currentSurplus = phaseSurplus(phases[currentIdx]);
 
-  return D.phases.map((p) => {
+  return phases.map((p, i) => {
     const inc = phaseIncome(p);
     const exp = phaseExpenses(p);
     const sur = inc - exp;
-    const isCurrent = p.id === 1;
+    const isCurrent = i === currentIdx;
     const incRows = Object.entries(p.income).map(([k, v]) => trHTML(k, fmt(v))).join('');
     const allocRows = p.allocation.map((a) => trHTML(a.label, fmt(a.amount), a.amount < 0 ? 'neg' : '')).join('');
 
@@ -952,8 +972,8 @@ function buildPhaseCardsHTML() {
       ${allocRows.length ? `<div class="alloc-head">Savings allocation</div>${allocRows}` : ''}
     `;
 
-    const whatsNextCallout = p.id === 2
-      ? `<div class="callout">Surplus <strong>${sur >= p1Surplus ? 'increases' : 'decreases'}</strong> from ${fmt(p1Surplus)} to ${fmt(sur)}/mo moving into Phase ${p.id}.</div>`
+    const whatsNextCallout = i === currentIdx + 1
+      ? `<div class="callout">Surplus <strong>${sur >= currentSurplus ? 'increases' : 'decreases'}</strong> from ${fmt(currentSurplus)} to ${fmt(sur)}/mo moving into Phase ${p.id}.</div>`
       : '';
 
     return `
@@ -972,7 +992,7 @@ function buildPhaseCardsHTML() {
    RENDER: STATUS (Current Position, sub-tab 1)
    ═══════════════════════════════ */
 function renderStatusSection() {
-  const p1 = D.phases[0];
+  const p1 = (D.phases || [])[currentPhaseIndex(D.phases)] || D.phases[0];
   const p1surplus = phaseSurplus(p1);
   const a = D.assets;
   const liq = liquidCashBreakdown();
