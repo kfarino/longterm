@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scoreShowsLikeness } from './spotify-likeness.mjs';
-import { parseShowsFromText, dedupeShows } from './show-parse.mjs';
+import { parseShowsFromText, dedupeShows, upcomingShows } from './show-parse.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -51,7 +51,7 @@ function loadShows() {
 async function main() {
   const skipClaude = process.argv.includes('--skip-claude');
   const ownerIds = loadOwnerIds();
-  const shows = loadShows();
+  const shows = upcomingShows(loadShows());
   const payload = await scoreShowsLikeness({
     shows,
     ownerIds,

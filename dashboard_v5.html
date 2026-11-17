@@ -2140,8 +2140,8 @@ function showRankScore(show) {
 
 /**
  * Display grouping for Dining + Shows: one row per normalized act.
- * Ranking / pitch / LN come from the highest Us (else Kevin) score in the
- * group; dates and ticket URL come from the soonest upcoming date.
+ * Ranking / pitch / LN come from the highest Us (else Kevin) score among
+ * dates that have not passed. An act whose dates are all in the past is omitted.
  * Does not change match JSON — callers pass an already-filtered kind list.
  */
 function groupShowsByAct(shows, todayIso) {
@@ -2155,18 +2155,18 @@ function groupShowsByAct(shows, todayIso) {
 
   const grouped = [];
   for (const occ of groups.values()) {
-    const best = [...occ].sort((a, b) => {
+    const byDate = [...occ].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+    const upcoming = byDate.filter((s) => s.date && s.date >= today);
+    if (!upcoming.length) continue;
+    const best = [...upcoming].sort((a, b) => {
       const d = showRankScore(b) - showRankScore(a);
       return d || String(a.date || '').localeCompare(String(b.date || ''));
     })[0];
-    const byDate = [...occ].sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
-    const upcoming = byDate.filter((s) => s.date && s.date >= today);
-    const soonestFirst = upcoming.length ? upcoming : byDate;
-    const soonest = soonestFirst[0] || best;
-    const dates = [...new Set(byDate.map((s) => s.date).filter(Boolean))];
+    const soonest = upcoming[0] || best;
+    const dates = [...new Set(upcoming.map((s) => s.date).filter(Boolean))];
     const venueNames = [];
     const seenVenue = new Set();
-    for (const s of byDate) {
+    for (const s of upcoming) {
       const v = String(s.venue || '').trim();
       if (!v) continue;
       const vk = v.toLowerCase();
@@ -2175,7 +2175,7 @@ function groupShowsByAct(shows, todayIso) {
       venueNames.push(v);
     }
     const venueLabel = venueNames.length <= 2 ? venueNames.join(' · ') : venueNames[0];
-    const ticket = soonestFirst.find((s) => s.sourceUrl) || soonest;
+    const ticket = upcoming.find((s) => s.sourceUrl) || soonest;
     grouped.push({
       ...best,
       date: soonest?.date || best.date,

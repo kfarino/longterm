@@ -859,10 +859,10 @@ await asyncTest('bundle includes top music and comedy from the shows cache, not 
   const matchDataPath = path.join(dir, 'show-matches.json');
   fs.writeFileSync(matchDataPath, JSON.stringify({
     shows: [
-      { act: 'Test Band', kind: 'music', date: '2026-09-25', venue: 'Test Wiltern', scores: { kevin: { basis: 'like', score: 91 } } },
-      { act: 'Filler Band', kind: 'music', date: '2026-09-26', venue: 'Test Bowl', scores: { kevin: { basis: 'follow', score: 70 } } },
-      { act: 'Guess Band', kind: 'music', date: '2026-09-24', venue: 'Test Club', scores: { kevin: { basis: 'claude', score: 99 } } },
-      { act: 'Test Comic', kind: 'comedy', date: '2026-09-27', venue: 'Test Store', scores: { kevin: { basis: 'comedy', score: 88 } } },
+      { act: 'Test Band', kind: 'music', date: '2099-06-01', venue: 'Test Wiltern', scores: { kevin: { basis: 'like', score: 91 } } },
+      { act: 'Filler Band', kind: 'music', date: '2099-06-02', venue: 'Test Bowl', scores: { kevin: { basis: 'follow', score: 70 } } },
+      { act: 'Guess Band', kind: 'music', date: '2099-06-03', venue: 'Test Club', scores: { kevin: { basis: 'claude', score: 99 } } },
+      { act: 'Test Comic', kind: 'comedy', date: '2099-06-04', venue: 'Test Store', scores: { kevin: { basis: 'comedy', score: 88 } } },
     ],
   }));
   let capturedBundle = null;

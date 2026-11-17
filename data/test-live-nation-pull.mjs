@@ -24,12 +24,20 @@ function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
 console.log('test-live-nation-pull.mjs');
 
+function isoOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const SHOW_DATE = isoOffset(40);
+
 function fakeEvent(overrides = {}) {
   return {
     id: 'evt-1',
     name: 'Counting Crows',
     url: 'https://www.ticketmaster.com/event/evt-1',
-    dates: { start: { localDate: '2026-09-10' } },
+    dates: { start: { localDate: SHOW_DATE } },
     _embedded: {
       attractions: [{ name: 'Counting Crows' }],
       venues: [{ name: 'Hollywood Bowl' }],
@@ -69,7 +77,7 @@ test('mapEventToShow extracts act/venue/date/sourceUrl and tags promoter when de
   assert.deepEqual(mapEventToShow(event, []), {
     act: 'Counting Crows',
     venue: 'Hollywood Bowl',
-    date: '2026-09-10',
+    date: SHOW_DATE,
     sourceUrl: 'https://www.ticketmaster.com/event/evt-1',
     promoter: 'Live Nation',
   });
@@ -212,8 +220,8 @@ await asyncTest('runOnce merges into an existing cache without discarding prior 
   const cachePathOverride = tmpCachePath();
   fs.writeFileSync(cachePathOverride, JSON.stringify({
     fetchedAt: '2026-08-01T00:00:00Z',
-    findings: [{ text: 'Counting Crows — Hollywood Bowl — 2026-09-10 — https://spotify-found.example', urls: [], label: 'spotify' }],
-    shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', sourceUrl: 'https://spotify-found.example' }],
+    findings: [{ text: `Counting Crows — Hollywood Bowl — ${SHOW_DATE} — https://spotify-found.example`, urls: [], label: 'spotify' }],
+    shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: SHOW_DATE, sourceUrl: 'https://spotify-found.example' }],
   }));
   const fetchImpl = async (url) => {
     const params = new URL(url).searchParams;
@@ -230,6 +238,28 @@ await asyncTest('runOnce merges into an existing cache without discarding prior 
   assert.equal(written.shows[0].promoter, 'Live Nation', 'the promoter tag is filled in from the Ticketmaster duplicate');
   assert.ok(written.findings.some((f) => f.label === 'spotify'), 'the prior spotify finding block must survive');
   assert.ok(written.findings.some((f) => f.label === 'livenation'), 'a new livenation finding block must be added');
+});
+
+await asyncTest('runOnce drops shows that have already happened and keeps a later saved date', async () => {
+  const cachePathOverride = tmpCachePath();
+  fs.writeFileSync(cachePathOverride, JSON.stringify({
+    fetchedAt: '2026-08-01T00:00:00Z',
+    findings: [],
+    shows: [
+      { act: 'Already Played', venue: 'The Echo', date: isoOffset(-10), promoter: 'Live Nation' },
+      { act: 'Still Ahead', venue: 'The Wiltern', date: isoOffset(20), promoter: 'Live Nation' },
+    ],
+  }));
+  const fetchImpl = async (url) => {
+    const params = new URL(url).searchParams;
+    const events = params.get('page') === '0' && params.get('classificationName') === 'Music'
+      ? [fakeEvent({ id: 'e1', promoter: { name: 'Live Nation' } })]
+      : [];
+    return { ok: true, json: async () => ({ _embedded: { events }, page: { totalPages: 1, number: 0 } }) };
+  };
+  await runOnce({ days: 60, fetchImpl, apiKey: 'k', cachePathOverride, venuesOverridePathOverride: tmpVenuesPath([]), log: () => {} });
+  const written = JSON.parse(fs.readFileSync(cachePathOverride, 'utf8'));
+  assert.deepEqual(written.shows.map((s) => s.act).sort(), ['Counting Crows', 'Still Ahead']);
 });
 
 console.log('All live-nation-pull tests passed.');

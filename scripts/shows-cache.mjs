@@ -3,7 +3,7 @@
 // shows:pull / spotify:find-shows / the bot's get_upcoming_shows rebuild
 // findings from text only and silently drop label:'livenation' blocks
 // (and the promoter field the LN badge + score boost both key off).
-import { dedupeShows, parseShowsFromText } from './show-parse.mjs';
+import { dedupeShows, parseShowsFromText, upcomingShows } from './show-parse.mjs';
 
 export function livenationFindings(existing) {
   return (existing?.findings || []).filter((f) => f.label === 'livenation');
@@ -31,10 +31,19 @@ export function mergeFindingsPreservingLivenation(newFindings, existingCache) {
  * Discovery wins for act/venue/date/url (first-seen); dedupeShows fills a
  * missing promoter from a later LN duplicate.
  */
-export function rebuildShowsWithLivenation(discoveryShows, existingCache) {
-  const lnFromFindings = showsFromLivenationFindings(existingCache?.findings);
-  const lnFromShows = (existingCache?.shows || []).filter((s) => s?.promoter);
-  return dedupeShows([...(discoveryShows || []), ...lnFromFindings, ...lnFromShows]);
+export function rebuildShowsWithLivenation(discoveryShows, existingCache, today) {
+  // Promoter tags are reattached on purpose so a venue/Spotify refresh does
+  // not wipe Live Nation. That reattachment used to keep every tagged show
+  // forever, so Nights Out kept ranking concerts that had already happened.
+  const lnFromFindings = upcomingShows(showsFromLivenationFindings(existingCache?.findings), today);
+  const lnFromShows = upcomingShows(
+    (existingCache?.shows || []).filter((s) => s?.promoter),
+    today,
+  );
+  return upcomingShows(
+    dedupeShows([...(discoveryShows || []), ...lnFromFindings, ...lnFromShows]),
+    today,
+  );
 }
 
 /** Parse non-livenation finding text into structured shows (with label). */

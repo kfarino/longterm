@@ -1766,10 +1766,10 @@ await asyncTest('get_upcoming_shows: preserves a prior Live Nation finding when 
         label: 'livenation',
         text: '',
         urls: [],
-        shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' }],
+        shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2099-06-01', promoter: 'Live Nation' }],
       },
     ],
-    shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' }],
+    shows: [{ act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2099-06-01', promoter: 'Live Nation' }],
   }));
   const paths = writeFixture(dir, {
     updates: { ok: true, result: [msg(1, { fromId: 111, text: '@TestBot any good shows coming up?' })] },

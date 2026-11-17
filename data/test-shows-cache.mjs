@@ -60,7 +60,7 @@ test('rebuildShowsWithLivenation fills promoter onto a matching discovery show',
       },
     ],
   };
-  const shows = rebuildShowsWithLivenation(discovery, existing);
+  const shows = rebuildShowsWithLivenation(discovery, existing, '2026-09-01');
   assert.equal(shows.length, 1);
   assert.equal(shows[0].promoter, 'Live Nation');
   assert.equal(shows[0].label, 'venues', 'discovery fields win; promoter is filled in');
@@ -77,8 +77,29 @@ test('rebuildShowsWithLivenation also recovers promoter from existing.shows when
       { act: 'Counting Crows', venue: 'Hollywood Bowl', date: '2026-09-10', promoter: 'Live Nation' },
     ],
   };
-  const shows = rebuildShowsWithLivenation(discovery, existing);
+  const shows = rebuildShowsWithLivenation(discovery, existing, '2026-09-01');
   assert.equal(shows[0].promoter, 'Live Nation');
+});
+
+test('rebuildShowsWithLivenation drops past shows and keeps later Live Nation dates', () => {
+  const discovery = [
+    { act: 'New Act', venue: 'The Echo', date: '2026-12-01', label: 'venues' },
+  ];
+  const existing = {
+    findings: [{
+      label: 'livenation',
+      shows: [
+        { act: 'Already Played', venue: 'Hollywood Bowl', date: '2026-10-10', promoter: 'Live Nation' },
+        { act: 'Still Ahead', venue: 'The Wiltern', date: '2026-12-05', promoter: 'Live Nation' },
+      ],
+    }],
+    shows: [
+      { act: 'Already Played', venue: 'Hollywood Bowl', date: '2026-10-10', promoter: 'Live Nation' },
+      { act: 'Orphan Future', venue: 'The Greek', date: '2026-12-20', promoter: 'Live Nation' },
+    ],
+  };
+  const shows = rebuildShowsWithLivenation(discovery, existing, '2026-11-16');
+  assert.deepEqual(shows.map((s) => s.act).sort(), ['New Act', 'Orphan Future', 'Still Ahead']);
 });
 
 test('discoveryShowsFromFindings ignores livenation text-less blocks (uses rebuild for those)', () => {

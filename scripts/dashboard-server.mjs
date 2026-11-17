@@ -18,7 +18,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scoreShowsLikeness } from './spotify-likeness.mjs';
-import { parseShowsFromText, dedupeShows, takeTopShows } from './show-parse.mjs';
+import { parseShowsFromText, dedupeShows, takeTopShows, upcomingShows } from './show-parse.mjs';
 import { readActRatings, setActRating } from './spotify-act-ratings.mjs';
 import { ticketmasterEnvPath } from './longterm-paths.mjs';
 import { add_todo, mark_todo_done } from './telegram-bot-tools.mjs';
@@ -152,15 +152,19 @@ export async function readShowTasteMatches({
     tasteDir,
     skipClaude,
   });
+  // Rank only nights that have not happened. The match file accumulates, and
+  // takeTopShows is score-only — a sold-out October show with a perfect
+  // likeness was beating every concert still on sale.
+  const freshShows = upcomingShows(result.shows);
   // Top N per kind so comedy isn't crowded out by music (and vice versa).
   const lim = limit === 0 || limit === 'all' ? 0 : (Number(limit) || 15);
   const liveNation = {
     pullConfigured: liveNationPullConfigured(),
     taggedInCache: shows.filter((s) => s.promoter === 'Live Nation').length,
   };
-  if (lim === 0) return { ...result, limit: null, liveNation };
-  const music = takeTopShows(result.shows.filter((s) => s.kind !== 'comedy'), lim, ownerIds);
-  const comedy = takeTopShows(result.shows.filter((s) => s.kind === 'comedy'), lim, ownerIds);
+  if (lim === 0) return { ...result, shows: freshShows, limit: null, liveNation };
+  const music = takeTopShows(freshShows.filter((s) => s.kind !== 'comedy'), lim, ownerIds);
+  const comedy = takeTopShows(freshShows.filter((s) => s.kind === 'comedy'), lim, ownerIds);
   return {
     ...result,
     limit: lim,

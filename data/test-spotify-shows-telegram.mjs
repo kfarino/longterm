@@ -11,11 +11,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { filterQualifyingShows, topShowsByKind, resolveArtistPageUrl, buildArtistLinks, formatShowDate, formatMessage, runOnce } from '../scripts/spotify-shows-telegram.mjs';
 
+function isoOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function test(name, fn) { fn(); console.log(`  ok - ${name}`); }
 async function asyncTest(name, fn) { await fn(); console.log(`  ok - ${name}`); }
 console.log('test-spotify-shows-telegram.mjs');
 
-function show({ act, kind = 'music', basis = 'like', score = 90, date = '2026-08-10', venue = 'The Wiltern', promoter = undefined }) {
+function show({ act, kind = 'music', basis = 'like', score = 90, date = isoOffset(30), venue = 'The Wiltern', promoter = undefined }) {
   const s = { act, kind, date, venue, scores: { kevin: { basis, score, linked: true } } };
   if (promoter) s.promoter = promoter;
   return s;
@@ -34,9 +40,9 @@ test('keeps music and comedy shows with a real signal (basis !== claude)', () =>
 });
 
 test('returns {act, kind, date, venue, score} objects, not bare strings', () => {
-  const shows = [show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97 })];
+  const shows = [show({ act: 'Counting Crows', basis: 'like', date: isoOffset(14), venue: 'Hollywood Bowl', score: 97 })];
   assert.deepEqual(filterQualifyingShows({ shows }), [
-    { act: 'Counting Crows', kind: 'music', date: '2026-08-14', venue: 'Hollywood Bowl', score: 97, promoter: null },
+    { act: 'Counting Crows', kind: 'music', date: isoOffset(14), venue: 'Hollywood Bowl', score: 97, promoter: null },
   ]);
 });
 
@@ -58,12 +64,12 @@ test('excludes an LLM-guessed comedy show the same as an LLM-guessed music show'
 
 test('deduplicates an artist appearing across multiple tour dates, first occurrence wins', () => {
   const shows = [
-    show({ act: 'JAŸ-Z', basis: 'follow', date: '2026-08-10' }),
-    show({ act: 'JAŸ-Z', basis: 'follow', date: '2026-08-24' }),
+    show({ act: 'JAŸ-Z', basis: 'follow', date: isoOffset(10) }),
+    show({ act: 'JAŸ-Z', basis: 'follow', date: isoOffset(24) }),
   ];
   const result = filterQualifyingShows({ shows });
   assert.equal(result.length, 1);
-  assert.equal(result[0].date, '2026-08-10');
+  assert.equal(result[0].date, isoOffset(10));
 });
 
 test('deduplicates case/whitespace variants of the same artist name', () => {
@@ -84,17 +90,25 @@ test('empty or missing shows array degrades to an empty list, not a crash', () =
   assert.deepEqual(filterQualifyingShows({}), []);
 });
 
+test('drops a past show even when its taste score is higher than an upcoming one', () => {
+  const shows = [
+    show({ act: 'Already Played', basis: 'like', score: 100, date: isoOffset(-5) }),
+    show({ act: 'Still Ahead', basis: 'like', score: 40, date: isoOffset(10) }),
+  ];
+  assert.deepEqual(filterQualifyingShows({ shows }).map((e) => e.act), ['Still Ahead']);
+});
+
 test('topShowsByKind: strongest 3 music and 3 comedy, claude-guesses excluded', () => {
   const shows = [
-    show({ act: 'Music A', kind: 'music', score: 99, date: '2026-09-22' }),
-    show({ act: 'Music B', kind: 'music', score: 80, date: '2026-09-23' }),
-    show({ act: 'Music C', kind: 'music', score: 70, date: '2026-09-24' }),
-    show({ act: 'Music D', kind: 'music', score: 60, date: '2026-09-25' }),
-    show({ act: 'Guess Band', kind: 'music', basis: 'claude', score: 100, date: '2026-09-21' }),
-    show({ act: 'Comic A', kind: 'comedy', basis: 'comedy', score: 95, date: '2026-09-26' }),
-    show({ act: 'Comic B', kind: 'comedy', basis: 'comedy', score: 88, date: '2026-09-27' }),
-    show({ act: 'Comic C', kind: 'comedy', basis: 'comedy', score: 70, date: '2026-09-28' }),
-    show({ act: 'Comic D', kind: 'comedy', basis: 'comedy', score: 40, date: '2026-09-29' }),
+    show({ act: 'Music A', kind: 'music', score: 99, date: isoOffset(22) }),
+    show({ act: 'Music B', kind: 'music', score: 80, date: isoOffset(23) }),
+    show({ act: 'Music C', kind: 'music', score: 70, date: isoOffset(24) }),
+    show({ act: 'Music D', kind: 'music', score: 60, date: isoOffset(25) }),
+    show({ act: 'Guess Band', kind: 'music', basis: 'claude', score: 100, date: isoOffset(21) }),
+    show({ act: 'Comic A', kind: 'comedy', basis: 'comedy', score: 95, date: isoOffset(26) }),
+    show({ act: 'Comic B', kind: 'comedy', basis: 'comedy', score: 88, date: isoOffset(27) }),
+    show({ act: 'Comic C', kind: 'comedy', basis: 'comedy', score: 70, date: isoOffset(28) }),
+    show({ act: 'Comic D', kind: 'comedy', basis: 'comedy', score: 40, date: isoOffset(29) }),
   ];
   const top = topShowsByKind(filterQualifyingShows({ shows }));
   assert.deepEqual(top.music.map((e) => e.act), ['Music A', 'Music B', 'Music C']);
@@ -255,8 +269,8 @@ function tmpMatchDataPath(shows) {
 
 function realisticShows() {
   return [
-    show({ act: 'Counting Crows', basis: 'like', date: '2026-08-14', venue: 'Hollywood Bowl' }),
-    show({ act: 'Anthony Jeselnik', kind: 'comedy', basis: 'comedy', date: '2026-08-16', venue: 'Largo' }),
+    show({ act: 'Counting Crows', basis: 'like', date: isoOffset(14), venue: 'Hollywood Bowl' }),
+    show({ act: 'Anthony Jeselnik', kind: 'comedy', basis: 'comedy', date: isoOffset(16), venue: 'Largo' }),
     show({ act: 'LLM Guess Artist', basis: 'claude' }),
   ];
 }
@@ -299,8 +313,8 @@ await asyncTest('runOnce --dry-run composes the message but never calls the Tele
   assert.equal(result.reason, 'dry_run');
   assert.equal(
     result.text,
-    '🎸 Counting Crows (90%) — Aug 14 @ Hollywood Bowl: <a href="https://open.spotify.com/artist/cc">click to listen</a>\n'
-    + '🤣 Anthony Jeselnik (90%) — Aug 16 @ Largo: <a href="https://open.spotify.com/artist/aj">click to listen</a>',
+    `🎸 Counting Crows (90%) — ${formatShowDate(isoOffset(14))} @ Hollywood Bowl: <a href="https://open.spotify.com/artist/cc">click to listen</a>\n`
+    + `🤣 Anthony Jeselnik (90%) — ${formatShowDate(isoOffset(16))} @ Largo: <a href="https://open.spotify.com/artist/aj">click to listen</a>`,
   );
 });
 

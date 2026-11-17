@@ -314,7 +314,7 @@ await test('readShowTasteMatches serves show-matches-latest.json instead of live
   // weekly artifact; the dashboard should display it.
   const tasteDir = fs.mkdtempSync(path.join(os.tmpdir(), 'show-matches-taste-'));
   const cachePath = path.join(tasteDir, 'upcoming_shows_cache.json');
-  const show = { act: 'Test Bistro Band', venue: 'The Test Room', date: '2026-09-10', promoter: 'Live Nation' };
+  const show = { act: 'Test Bistro Band', venue: 'The Test Room', date: '2099-06-01', promoter: 'Live Nation' };
   writeJsonAtomic(cachePath, { shows: [show] });
   writeJsonAtomic(path.join(tasteDir, 'show-matches-latest.json'), {
     matchedAt: '2026-08-14T16:21:02.400Z',
@@ -333,6 +333,43 @@ await test('readShowTasteMatches serves show-matches-latest.json instead of live
   });
   assert.equal(result.shows[0].scores.kevin.score, 73, 'must use the rematch file, not a live rescore');
   assert.equal(result.shows[0].scores.kevin.liveNationBoost, 4);
+});
+
+await test('readShowTasteMatches ranks upcoming shows and leaves past concerts out of the top list', async () => {
+  const tasteDir = fs.mkdtempSync(path.join(os.tmpdir(), 'show-matches-upcoming-'));
+  const cachePath = path.join(tasteDir, 'upcoming_shows_cache.json');
+  writeJsonAtomic(cachePath, { shows: [] });
+  const past = '2020-01-01';
+  const future = '2099-06-01';
+  writeJsonAtomic(path.join(tasteDir, 'show-matches-latest.json'), {
+    matchedAt: '2026-11-16T00:00:00.000Z',
+    shows: [
+      {
+        act: 'Already Played',
+        venue: 'Hollywood Bowl',
+        date: past,
+        kind: 'music',
+        scores: { kevin: { linked: true, score: 100, basis: 'like' } },
+        us: { score: 100 },
+      },
+      {
+        act: 'Still Ahead',
+        venue: 'The Wiltern',
+        date: future,
+        kind: 'music',
+        scores: { kevin: { linked: true, score: 40, basis: 'like' } },
+        us: { score: 40 },
+      },
+    ],
+  });
+  const result = await readShowTasteMatches({
+    upcomingShowsCachePath: cachePath,
+    tasteDir,
+    skipClaude: true,
+    limit: 15,
+  });
+  assert.deepEqual(result.byKind.music.map((s) => s.act), ['Still Ahead']);
+  assert.equal(result.shows.some((s) => s.act === 'Already Played'), false);
 });
 
 await test('GET /api/todos returns the empty default shape when the file does not exist yet', async () => {

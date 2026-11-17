@@ -14,6 +14,12 @@ console.log('test-dashboard-shows.mjs');
 
 const TODAY = '2026-08-14';
 
+function isoOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function show(overrides) {
   return {
     act: 'Test Bistro Band',
@@ -131,6 +137,22 @@ await test('groupShowsByAct falls back to Kevin score when Us is missing', async
   assert.equal(grouped[0].promoter, 'Live Nation');
 });
 
+await test('groupShowsByAct omits dates that have already passed', async () => {
+  const d = loadDashboard();
+  await d.initReady;
+  const grouped = d.groupShowsByAct([
+    show({ act: 'Old Only', date: '2026-08-01', venue: 'The Echo', us: { score: 99 } }),
+    show({ act: 'The National', date: '2026-08-01', venue: 'Old Room', us: { score: 99 } }),
+    show({ act: 'The National', date: '2026-09-03', venue: 'Kia Forum', us: { score: 70 } }),
+  ], TODAY);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0].act, 'The National');
+  assert.deepEqual(grouped[0].dates, ['2026-09-03']);
+  assert.equal(grouped[0].date, '2026-09-03');
+  assert.equal(grouped[0].venue, 'Kia Forum');
+  assert.equal(grouped[0].us.score, 70, 'score comes from a night that has not happened yet');
+});
+
 await test('showsFindingsHTML groups before rendering so one act is one row', async () => {
   const d = loadDashboard();
   await d.initReady;
@@ -139,8 +161,8 @@ await test('showsFindingsHTML groups before rendering so one act is one row', as
     {
       byKind: {
         music: [
-          show({ act: 'The National', date: '2026-09-03', venue: 'Kia Forum', us: { score: 80 } }),
-          show({ act: 'The National', date: '2026-08-20', venue: 'Hollywood Bowl', us: { score: 90 } }),
+          show({ act: 'The National', date: isoOffset(20), venue: 'Kia Forum', us: { score: 80 } }),
+          show({ act: 'The National', date: isoOffset(40), venue: 'Hollywood Bowl', us: { score: 90 } }),
         ],
       },
     },

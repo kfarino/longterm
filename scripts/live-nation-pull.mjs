@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ticketmasterEnvPath } from './longterm-paths.mjs';
-import { dedupeShows } from './show-parse.mjs';
+import { dedupeShows, upcomingShows } from './show-parse.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -164,10 +164,14 @@ function mergeIntoCache(shows, cachePathToUse) {
       existing = { findings: [] };
     }
   }
+  const fresh = upcomingShows(shows);
   const findings = (existing.findings || []).filter((f) => f.label !== 'livenation');
-  findings.push({ text: '', urls: [], label: 'livenation', shows });
+  findings.push({ text: '', urls: [], label: 'livenation', shows: fresh });
 
-  const allShows = dedupeShows([...(existing.shows || []), ...shows]);
+  // Union with the previous cache, then drop anything already in the past.
+  // Without the date cut, each pull appended to shows[] and old concerts
+  // stayed in the file indefinitely.
+  const allShows = dedupeShows([...upcomingShows(existing.shows || []), ...fresh]);
 
   const cache = {
     ...existing,

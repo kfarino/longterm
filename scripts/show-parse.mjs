@@ -1,13 +1,18 @@
 /** Shared show line parser — keep in sync with dashboard_v5.html parseShowsFromText. */
 
-function isoDate(d) {
+export function localIsoDate(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** A show is still a night out only when its date is today or later. No date is not upcoming. */
+export function upcomingShows(shows, today = localIsoDate()) {
+  return (shows || []).filter((s) => s && s.date && s.date >= today);
 }
 
 /** Pull structured shows out of LLM prose / dash-separated lines. */
 export function parseShowsFromText(text, fallbackUrls = []) {
   if (!text) return [];
-  const today = isoDate(new Date());
+  const today = localIsoDate();
   const urlRe = /https?:\/\/\S+/gi;
   const dateRe = /\b(20\d{2}-\d{2}-\d{2})\b/;
   const junk = /^(i('ll| will) search|based on |here are the|most venue|note:|no current|for other artists|confirmed la|the search results|unfortunately|with my search)/i;

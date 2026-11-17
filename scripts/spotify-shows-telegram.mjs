@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { getValidAccessToken, spotifyGet } from './spotify-client.mjs';
 import { normalizeArtistName } from './spotify-pull.mjs';
 import { telegramEnvPath } from './longterm-paths.mjs';
+import { localIsoDate } from './show-parse.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..');
@@ -29,11 +30,12 @@ export function defaultMatchDataPath() {
 // basis is literally the string 'comedy' (from comedyTaste matching, not an
 // LLM guess), so it already passes this same basis !== 'claude' check
 // without a comedy-specific branch.
-export function filterQualifyingShows(matchData) {
+export function filterQualifyingShows(matchData, today = localIsoDate()) {
   const shows = matchData?.shows || [];
   const seen = new Set();
   const entries = [];
   for (const s of shows) {
+    if (!s.date || s.date < today) continue;
     if (s.kind !== 'music' && s.kind !== 'comedy') continue;
     const kevinScore = s.scores?.kevin;
     if (!kevinScore || kevinScore.basis === 'claude') continue;
