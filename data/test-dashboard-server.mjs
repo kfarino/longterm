@@ -475,18 +475,21 @@ await test('GET /api/kevin-300k uses Helios hours when a log is present', async 
       hoursPerWeek: 2,
     },
   });
-  const day = (offset) => {
+  const monday = (weeksBack) => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + offset);
+    const weekday = d.getDay();
+    const back = weekday === 0 ? 6 : weekday - 1;
+    d.setDate(d.getDate() - back - 7 * weeksBack);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
   writeJsonAtomic(logPath, {
     entries: [
-      { date: day(0), hours: 9, note: 'Test fixture week' },
-      { date: day(-7), hours: 9, note: 'Test fixture week' },
-      { date: day(-14), hours: 9, note: 'Test fixture week' },
-      { date: day(-21), hours: 9, note: 'Test fixture week' },
+      { date: monday(0), hours: 1, note: 'Test fixture this week' },
+      { date: monday(1), hours: 9, note: 'Test fixture week' },
+      { date: monday(2), hours: 9, note: 'Test fixture week' },
+      { date: monday(3), hours: 9, note: 'Test fixture week' },
+      { date: monday(4), hours: 9, note: 'Test fixture week' },
     ],
   });
   const prev = process.env.HELIOS_TIME_LOG;
@@ -512,8 +515,9 @@ await test('GET /api/kevin-300k uses Helios hours when a log is present', async 
     const body = await res.json();
     assert.equal(body.skip, undefined);
     assert.equal(body.hoursSource, 'helios');
-    assert.ok(body.cleared, '9 hours this week annualizes past $300k');
-    assert.ok(body.hoursPerWeek >= 2, 'live hours beat the 2 hr/week fallback');
+    assert.equal(body.hoursThisWeek, 1, 'this Monday-Sunday week is not the finished weeks');
+    assert.equal(body.hoursPerWeek, 9, 'average is the last 4 finished weeks');
+    assert.ok(body.cleared, '9 hr/week average annualizes past $300k');
   } finally {
     if (prev === undefined) delete process.env.HELIOS_TIME_LOG;
     else process.env.HELIOS_TIME_LOG = prev;

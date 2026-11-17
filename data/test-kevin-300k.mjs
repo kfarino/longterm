@@ -38,20 +38,38 @@ test('missing config yields a skip, not a fake $0 climb', () => {
   assert.equal(computeKevin300k({}, 9), null);
 });
 
-test('Helios hours: rolling 7 and 28 days, older rows dropped', () => {
-  const asOf = new Date(2026, 10, 8); // Nov 8, 2026
+test('Helios hours stay inside Monday-Sunday weeks and leave this week out of the average', () => {
+  // Monday Nov 16. Nov 15 is the previous Sunday and must not join this week.
+  const asOf = new Date(2026, 10, 16);
   const s = summarizeHeliosHours({
     entries: [
-      { date: '2026-11-07', hours: 2 },
-      { date: '2026-11-02', hours: 5 },
-      { date: '2026-10-20', hours: 8 },
-      { date: '2026-09-01', hours: 40 },
+      { date: '2026-11-16', hours: 2.7 },
+      { date: '2026-11-09', hours: 8 },
+      { date: '2026-11-15', hours: 1 },
+      { date: '2026-11-02', hours: 4 },
+      { date: '2026-10-26', hours: 4 },
+      { date: '2026-10-19', hours: 4 },
+      { date: '2026-10-12', hours: 40 },
     ],
   }, asOf);
-  assert.equal(s.hours7, 7);
-  assert.equal(s.hours28, 15);
-  assert.equal(s.hoursPerWeek, 15 / 4);
+  assert.equal(s.hoursThisWeek, 2.7);
+  assert.equal(s.weeks.length, 4);
+  assert.deepEqual(s.weeks.map((w) => w.start), ['2026-11-09', '2026-11-02', '2026-10-26', '2026-10-19']);
+  assert.equal(s.weeks[0].end, '2026-11-15');
+  assert.equal(s.weeks[0].hours, 9);
+  assert.equal(s.hoursPerWeek, (9 + 4 + 4 + 4) / 4);
   assert.equal(s.source, 'helios');
+});
+
+test('a zero Monday-Sunday week still counts in the average', () => {
+  const asOf = new Date(2026, 10, 16);
+  const s = summarizeHeliosHours({
+    entries: [{ date: '2026-11-09', hours: 8 }],
+  }, asOf);
+  assert.equal(s.hoursThisWeek, 0);
+  assert.equal(s.weeks[0].hours, 8);
+  assert.equal(s.weeks.slice(1).every((w) => w.hours === 0), true);
+  assert.equal(s.hoursPerWeek, 8 / 4);
 });
 
 test('Helios hours: missing log is missing, not zero', () => {

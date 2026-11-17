@@ -1,5 +1,6 @@
 // Kevin's cash-flow climb: Hero base + Helios hours toward a pre-tax target.
-// Pure math — no fs. Hours come from summarizeHeliosHours or a planned
+// Pure math — no fs. Hours come from summarizeHeliosHours (Monday–Sunday
+// weeks; the average is the last 4 finished weeks) or a planned
 // hoursPerWeek fallback on the config. Illiquid equity is not in this number.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -46,34 +47,73 @@ export function computeKevin300k(cfg, hoursPerWeek) {
   };
 }
 
-function daysAgo(asOf, iso) {
+const FINISHED_WEEKS = 4;
+
+function isoDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function parseIso(iso) {
   const [y, m, d] = String(iso || '').split('-').map(Number);
-  if (!y || !m || !d) return Infinity;
-  const then = new Date(y, m - 1, d);
-  const start = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
-  return (start - then) / 86400000;
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+function addDays(date, n) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
+/** Monday of the calendar week that contains date. Weeks are Monday–Sunday. */
+function mondayOf(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const weekday = d.getDay();
+  const back = weekday === 0 ? 6 : weekday - 1;
+  d.setDate(d.getDate() - back);
+  return d;
+}
+
+function roundHours(n) {
+  return Math.round(n * 100) / 100;
 }
 
 export function summarizeHeliosHours(log, asOf = new Date()) {
   const entries = Array.isArray(log?.entries) ? log.entries : null;
   if (!entries) {
-    return { source: 'missing', hours7: 0, hours28: 0, hoursPerWeek: null };
+    return { source: 'missing', hoursThisWeek: null, weeks: [], hoursPerWeek: null };
   }
-  let hours7 = 0;
-  let hours28 = 0;
+  const today = new Date(asOf.getFullYear(), asOf.getMonth(), asOf.getDate());
+  const thisMonday = mondayOf(today);
+  const thisKey = isoDate(thisMonday);
+  const buckets = new Map();
+  for (let i = 1; i <= FINISHED_WEEKS; i++) {
+    buckets.set(isoDate(addDays(thisMonday, -7 * i)), 0);
+  }
+  let hoursThisWeek = 0;
   for (const row of entries) {
     const hrs = Number(row?.hours);
     if (!(hrs > 0)) continue;
-    const ago = daysAgo(asOf, row.date);
-    if (ago < 0 || ago > 28) continue;
-    hours28 += hrs;
-    if (ago <= 7) hours7 += hrs;
+    const when = parseIso(row.date);
+    if (!when || when > today) continue;
+    const key = isoDate(mondayOf(when));
+    if (key === thisKey) {
+      hoursThisWeek += hrs;
+      continue;
+    }
+    if (buckets.has(key)) buckets.set(key, buckets.get(key) + hrs);
   }
+  const weeks = [...buckets.entries()].map(([start, hours]) => ({
+    start,
+    end: isoDate(addDays(parseIso(start), 6)),
+    hours: roundHours(hours),
+  }));
+  const avg = weeks.reduce((sum, week) => sum + week.hours, 0) / weeks.length;
   return {
     source: 'helios',
-    hours7: Math.round(hours7 * 100) / 100,
-    hours28: Math.round(hours28 * 100) / 100,
-    hoursPerWeek: Math.round((hours28 / 4) * 100) / 100,
+    hoursThisWeek: roundHours(hoursThisWeek),
+    weeks,
+    hoursPerWeek: roundHours(avg),
   };
 }
 
@@ -97,7 +137,8 @@ export function loadKevin300kTracker(goals, hours) {
   if (!tracker) return null;
   return {
     ...tracker,
-    hours7: hours?.hours7 ?? null,
+    hoursThisWeek: hours?.hoursThisWeek ?? null,
+    weeks: Array.isArray(hours?.weeks) ? hours.weeks : [],
     hoursSource: hours?.source || 'goals',
   };
 }

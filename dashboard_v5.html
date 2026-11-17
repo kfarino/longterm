@@ -179,6 +179,8 @@ body{background:var(--bg);color:var(--text);font-family:'Source Sans 3',sans-ser
   position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--red);z-index:2;
 }
 .k300-meta{font-size:11px;color:var(--sub);margin-top:6px;line-height:1.35}
+.k300-weeks{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px;font-size:11px;color:var(--sub);font-variant-numeric:tabular-nums}
+.k300-weeks span{white-space:nowrap}
 @media (max-width:720px){
   .stretch-mark-label{display:none}
   .stretch-lane-marks{height:16px}
@@ -823,20 +825,38 @@ function fmtHrs(n) {
   const v = Math.round(Number(n) * 10) / 10;
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
+function weekRangeLabel(startIso, endIso) {
+  const start = new Date(`${startIso}T12:00:00`);
+  const end = new Date(`${endIso}T12:00:00`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return startIso || '';
+  const sm = start.toLocaleDateString('en-US', { month: 'short' });
+  const em = end.toLocaleDateString('en-US', { month: 'short' });
+  if (sm === em) return `${sm} ${start.getDate()}–${end.getDate()}`;
+  return `${sm} ${start.getDate()}–${em} ${end.getDate()}`;
+}
 function renderKevin300kHTML(t) {
   if (!t) return '';
   const status = t.cleared
     ? `<span class="k300-status cleared">Cleared · ${fmtM(t.current)}</span>`
     : `<span class="k300-status short">${fmtM(Math.abs(t.gap))} to go</span>`;
-  const weekHrs = t.hoursSource === 'helios' && t.hours7 != null ? t.hours7 : null;
-  const weekBit = weekHrs != null ? ` · this week ${fmtHrs(weekHrs)} hr` : '';
+  const live = t.hoursSource === 'helios' && t.hoursThisWeek != null;
+  const pace = live
+    ? `This week ${fmtHrs(t.hoursThisWeek)} hr · 4-wk avg ${fmtHrs(t.hoursPerWeek)} hr/wk`
+    : `${fmtHrs(t.hoursPerWeek)} hr/wk`;
+  const weeks = live
+    ? [...(t.weeks || [])].sort((a, b) => String(a.start).localeCompare(String(b.start)))
+    : [];
+  const weekLine = weeks.length
+    ? `<div class="k300-weeks">${weeks.map((w) => `<span title="Monday–Sunday">${weekRangeLabel(w.start, w.end)} ${fmtHrs(w.hours)}</span>`).join('')}</div>`
+    : '';
   return `<div class="k300" id="kevin-300k">
     <div class="k300-head"><span class="k300-title">Kevin → $300k</span>${status}</div>
     <div class="k300-track">
       <div class="k300-fill${t.cleared ? ' cleared' : ''}" style="width:${t.climbPct.toFixed(1)}%"></div>
-      ${t.capPct > 0 && t.capPct < 100 ? `<div class="k300-cap" style="left:${t.capPct.toFixed(1)}%" title="Bill's monthly cap"></div>` : ''}
+      ${t.capPct > 0 && t.capPct < 100 ? `<div class="k300-cap" style="left:${t.capPct.toFixed(1)}%" title="Bill's ${fmt(t.billCapMonthly)}/mo cap"></div>` : ''}
     </div>
-    <div class="k300-meta">${fmtHrs(t.hoursPerWeek)} hr/wk${weekBit} · ${fmtHrs(t.hoursNeedWeek)} hr holds $300k · red tick is Bill's ${fmt(t.billCapMonthly)}/mo</div>
+    <div class="k300-meta">${pace} · ${fmtHrs(t.hoursNeedWeek)} hr/wk holds $300k</div>
+    ${weekLine}
   </div>`;
 }
 async function loadKevin300k() {
@@ -848,7 +868,7 @@ async function loadKevin300k() {
     }
   } catch (err) { /* harness / offline: fall through */ }
   const fallback = computeKevin300k(D.kevin300k, D.kevin300k?.hoursPerWeek);
-  return fallback ? { ...fallback, hoursSource: 'goals', hours7: null } : null;
+  return fallback ? { ...fallback, hoursSource: 'goals', hoursThisWeek: null, weeks: [] } : null;
 }
 
 function laterStretchCards(kind) {

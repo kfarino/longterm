@@ -260,6 +260,34 @@ await test('Now shows the Kevin $300k tracker and 9 hr/week clears the line', as
   assert.ok(!html.includes('k300-stats'), 'the bulky k300 stats grid must stay gone');
 });
 
+await test('Kevin $300k separates this Monday-Sunday week from the finished-week average', async () => {
+  const d = loadDashboard();
+  await d.initReady;
+  const html = d.renderKevin300kHTML({
+    cleared: true,
+    current: 310000,
+    gap: -10000,
+    climbPct: 100,
+    capPct: 68.6,
+    hoursSource: 'helios',
+    hoursThisWeek: 2.7,
+    hoursPerWeek: 8.1,
+    hoursNeedWeek: 7.478,
+    billCapMonthly: 4000,
+    weeks: [
+      { start: '2026-11-09', end: '2026-11-15', hours: 8.6 },
+      { start: '2026-11-02', end: '2026-11-08', hours: 7 },
+    ],
+  });
+  assert.ok(html.includes('This week 2.7 hr'), 'this week is only the open Monday-Sunday week');
+  assert.ok(html.includes('4-wk avg 8.1'), 'the average is the finished weeks, not this week');
+  assert.ok(html.includes('7.5 hr/wk holds $300k'));
+  const nov2 = html.indexOf('Nov 2');
+  const nov9 = html.indexOf('Nov 9');
+  assert.ok(nov2 !== -1 && nov9 !== -1 && nov2 < nov9, 'finished weeks read oldest to newest');
+  assert.ok(html.includes('Nov 9–15'));
+});
+
 await test('a green-light decision is not a Now or Long-term trigger', async () => {
   const d = loadDashboard({
     decisions: [
