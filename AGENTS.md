@@ -123,6 +123,8 @@ fold it onto a trip and do not leave it unmatched.
 Posted travel refunds that left the fetch window live in `travelCredits`.
 Budgeted-trip actuals are folded from the accumulating ledger so flights
 booked months ago are not zeroed when they leave the daily fetch window.
+A travel-category row stored with no `tripId` also needs a pin (or it never
+reaches the trip on fold-in).
 
 A pin naming a `tripId` does two jobs, not one (2026-09-17): it picks the
 trip **and** it reroutes the charge into travel even when Monarch filed it
@@ -132,7 +134,12 @@ is decided — the live loop, `ledgerRowsFromTransactions`,
 `collectJointCharges`, and `mergeLedgerIntoTripBuckets` — or the charge
 comes back onto the joint budget by whichever path was missed. Adding a fifth
 routing site means adding the check there too. `skip: true` never reroutes.
-The bot surface is `reassign_transaction`; the live-view half is
+The same pin on the **refund's** date (2026-11-19) is how a matching credit
+follows the trip: `detectJointRefunds` must skip `tripReroute`, and
+`applyTripReassignmentsToTracking` must lift from `joint.refunds` (those
+credits never live in `weeks[]` or `categories`). Without both, the original
+parking stay sits on the trip while the refund credits Joint. The bot
+surface is `reassign_transaction`; the live-view half is
 `applyTripReassignmentsToTracking`, and it is the only thing that can put a
 charge on a **settled** trip (`budgetedAmount: null`), since the pull
 deliberately never rebuilds those.

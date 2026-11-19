@@ -907,6 +907,21 @@ function liftFromOtherTrip(trips, pin, targetId) {
   return null;
 }
 
+/** A pinned refund sitting on joint.refunds — never in weeks[] or categories. */
+function liftFromJointRefunds(tracker, pin) {
+  if (!tracker || !Array.isArray(tracker.refunds)) return null;
+  const idx = tracker.refunds.findIndex((t) => pinMatchesRow(pin, t));
+  if (idx < 0) return null;
+  const [row] = tracker.refunds.splice(idx, 1);
+  return {
+    date: row.date,
+    merchant: row.merchant,
+    amount: round2(Math.abs(Number(row.amount) || 0)),
+    type: 'credit',
+    ...(row.id ? { id: row.id } : {}),
+  };
+}
+
 /** The charge Monarch called travel but matched to no trip (or to two). */
 function liftFromUnmatched(travel, pin) {
   if (!Array.isArray(travel?.unmatched)) return null;
@@ -950,6 +965,7 @@ export function applyTripReassignmentsToTracking(tracking, tripAssignments) {
 
     const moved = liftFromSpendTracker(tracking?.joint, pin)
       || Object.values(tracking?.personal || {}).reduce((found, t) => found || liftFromSpendTracker(t, pin), null)
+      || liftFromJointRefunds(tracking?.joint, pin)
       || liftFromOtherTrip(trips, pin, target.id)
       || liftFromUnmatched(tracking?.travel, pin);
     if (!moved) continue;
@@ -1321,7 +1337,12 @@ function matchFavorite(merchant, favorites) {
 // skipped.
 // Excluded reassignments (2026-08-09): one-offs marked reassignTo "exclude"
 // (e.g. a personal reimbursement transfer) are skipped here too.
-export function detectJointRefunds(transactions, jointLabels, travelCategoryNames, cycleStart) {
+// Trip-rerouted refunds (2026-11-19): a pin naming a tripId routes the
+// matching credit onto the trip (airport parking posted as Parking & Tolls,
+// then refunded). Those must not also appear on joint.refunds — the live loop
+// already `continue`s past tripReroute, but this pass used to list them as
+// ordinary merchant refunds because it only skipped the travel category.
+export function detectJointRefunds(transactions, jointLabels, travelCategoryNames, cycleStart, overrides = null) {
   const refunds = [];
   for (const txn of transactions) {
     const rawAmount = Number(txn.amount);
@@ -1329,8 +1350,9 @@ export function detectJointRefunds(transactions, jointLabels, travelCategoryName
     if (new Date(txn.date) < cycleStart) continue;
     const acct = accountLabel(txn);
     if (!jointLabels.has(acct)) continue;
-    if (trackerReassignment(txn)?.reassignTo === 'exclude') continue;
-    const catDisplay = categoryName(txn) || 'Uncategorized';
+    if (trackerReassignment(txn, overrides)?.reassignTo === 'exclude') continue;
+    if (tripReroute(txn, overrides)) continue;
+    const catDisplay = categoryName(txn, overrides) || 'Uncategorized';
     const cat = catDisplay.toLowerCase();
     if (cat === 'credit card payment') continue;
     if (travelCategoryNames.has(cat)) continue;
@@ -2022,7 +2044,7 @@ async function main() {
       console.error('travel ledger fold-in failed (budget pull still ok):', sanitize(err.message || err));
     }
 
-    const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart);
+    const jointRefunds = detectJointRefunds(transactions, jointLabels, travelCategories, cycleStart, overrides);
 
     function bucketsToWeeks(buckets, refCycleStart) {
       const maxBucket = Math.max(-1, ...buckets.keys());

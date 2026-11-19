@@ -483,6 +483,20 @@ test('detectJointRefunds excludes travel-category credits (travel has its own se
   assert.equal(refunds.length, 0);
 });
 
+test('detectJointRefunds skips a Parking refund pinned onto a trip (it is a trip credit, not joint)', () => {
+  const pin = {
+    tripAssignments: [
+      { merchantMatch: 'Fixture Airport Parking', date: '2026-11-01', tripId: '2026-zagreb' },
+    ],
+  };
+  const refunds = detectJointRefunds([
+    txn({ id: 'pr1', date: '2026-11-01', amount: 312.99, merchant: 'Fixture Airport Parking', category: 'Parking & Tolls' }),
+    txn({ id: 'am1', date: '2026-11-01', amount: 16.53, merchant: 'Amazon', category: 'Shopping' }),
+  ], JOINT_LABELS, new Set(['travel & vacation']), new Date('2026-10-25'), pin);
+  assert.equal(refunds.length, 1, 'the Amazon refund stays on joint');
+  assert.equal(refunds[0].merchant, 'Amazon');
+});
+
 test('detectJointRefunds excludes negative-amount (regular spend) and non-joint-card transactions', () => {
   const refunds = detectJointRefunds([
     txn({ id: 's1', date: '2026-07-20', amount: -39.5, merchant: 'Amazon', category: 'Shopping' }),
@@ -1159,6 +1173,20 @@ test('mergeLedgerIntoTripBuckets folds a pinned charge still stored as joint ont
   assert.equal(zagreb.actual, 198.99);
 });
 
+test('mergeLedgerIntoTripBuckets folds a pinned joint refund onto the trip as a credit', () => {
+  const buckets = new Map([['2026-zagreb', { actual: 312.99, transactions: [{ date: '2026-09-08', merchant: 'Fixture Airport Parking', amount: 312.99 }] }]]);
+  mergeLedgerIntoTripBuckets(buckets, [
+    { id: 'pr1', date: '2026-11-01', merchant: 'Fixture Airport Parking', amount: 312.99, tracker: 'joint', category: 'Parking & Tolls', type: 'refund' },
+  ], new Set(), {
+    tripAssignments: [
+      { merchantMatch: 'Fixture Airport Parking', date: '2026-11-01', tripId: '2026-zagreb' },
+    ],
+  });
+  const zagreb = buckets.get('2026-zagreb');
+  assert.equal(zagreb.actual, 0, 'charge plus matching refund nets the parking to zero');
+  assert.ok(zagreb.transactions.some((t) => t.date === '2026-11-01' && t.type === 'credit'));
+});
+
 test('mergeLedgerIntoTripBuckets does not double-count a pinned charge the live pass already placed', () => {
   const buckets = new Map([['2026-zagreb', { actual: 198.99, transactions: [{ id: 'p1', date: '2026-08-26', merchant: 'Fixture Airport Parking', amount: 198.99 }] }]]);
   mergeLedgerIntoTripBuckets(buckets, [
@@ -1279,6 +1307,24 @@ test('applyTripReassignmentsToTracking ignores skip pins and pins for an unknown
     { merchantMatch: 'Fixture Airport Parking', date: '2026-08-26', tripId: 'no-such-trip' },
   ]);
   assert.equal(JSON.stringify(tracking), before);
+});
+
+test('applyTripReassignmentsToTracking lifts a joint.refunds row onto the trip as a credit', () => {
+  const tracking = trackingWithParkingOnJoint();
+  tracking.joint.refunds = [
+    { date: '2026-11-01', merchant: 'Fixture Airport Parking', amount: 312.99, category: 'Parking & Tolls' },
+    { date: '2026-11-07', merchant: 'Amazon', amount: 16.53, category: 'Shopping' },
+  ];
+  applyTripReassignmentsToTracking(tracking, [
+    { merchantMatch: 'Fixture Airport Parking', date: '2026-11-01', amount: 312.99, tripId: '2026-zagreb' },
+  ]);
+  assert.deepEqual(tracking.joint.refunds.map((r) => r.merchant), ['Amazon']);
+  const zagreb = tracking.travel.trips.find((t) => t.id === '2026-zagreb');
+  assert.equal(zagreb.actual, 2057.01, 'the refund reduces the trip, it does not add spend');
+  const credit = zagreb.transactions.find((t) => t.date === '2026-11-01');
+  assert.equal(credit.type, 'credit');
+  assert.equal(credit.amount, 312.99);
+  assert.equal(tracking.joint.weeks[0].actual, 398.99, 'joint weeks are untouched — refunds never lived there');
 });
 
 test('applyTripReassignmentsToTracking moves a personal-tracker line item too', () => {
