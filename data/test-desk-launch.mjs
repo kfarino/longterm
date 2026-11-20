@@ -30,5 +30,8 @@ assert.equal(ico.readUInt16LE(0), 0);
 assert.equal(ico.readUInt16LE(2), 1);
 const imageCount = ico.readUInt16LE(4);
 assert.ok(imageCount >= 6, `icon should include desktop + jumbo sizes, got ${imageCount}`);
+const html = fs.readFileSync(path.join(here, '..', 'dashboard_v5.html'), 'utf8');
+assert.match(html, /rel="icon"[^>]*family-planner\.ico/, 'the browser tab uses the same family pin as the desktop shortcut');
 console.log('  ok - desktop launcher scripts match the Helios desk contract');
 console.log('  ok - Family Planner icon is a multi-size ICO, not a 32px stub');
+console.log('  ok - dashboard tab icon is the family pin');
