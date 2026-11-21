@@ -10,8 +10,9 @@
 // dining-recommendation.mjs / Part 3).
 //
 // Localhost-only by design (binds 127.0.0.1) — no authentication, since this
-// serves real financial data and is not meant to be reachable from the
-// network. Launch with `npm run dev` from this directory.
+// serves real financial data. Hanna's computer reaches it through Tailscale
+// Serve on this machine (see scripts/install-remote-access.ps1). Do not bind
+// a public or LAN address here. Launch with `npm run dev` from this directory.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -488,6 +489,7 @@ export function createServer(
 
 function main() {
   const server = createServer();
+  // 127.0.0.1 on purpose. Tailscale Serve is the only front door.
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`Dashboard server running at http://localhost:${PORT}/dashboard_v5.html`);
   });

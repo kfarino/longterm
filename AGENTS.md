@@ -208,6 +208,21 @@ and reminders flashed every 5 minutes. Installers use `wscript.exe` +
 `scripts/run-hidden.vbs` (`Run ..., 0`). Editing the script alone does not
 update the live task; re-run the matching `install-*-scheduled-task.ps1`.
 
+### Hanna's computer
+The dashboard stays bound to `127.0.0.1`. It has no login. Her browser reaches
+it through Tailscale Serve, and her Cursor agent is an SSH session as this
+Windows user. Both are installed by `scripts/install-remote-access.ps1`.
+
+- Do not bind `dashboard-server.mjs` to `0.0.0.0` or the LAN. Do not turn on
+  Tailscale Funnel. That would publish the finances.
+- Port 22 is allowed only on the Tailscale adapter, public-key only. A block
+  rule holds the port shut until that adapter exists. Re-run the installer
+  after signing in to Tailscale; do not add a wide OpenSSH firewall rule back.
+- One checkout, on this PC. A second copy of `goals.json` on her laptop will
+  not update the dashboard or Georgina.
+- `LongtermDashboard` starts the server at logon (`launch-desk.ps1 -ServeOnly`)
+  and does not open a browser. The desktop shortcut still does.
+
 ### A dead integration that still reports success
 The worst one so far, and the reason several rules below exist. Google auth
 expired; calendar sync wrote a pause file, logged one line, and **skipped every

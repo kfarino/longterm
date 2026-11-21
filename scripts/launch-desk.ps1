@@ -1,5 +1,10 @@
 # Start Family Planner if needed, then open it in the default browser.
 # Invoked hidden by launch-desk.vbs (taskbar / Desktop shortcut).
+# -ServeOnly starts the server and does not open a browser (logon task).
+param(
+  [switch]$ServeOnly
+)
+
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -8,7 +13,20 @@ if ($env:PORT -match '^\d+$') { $Port = [int]$env:PORT }
 $Base = "http://127.0.0.1:$Port"
 
 function Show-Fail([string]$Message) {
+  if ($ServeOnly) {
+    $dir = Join-Path $env:USERPROFILE ".longterm\logs"
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
+    Add-Content -Path (Join-Path $dir "dashboard-server.log") -Value $line
+    return
+  }
   (New-Object -ComObject WScript.Shell).Popup($Message, 10, "Family Planner", 16) | Out-Null
+}
+
+function Open-Desk {
+  if ($ServeOnly) { exit 0 }
+  Start-Process $Base
+  exit 0
 }
 
 function Test-DeskHttp {
@@ -72,15 +90,13 @@ function Find-Node {
 }
 
 if (Test-DeskHttp) {
-  Start-Process $Base
-  exit 0
+  Open-Desk
 }
 
 # Something already bound to the port: wait for it; never kill or steal 4200.
 if (Test-PortListening) {
   if (Wait-DeskHttp 8) {
-    Start-Process $Base
-    exit 0
+    Open-Desk
   }
   Show-Fail "Port $Port is in use but Family Planner did not respond at $Base/. Not starting a second Node process."
   exit 1
@@ -118,5 +134,4 @@ if (-not (Wait-DeskHttp 8)) {
   exit 1
 }
 
-Start-Process $Base
-exit 0
+Open-Desk
