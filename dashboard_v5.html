@@ -1132,10 +1132,38 @@ function longAssetsHTML() {
     </div>`;
 }
 
+function renderLifestyleScenarios() {
+  const entries = Object.entries(D.lifestyleScenarios || {});
+  if (!entries.length) return '';
+  const money = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+  const panels = entries.map(([, s]) => {
+    const income = s.income || {};
+    const expenses = s.expenses || {};
+    const incomeVals = Object.values(income).map(money);
+    const incomeKnown = incomeVals.length > 0 && incomeVals.every((n) => n != null);
+    const inc = incomeVals.reduce((sum, n) => sum + (n || 0), 0);
+    const exp = Object.values(expenses).reduce((sum, n) => sum + (money(n) || 0), 0);
+    const left = inc - exp;
+    const incRows = Object.entries(income).map(([k, v]) => trHTML(k, money(v) == null ? 'base path' : fmt(money(v)))).join('');
+    const expRows = Object.entries(expenses).map(([k, v]) => trHTML(k, fmt(money(v) || 0))).join('');
+    const leftRow = incomeKnown ? trTotal('Left', fmt(left), left < 0 ? 'neg' : '') : '';
+    return `<div class="panel">
+      <div class="ptitle">${s.label || 'Scenario'}${s.startYear ? ` · ${s.startYear}` : ''}</div>
+      ${incRows}
+      ${expRows}
+      ${trTotal('Spend', fmt(exp))}
+      ${leftRow}
+      ${s.notes ? `<div class="pc-note" style="margin-top:8px">${s.notes}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `<div class="slabel">Scenarios</div><div class="g2">${panels}</div>`;
+}
+
 function renderLongTab() {
   $('pg-long').innerHTML = `
     <div class="content">
       <div id="sub-trajectory"></div>
+      ${renderLifestyleScenarios()}
       ${rail('Later phases', laterStretchCards('phases'))}
       ${rail('Later milestones', laterStretchCards('milestones'))}
       ${rail('On the horizon', laterStretchCards('decisions'))}

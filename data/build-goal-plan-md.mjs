@@ -63,6 +63,32 @@ function assetRow(label, bucket) {
 const phaseNow = currentPhase(goals.phases) || goals.phases[0];
 function trackerTarget(tracker) { return phaseNow.expenses[tracker.targetExpenseKey]; }
 
+function scenarioTable(scenario) {
+  const income = scenario.income || {};
+  const expenses = scenario.expenses || {};
+  const money = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+  const incomeRows = Object.entries(income).map(([k, v]) => {
+    const n = money(v);
+    return `| ${k} | ${n == null ? 'base path' : fmt(n)} |`;
+  }).join('\n');
+  const expenseRows = Object.entries(expenses).map(([k, v]) => `| ${k} | ${fmt(money(v) || 0)} |`).join('\n');
+  const incomeVals = Object.values(income).map(money);
+  const incomeKnown = incomeVals.length > 0 && incomeVals.every((n) => n != null);
+  const inc = incomeVals.reduce((s, n) => s + (n || 0), 0);
+  const exp = Object.values(expenses).reduce((s, n) => s + (money(n) || 0), 0);
+  const leftRow = incomeKnown ? `| **Left** | **${fmt(inc - exp)}** |` : '| **Left** | base-path income not copied here |';
+  return `| | Monthly |\n|---|---|\n${incomeRows}\n${expenseRows}\n| **Spend** | **${fmt(exp)}** |\n${leftRow}`;
+}
+
+function lifestyleSection(scenarios) {
+  const entries = Object.entries(scenarios || {});
+  if (!entries.length) return '*None.*';
+  return entries.map(([, s]) => {
+    const when = s.startYear ? ` (${s.startYear})` : '';
+    return `### ${s.label || 'Scenario'}${when}\n${s.notes ? s.notes + '\n\n' : ''}${scenarioTable(s)}`;
+  }).join('\n\n');
+}
+
 function weeksTable(tracker) {
   if (!tracker.weeks?.length) return '*No weeks logged yet this cycle.*';
   return `| Week | Actual | Days |\n|---|---|---|\n${tracker.weeks.map((w) => `| ${w.weekOf} | ${fmt(w.actual)} | ${w.days} |`).join('\n')}`;
@@ -133,6 +159,13 @@ ${goals.phases.map((p) => `### Phase ${p.id} — ${p.name} (${p.period})\n${inco
 ## Monthly Expenses by phase
 
 ${goals.phases.filter((p) => Object.keys(p.expenses).length).map((p) => `### Phase ${p.id} — ${p.name}\n${expenseTable(p)}`).join('\n\n')}
+
+---
+
+## Lifestyle scenarios
+*Alternate paths. They do not replace the phases above.*
+
+${lifestyleSection(goals.lifestyleScenarios)}
 
 ---
 
