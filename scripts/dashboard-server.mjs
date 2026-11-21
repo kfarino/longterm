@@ -301,7 +301,12 @@ function serveStatic(req, res) {
   if (!filePath.startsWith(repoRoot)) { res.writeHead(403); res.end('Forbidden'); return; }
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' });
+    const ext = path.extname(filePath);
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    // The planner is one long-lived tab. Without this, the browser keeps an
+    // old dashboard_v5.html or data.js and a plan edit looks like it never landed.
+    if (ext === '.html' || ext === '.js' || ext === '.mjs') headers['Cache-Control'] = 'no-store';
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
